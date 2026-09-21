@@ -17,6 +17,7 @@ mod ipc;
 mod lifetime;
 mod manifest;
 mod menu;
+mod net;
 mod pairing;
 mod secure_store;
 mod socket;
@@ -292,6 +293,7 @@ pub fn run() {
             backup::backup_creds_save,
             backup::backup_creds_remove,
             backup::backup_send,
+            net::http_send,
             sync_crypto::sync_handshake_generate_keypair,
             sync_crypto::sync_handshake_start_initiator,
             sync_crypto::sync_handshake_start_responder,

@@ -113,12 +113,9 @@ fn origin_of(url: &reqwest::Url) -> String {
     }
 }
 
-#[derive(Serialize)]
-pub struct HttpReply {
-    pub status: u16,
-    /// Whole body. A listing or one vault blob, never a stream.
-    pub body: Vec<u8>,
-}
+/// Re-exported so the command's reply type reads where the command does. The sending itself,
+/// and the two rules it keeps, live in `net`.
+pub use crate::net::HttpReply;
 
 /// `YYYYMMDDTHHMMSSZ`, the stamp SigV4 signs over and sends as `x-amz-date`.
 fn amz_date() -> String {
@@ -382,38 +379,9 @@ pub async fn backup_send(
         &amz_date(),
     )?;
 
-    // No redirect following: a 3xx would move the request off the URL that was signed, and both
-    // protocols address objects directly, so a redirect is a misconfiguration worth surfacing.
-    // No cookie store either, for the reason the WebDAV client documents: an ambient session for
-    // the same host outranks our Authorization header on Nextcloud and then fails its CSRF check.
-    // Timeouts, because this runs unattended: without them one provider that accepts a connection
-    // and then says nothing would hang the run, and the caller's in-flight latch with it, so every
-    // vault's schedule would stop until the app restarted.
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(std::time::Duration::from_secs(20))
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
-    let mut req = client.request(
-        reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| format!("http method: {e}"))?,
-        url,
-    );
-    for (k, v) in headers {
-        req = req.header(k, v);
-    }
-    let res = req
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| format!("backup request failed: {e}"))?;
-    let status = res.status().as_u16();
-    let body = res
-        .bytes()
-        .await
-        .map_err(|e| format!("backup response failed: {e}"))?
-        .to_vec();
-    Ok(HttpReply { status, body })
+    // The upload timeout rather than the API one: this is a vault blob over someone's home
+    // connection, and it runs with nobody watching.
+    crate::net::send(&method, url, headers, body, crate::net::UPLOAD_TIMEOUT).await
 }
 
 #[cfg(test)]
