@@ -6,6 +6,7 @@ import type { ClipboardAdapter } from "../adapters/clipboard";
 import type { CryptoAdapter } from "../adapters/crypto";
 import type { DesktopLinkAdapter } from "../adapters/desktop-link";
 import type { CredentialExchangeAdapter } from "../adapters/exchange";
+import type { HttpTransport } from "../adapters/http";
 import type { PairingAdapter } from "../adapters/pairing";
 import type { ShellAdapter } from "../adapters/shell";
 import type { StorageAdapter } from "../adapters/storage";
@@ -31,6 +32,12 @@ export interface Platform {
 	/** Backup credentials in the OS credential store, and the transport that uses them. Desktop
 	 * only; elsewhere credentials stay VEK-wrapped and backups are unlock-gated. */
 	backupCreds?: BackupCredentialsAdapter;
+	/**
+	 * How this platform reaches a third-party host. Undefined means it can simply `fetch`, which
+	 * is the extension and the dev browser; the desktop and mobile supply one because their
+	 * webviews cannot reach an arbitrary provider at all. See adapters/http.
+	 */
+	http?: HttpTransport;
 }
 
 const PlatformContext = createContext<Platform | null>(null);

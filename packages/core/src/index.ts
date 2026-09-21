@@ -4,6 +4,7 @@ export * from "./adapters/clipboard";
 export * from "./adapters/crypto";
 export * from "./adapters/crypto-wasm";
 export * from "./adapters/exchange";
+export * from "./adapters/http";
 export * from "./adapters/shell";
 export * from "./adapters/storage";
 export { default as App, type PendingLogin } from "./app/App";

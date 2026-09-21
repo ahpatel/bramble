@@ -53,7 +53,7 @@ function isLegacyConfig(v: unknown): v is LegacyAliasConfig {
  * in. See docs/synced-settings.md and docs/email-aliases.md.
  */
 export function useAliasProvider() {
-	const { storage, crypto } = usePlatform();
+	const { storage, crypto, http } = usePlatform();
 	const { prefs, loaded, update } = usePrefs();
 	const { activeId, vaults } = useVaultRegistry();
 	const vaultId = activeId ?? vaults[0]?.id;
@@ -110,8 +110,8 @@ export function useAliasProvider() {
 
 	const clientFrom = useCallback(
 		(input: SaveAliasInput) =>
-			createAliasClient(input.provider, input.options, input.baseUrl, resolveKey(input)),
-		[resolveKey],
+			createAliasClient(input.provider, input.options, input.baseUrl, resolveKey(input), http),
+		[resolveKey, http],
 	);
 
 	const save = useCallback(
@@ -170,6 +170,7 @@ export function useAliasProvider() {
 				config.options,
 				config.baseUrl,
 				config.apiKey ?? "",
+				http,
 			);
 			const { address } = await client.create({
 				site,
@@ -180,7 +181,7 @@ export function useAliasProvider() {
 			});
 			return address;
 		},
-		[config, takenAddresses],
+		[config, takenAddresses, http],
 	);
 
 	return {

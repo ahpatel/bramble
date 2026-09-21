@@ -15,6 +15,13 @@ function route(handler: () => Response): { url: string; init: RequestInit }[] {
 	return calls;
 }
 
+/** What the client actually sent, decoded. Bodies cross the transport as UTF-8 bytes so the
+ * native implementations can carry them over a bridge, so a test reading one has to decode. */
+function sentBody(init: RequestInit | undefined): Record<string, unknown> {
+	if (!init?.body) throw new Error("no request body was sent");
+	return JSON.parse(new TextDecoder().decode(init.body as Uint8Array));
+}
+
 const json = (body: unknown, status = 200) =>
 	new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -80,7 +87,7 @@ describe("createSimpleLoginClient", () => {
 	it("sends a description as the note", async () => {
 		const calls = route(() => json(CREATED, 201));
 		await createSimpleLoginClient({}, "key").create({ description: "Bramble" });
-		expect(JSON.parse(only(calls).init.body as string)).toEqual({ note: "Bramble" });
+		expect(sentBody(only(calls).init)).toEqual({ note: "Bramble" });
 	});
 
 	// No allowance is reported anywhere in this API, and the premium flag is a different question.
@@ -143,7 +150,7 @@ describe("createSimpleLoginClient on a chosen domain", () => {
 			address: "example-a1b2c3d4@mail.example.com",
 		});
 		const create = calls.find((x) => x.url.includes("/v3/alias/custom/new"));
-		const body = JSON.parse(create?.init.body as string);
+		const body = sentBody(create?.init);
 		expect(body.signed_suffix).toBe("custom.sig");
 		// The default mailbox, not merely the first one the account happens to list.
 		expect(body.mailbox_ids).toEqual([42]);
@@ -156,7 +163,7 @@ describe("createSimpleLoginClient on a chosen domain", () => {
 		await createSimpleLoginClient({ domain: "mail.example.com" }, "key").create({
 			site: "example.com",
 		});
-		const body = JSON.parse(calls.find((x) => x.url.includes("/custom/new"))?.init.body as string);
+		const body = sentBody(calls.find((x) => x.url.includes("/custom/new"))?.init);
 		expect(body.alias_prefix).toMatch(/^example-[0-9a-f]{8}$/);
 	});
 
@@ -166,7 +173,7 @@ describe("createSimpleLoginClient on a chosen domain", () => {
 		await createSimpleLoginClient({ domain: "simplelogin.com" }, "key").create({
 			site: "example.com",
 		});
-		const body = JSON.parse(calls.find((x) => x.url.includes("/custom/new"))?.init.body as string);
+		const body = sentBody(calls.find((x) => x.url.includes("/custom/new"))?.init);
 		expect(body.alias_prefix).toBe("example");
 	});
 

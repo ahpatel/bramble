@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import type { HttpRequest } from "../adapters/http";
 import { request } from "./http";
 import { AliasError } from "./types";
 
@@ -91,5 +92,74 @@ describe("request", () => {
 		const err = await call().catch((e) => e);
 		expect(err.kind).toBe("network");
 		expect(err.providerMessage).toBe("Failed to fetch");
+	});
+});
+
+describe("request through an injected transport", () => {
+	/** A stub transport, plus the requests it was handed. */
+	function transport(res: () => { status: number; ok: boolean; body: Uint8Array }) {
+		const sent: HttpRequest[] = [];
+		return {
+			sent,
+			http: {
+				send: async (req: HttpRequest) => {
+					sent.push(req);
+					return res();
+				},
+			},
+		};
+	}
+
+	const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
+
+	it("uses the transport instead of fetch, and never touches fetch at all", async () => {
+		const fetchSpy = vi.fn();
+		vi.stubGlobal("fetch", fetchSpy);
+		const t = transport(() => ({ status: 200, ok: true, body: bytes({ email: "a@b.c" }) }));
+		await expect(request("https://p.example/x", { headers: {} }, Schema, t.http)).resolves.toEqual({
+			email: "a@b.c",
+		});
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	// The bodies have to survive a native bridge, so they cross as bytes rather than a string.
+	it("hands the transport the method, headers and an encoded body", async () => {
+		const t = transport(() => ({ status: 200, ok: true, body: bytes({ email: "a@b.c" }) }));
+		await request(
+			"https://p.example/x",
+			{ method: "POST", headers: { Authorization: "Bearer k" }, body: { note: "hi" } },
+			Schema,
+			t.http,
+		);
+		const req = t.sent[0];
+		// Throws rather than reading undefined, so "the transport was never called" fails saying so.
+		if (!req) throw new Error("the transport was never called");
+		expect(req.method).toBe("POST");
+		expect(req.url).toBe("https://p.example/x");
+		expect(req.headers).toEqual({ Authorization: "Bearer k" });
+		expect(JSON.parse(new TextDecoder().decode(req.body))).toEqual({ note: "hi" });
+	});
+
+	// `fetch` reports a refused redirect as an opaque response with status 0; a native transport
+	// has no opaque responses and returns the real 3xx. Both mean the session was rejected, so
+	// both have to land on the same error.
+	it.each([0, 301, 302, 307])("treats status %i as an auth failure", async (status) => {
+		const t = transport(() => ({ status, ok: false, body: new Uint8Array() }));
+		const err = await request("https://p.example/x", { headers: {} }, Schema, t.http).catch(
+			(e) => e,
+		);
+		expect(err).toBeInstanceOf(AliasError);
+		expect(err.kind).toBe("auth");
+	});
+
+	it("reports a throwing transport as a network failure", async () => {
+		const http = {
+			send: async () => {
+				throw new Error("no route to host");
+			},
+		};
+		const err = await request("https://p.example/x", { headers: {} }, Schema, http).catch((e) => e);
+		expect(err.kind).toBe("network");
+		expect(err.providerMessage).toBe("no route to host");
 	});
 });

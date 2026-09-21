@@ -1,4 +1,5 @@
 import { type ZodType, z } from "zod";
+import { fetchTransport, type HttpResponse, type HttpTransport } from "../adapters/http";
 import { AliasError, type AliasErrorKind } from "./types";
 
 // The one place an alias provider is spoken to. Every provider goes through `request` so the
@@ -52,25 +53,26 @@ export interface AliasRequestInit {
 /**
  * One request to a provider, validated into `schema`.
  *
- * The two transport rules every provider shares are enforced here so no client can forget one.
- * Cookies are never sent: the token in a header is the only credential, and an ambient session
- * for the same host has already cost this repo a day once (1255ab7b). Redirects are never
- * followed: a redirect out of an API call means the session was rejected and its destination is
- * an HTML login page with no CORS, so chasing it turns a clean "bad key" into an opaque failure.
+ * `transport` decides how it reaches the network, and defaults to `fetch` for the platforms that
+ * can. The desktop and mobile pass their own because their webviews cannot reach a provider that
+ * sends no CORS headers. The two rules every provider shares (no ambient cookies, no redirect
+ * following) are the transport's to keep, and every implementation keeps them: see adapters/http
+ * for why each one is load-bearing.
  */
 export async function request<T>(
 	url: string,
 	init: AliasRequestInit,
 	schema: ZodType<T>,
+	transport: HttpTransport = fetchTransport,
 ): Promise<T> {
-	let res: Response;
+	let res: HttpResponse;
 	try {
-		res = await fetch(url, {
+		res = await transport.send({
 			method: init.method ?? "GET",
+			url,
 			headers: init.headers,
-			body: init.body === undefined ? undefined : JSON.stringify(init.body),
-			credentials: "omit",
-			redirect: "manual",
+			body:
+				init.body === undefined ? undefined : new TextEncoder().encode(JSON.stringify(init.body)),
 		});
 	} catch (e) {
 		// Offline, DNS, TLS, or a CORS refusal. All indistinguishable from here, and all mean the
@@ -80,12 +82,14 @@ export async function request<T>(
 		});
 	}
 
-	// `redirect: "manual"` surfaces as an opaque response with status 0, not as a 3xx.
-	if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
+	// A redirect is never followed, so one has to be recognised here. `fetch` reports it as an
+	// opaque response with status 0; a native transport, having no opaque responses, returns the
+	// real 3xx. Both mean the session was rejected.
+	if (res.status === 0 || (res.status >= 300 && res.status < 400)) {
 		throw new AliasError("auth", FALLBACK.auth, { status: res.status });
 	}
 
-	const raw = await res.text();
+	const raw = new TextDecoder().decode(res.body);
 	let body: unknown;
 	try {
 		body = raw ? JSON.parse(raw) : undefined;
@@ -110,4 +114,15 @@ export async function request<T>(
 		});
 	}
 	return parsed.data;
+}
+
+/**
+ * `request` bound to one transport, so a client names it once rather than at every call site.
+ *
+ * `undefined` is the ordinary case and means `fetch`, which keeps a client that never sees a
+ * transport identical to one written before there was such a thing.
+ */
+export function requestVia(transport?: HttpTransport) {
+	return <T>(url: string, init: AliasRequestInit, schema: ZodType<T>): Promise<T> =>
+		request(url, init, schema, transport);
 }

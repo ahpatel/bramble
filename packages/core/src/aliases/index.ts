@@ -1,3 +1,4 @@
+import type { HttpTransport } from "../adapters/http";
 import { type AddyFormat, createAddyClient } from "./addy";
 import { type CatchAllStyle, createCatchAllClient } from "./catchall";
 import type { AliasConfig } from "./config";
@@ -58,21 +59,28 @@ export {
  *
  * The plaintext key is a parameter rather than something this reads, so unwrapping stays with
  * the caller that holds the crypto adapter and the key's lifetime stays as short as the call.
+ *
+ * `transport` is the platform's, and `undefined` means `fetch`. It is passed rather than reached
+ * for because the extension speaks to a provider from its background worker, outside React and
+ * therefore outside `usePlatform`.
  */
 export function createAliasClient(
 	provider: AliasProviderId,
 	options: Record<string, string>,
 	baseUrl: string | undefined,
 	apiKey: string,
+	transport?: HttpTransport,
 ): AliasClient {
 	switch (provider) {
 		case "addy":
 			return createAddyClient(
 				{ baseUrl, domain: options.domain, format: options.format as AddyFormat | undefined },
 				apiKey,
+				transport,
 			);
 		case "catchall":
-			// No key: the address is generated locally and delivered by the user's own mail host.
+			// No key and no transport: the address is generated locally and delivered by the user's
+			// own mail host, so there is nobody to talk to.
 			return createCatchAllClient({
 				domain: options.domain,
 				style: options.style as CatchAllStyle | undefined,
@@ -81,11 +89,16 @@ export function createAliasClient(
 			return createSimpleLoginClient(
 				{ baseUrl, mode: options.mode as SimpleLoginMode | undefined, domain: options.domain },
 				apiKey,
+				transport,
 			);
 	}
 }
 
 /** The same, from a stored config. Sugar for the common call, so callers do not unpack it. */
-export function clientForConfig(cfg: AliasConfig, apiKey: string): AliasClient {
-	return createAliasClient(cfg.provider, cfg.options, cfg.baseUrl, apiKey);
+export function clientForConfig(
+	cfg: AliasConfig,
+	apiKey: string,
+	transport?: HttpTransport,
+): AliasClient {
+	return createAliasClient(cfg.provider, cfg.options, cfg.baseUrl, apiKey, transport);
 }

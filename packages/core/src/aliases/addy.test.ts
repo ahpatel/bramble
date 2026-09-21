@@ -21,6 +21,13 @@ function route(handler: (url: string, init: RequestInit) => Response): {
 	return calls;
 }
 
+/** What the client actually sent, decoded. Bodies cross the transport as UTF-8 bytes so the
+ * native implementations can carry them over a bridge, so a test reading one has to decode. */
+function sentBody(init: RequestInit | undefined): Record<string, unknown> {
+	if (!init?.body) throw new Error("no request body was sent");
+	return JSON.parse(new TextDecoder().decode(init.body as Uint8Array));
+}
+
 const json = (body: unknown, status = 200) =>
 	new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -63,11 +70,11 @@ describe("createAddyClient", () => {
 	it("omits format unless one was chosen", async () => {
 		const calls = route(() => json(CREATED, 201));
 		await createAddyClient({ domain: "anonaddy.com" }, "key").create({});
-		expect(JSON.parse(only(calls).init.body as string)).toEqual({ domain: "anonaddy.com" });
+		expect(sentBody(only(calls).init)).toEqual({ domain: "anonaddy.com" });
 
 		const withFormat = route(() => json(CREATED, 201));
 		await createAddyClient({ domain: "anonaddy.com", format: "uuid" }, "key").create({});
-		expect(JSON.parse(only(withFormat).init.body as string).format).toBe("uuid");
+		expect(sentBody(only(withFormat).init).format).toBe("uuid");
 	});
 
 	// Addy cannot generate without a domain, so this fails before spending a request that could

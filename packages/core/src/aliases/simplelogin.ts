@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { request } from "./http";
+import type { HttpTransport } from "../adapters/http";
+import { requestVia } from "./http";
 import {
 	type AliasAccount,
 	type AliasClient,
@@ -90,9 +91,14 @@ function sanitizePrefix(raw: string): string {
 		.slice(0, 40);
 }
 
-export function createSimpleLoginClient(cfg: SimpleLoginConfig, apiKey: string): AliasClient {
+export function createSimpleLoginClient(
+	cfg: SimpleLoginConfig,
+	apiKey: string,
+	transport?: HttpTransport,
+): AliasClient {
 	const base = trimBase(cfg.baseUrl || SIMPLELOGIN_DEFAULT_BASE_URL);
 	const h = headers(apiKey);
+	const call = requestVia(transport);
 
 	const optionsUrl = (site?: string) =>
 		`${base}/api/v5/alias/options${site ? `?hostname=${encodeURIComponent(site)}` : ""}`;
@@ -105,7 +111,7 @@ export function createSimpleLoginClient(cfg: SimpleLoginConfig, apiKey: string):
 		if (req.site) params.set("hostname", req.site);
 		if (cfg.mode) params.set("mode", cfg.mode);
 		const query = params.toString();
-		const res = await request(
+		const res = await call(
 			`${base}/api/alias/random/new${query ? `?${query}` : ""}`,
 			{
 				method: "POST",
@@ -127,8 +133,8 @@ export function createSimpleLoginClient(cfg: SimpleLoginConfig, apiKey: string):
 	 */
 	async function createOnDomain(req: AliasRequest, domain: string): Promise<AliasResult> {
 		const [opts, boxes] = await Promise.all([
-			request(optionsUrl(req.site), { headers: h }, OptionsSchema),
-			request(`${base}/api/v2/mailboxes`, { headers: h }, MailboxesSchema),
+			call(optionsUrl(req.site), { headers: h }, OptionsSchema),
+			call(`${base}/api/v2/mailboxes`, { headers: h }, MailboxesSchema),
 		]);
 		if (opts.can_create === false) {
 			throw new AliasError("quota", "This SimpleLogin account cannot create more aliases.");
@@ -154,7 +160,7 @@ export function createSimpleLoginClient(cfg: SimpleLoginConfig, apiKey: string):
 			? `${stem ? `${stem}-` : ""}${randomToken()}`
 			: stem || randomToken();
 
-		const res = await request(
+		const res = await call(
 			`${base}/api/v3/alias/custom/new${req.site ? `?hostname=${encodeURIComponent(req.site)}` : ""}`,
 			{
 				method: "POST",
@@ -175,12 +181,12 @@ export function createSimpleLoginClient(cfg: SimpleLoginConfig, apiKey: string):
 		async verify(): Promise<AliasAccount> {
 			// No allowance is reported anywhere in this API, so `quota` stays undefined rather than
 			// being inferred from the premium flag, which is not the same question.
-			const res = await request(`${base}/api/user_info`, { headers: h }, UserSchema);
+			const res = await call(`${base}/api/user_info`, { headers: h }, UserSchema);
 			return { label: res.email };
 		},
 
 		async domains(): Promise<AliasDomains> {
-			const opts = await request(optionsUrl(), { headers: h }, OptionsSchema);
+			const opts = await call(optionsUrl(), { headers: h }, OptionsSchema);
 			const seen = new Set<string>();
 			const options = [];
 			for (const s of opts.suffixes) {

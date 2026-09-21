@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { request } from "./http";
+import type { HttpTransport } from "../adapters/http";
+import { requestVia } from "./http";
 import {
 	type AliasAccount,
 	type AliasClient,
@@ -68,13 +69,18 @@ function headers(key: string): Record<string, string> {
 
 const trimBase = (url: string) => url.replace(/\/+$/, "");
 
-export function createAddyClient(cfg: AddyConfig, apiKey: string): AliasClient {
+export function createAddyClient(
+	cfg: AddyConfig,
+	apiKey: string,
+	transport?: HttpTransport,
+): AliasClient {
 	const base = trimBase(cfg.baseUrl || ADDY_DEFAULT_BASE_URL);
 	const h = headers(apiKey);
+	const call = requestVia(transport);
 
 	return {
 		async verify(): Promise<AliasAccount> {
-			const res = await request(`${base}/api/v1/account-details`, { headers: h }, AccountSchema);
+			const res = await call(`${base}/api/v1/account-details`, { headers: h }, AccountSchema);
 			const d = res.data;
 			// Both halves or neither: a used count with no limit cannot be rendered as an allowance,
 			// and inventing one would misreport how much room is left.
@@ -90,7 +96,7 @@ export function createAddyClient(cfg: AddyConfig, apiKey: string): AliasClient {
 		},
 
 		async domains(): Promise<AliasDomains> {
-			const res = await request(`${base}/api/v1/domain-options`, { headers: h }, DomainsSchema);
+			const res = await call(`${base}/api/v1/domain-options`, { headers: h }, DomainsSchema);
 			// `data` is every domain this account may use: Addy's shared ones, the user's own
 			// subdomains, and any custom domain they have added. `sharedDomains` is the subset the
 			// allowance is counted over, so anything absent from it is the user's own and unlimited.
@@ -107,7 +113,7 @@ export function createAddyClient(cfg: AddyConfig, apiKey: string): AliasClient {
 			if (!cfg.domain) {
 				throw new AliasError("config", "Choose an Addy domain before generating an alias.");
 			}
-			const res = await request(
+			const res = await call(
 				`${base}/api/v1/aliases`,
 				{
 					method: "POST",
