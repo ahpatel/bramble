@@ -344,6 +344,71 @@ Only the flag flip is verified, not that AuthenticationServices honours it for l
 credential-exchange picker; `pluginkit` does not surface the extension's declared capabilities either.
 Treat end-to-end behaviour as device-only until proven otherwise.
 
+### 20. Debug builds hide the app code in `App.debug.dylib`
+
+Quirk 18's verification (`strings App.app/App | grep -c SomePlugin`) is Release-only. Xcode 16
+Debug builds ship the code in a separate **`App.debug.dylib`** (~20 MB) and leave `App` as a ~92 KB
+stub, so the grep answers `0` for *every* plugin, including ones that have shipped for months. That
+reads as "my new plugin did not compile in" when nothing is wrong. Grep the dylib instead:
+
+```bash
+D=ios/DerivedData/Build/Products/Debug-iphoneos/App.app/App.debug.dylib
+strings "$D" | grep -c NativeHttpPlugin
+```
+
+Calibrate against a plugin you know is there before believing a `0` from either path.
+
+### 21. Driving the WKWebView from the CLI (the iOS answer to `adb forward` + CDP)
+
+Android exposes CDP over `adb forward`, so a probe can `Runtime.evaluate` in the app's WebView.
+iOS needs `ios-webkit-debug-proxy` (`brew install`), and three things differ:
+
+**The build must be Debug.** Capacitor only sets `webView.isInspectable = true` under `#if DEBUG`
+(`CAPInstanceDescriptor.swift`), and the App scheme's LaunchAction is pinned to Release (quirk 18).
+A Release build reports zero pages, which looks exactly like "the plugin is not registered". Build
+`-configuration Debug` explicitly. Do **not** reach for `ios.webContentsDebuggingEnabled` in
+`capacitor.config.ts` or `CAPACITOR_DEBUG` in the Info.plist: both are committed changes that would
+ship web inspection in a password manager.
+
+**WebKit is Target-based and has no `awaitPromise`.** Every command must be wrapped in
+`Target.sendMessageToTarget` with the `targetId` from the `Target.targetCreated` event whose type is
+`page`, and every reply arrives inside `Target.dispatchMessageFromTarget`. Unwrapped commands fail
+with `'Runtime' domain was not found`, which reads like a broken proxy. Since `awaitPromise` is a
+CDP addition, an async snippet has to park its result on a global (`window.__probe = ...`) and the
+driver polls for it.
+
+```bash
+ios_webkit_debug_proxy -c <hardware-udid>:9222 --no-frontend &
+curl -s http://localhost:9222/json     # -> ws://localhost:9222/devtools/page/1
+```
+
+**ATS blocks a local probe server.** There are no `NSAppTransportSecurity` exceptions, so cleartext
+HTTP to a LAN address is refused before it reaches the network, and there is no iOS equivalent of
+`adb reverse` to a loopback server. Test against HTTPS endpoints instead. A failure here surfaces as a
+generic transport error and is easily misread as a bug in the code under test.
+
+### 22. Installing a Debug build over a TestFlight app keeps the data
+
+Replacing a TestFlight-installed build with a locally signed Debug one (same team, same bundle id)
+installs **in place**: no delete prompt, and the container - including the vault - survives. It is
+worth checking the entitlements against the embedded profile first, because a mismatch is the case
+where iOS's only remedy is deleting the app:
+
+```bash
+codesign -d --entitlements :- App.app | plutil -p -
+security cms -D -i App.app/embedded.mobileprovision | plutil -p - | sed -n '/"Entitlements"/,/^  }/p'
+```
+
+The profile's `keychain-access-groups` is `BHGR3PP64J.*`, which covers the hardcoded
+`BHGR3PP64J.app.bramble.mobile.shared` the app requests.
+
+Two things still surprise: `devicectl device process launch` fails with "invalid code signature,
+inadequate entitlements or its profile has not been explicitly trusted", and no *Developer App*
+entry appears under Settings > General > VPN & Device Management. Neither is a signing fault - the
+trust prompt is only raised by launching from the home screen. **Tap the icon once on the device**,
+and it opens. Also note a Debug build leaves the AutoFill provider unregistered (quirk 13), so
+reinstall Release afterwards if autofill matters.
+
 ## Reclaiming disk space
 
 The iOS runtimes are the big consumers (~8 GB each). List and delete unused ones rather
