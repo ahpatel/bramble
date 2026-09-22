@@ -1,5 +1,7 @@
 import { ADDY_DEFAULT_BASE_URL, ADDY_FORMATS } from "./addy";
 import { CATCHALL_STYLES } from "./catchall";
+import { DUCKDUCKGO_DEFAULT_BASE_URL } from "./duckduckgo";
+import { RELAY_DEFAULT_BASE_URL } from "./relay";
 import { SIMPLELOGIN_DEFAULT_BASE_URL, SIMPLELOGIN_MODES } from "./simplelogin";
 import type { AliasProviderId } from "./types";
 
@@ -66,6 +68,27 @@ export const ALIAS_PROVIDERS: readonly AliasProviderDescriptor[] = [
 			{ key: "domain", options: "domains", required: false },
 			{ key: "mode", options: SIMPLELOGIN_MODES, required: false },
 		],
+	},
+	{
+		id: "duckduckgo",
+		label: "DuckDuckGo",
+		defaultBaseUrl: DUCKDUCKGO_DEFAULT_BASE_URL,
+		needsApiKey: true,
+		selfHostable: false,
+		// Not a key page: DuckDuckGo has no user-facing credential, so this is where the token can
+		// be read out of a network request. The settings hint has to explain the rest.
+		keyUrl: "https://duckduckgo.com/email/settings/autofill",
+		// Nothing to configure. The API takes no domain, no format, and no site.
+		fields: [],
+	},
+	{
+		id: "relay",
+		label: "Firefox Relay",
+		defaultBaseUrl: RELAY_DEFAULT_BASE_URL,
+		needsApiKey: true,
+		selfHostable: false,
+		keyUrl: "https://relay.firefox.com/accounts/settings/",
+		fields: [],
 	},
 	{
 		id: "catchall",

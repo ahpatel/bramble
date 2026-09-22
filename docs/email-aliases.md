@@ -31,10 +31,13 @@ that is stale is indistinguishable from the half that is not.
 
 Each is a single authenticated POST once discovery is done. What differs is the
 auth header, whether anything must be fetched first, and how much configuration
-the user has to supply before the first alias can exist. **v1 ships Addy and
-SimpleLogin**, the two verified end to end against live accounts. Fastmail and
-Forward Email are researched and deferred, each for the same reason and noted in
-its own section: neither can be proven without a paid account.
+the user has to supply before the first alias can exist. **Addy and SimpleLogin
+are verified end to end against live accounts.** DuckDuckGo and Firefox Relay
+ship too, once the native transport existed to reach them, but neither has been
+exercised with a real key: see [What is unproven about these
+two](#what-is-unproven-about-these-two-and-why). Fastmail and Forward Email are
+researched and deferred, each for the same reason and noted in its own section:
+neither can be proven without a paid account.
 
 ### Addy.io
 
@@ -324,16 +327,77 @@ background service worker holding `<all_urls>` bypasses CORS entirely. Adding
 either one re-opens the per-platform HTTP adapter that the four other providers
 let us skip: a Rust command on the desktop, a native HTTP path on mobile.
 
-So they are deliberately out of v1, and the reason is worth stating precisely
-because it is not "we ran out of time". Shipping them extension-only would put a
-"Generate alias" button in the shared entry form that works on one of the four
-targets, which is a worse outcome than not offering the provider. If they are
-wanted later, they arrive together with the adapter, as one piece of work whose
-cost is the adapter and not the two clients.
+They were deliberately out of v1 for that reason, and the reason was never "we
+ran out of time": shipping them extension-only would put a "Generate alias"
+button in the shared entry form that works on one of the four targets, which is
+worse than not offering the provider.
 
-DuckDuckGo is the tempting one, being free and widely used, so the temptation is
-worth naming: it is the provider most likely to be asked for and the one that
-cannot be served cheaply.
+**Both now ship, because the adapter was built.** The transport they needed is
+`HttpTransport` (`@core/adapters/http`), native on the desktop and on mobile, and
+it was worth building because mobile cloud backups were blocked on the identical
+question. See the two sections below for what it cost and why the arithmetic
+changed.
+
+### What is unproven about these two, and why
+
+Neither has been exercised against a live account, so the same caveat that
+applies to Fastmail and Forward Email applies here: **the authenticated success
+path is unverified**. What is known is measured rather than assumed.
+
+Both endpoints are reachable and both authenticate. An unauthenticated request
+gets a real status back through the native transport on a device (401 from
+DuckDuckGo on iOS, 403 on Android; 401 from Relay), where the same call from the
+WebView fails with a CORS error, which is the whole point of the adapter. The
+read-only endpoints each client uses for `verify` were found the same way, by
+probing unauthenticated: a 401 where a deliberately nonexistent path answers 404
+means the endpoint exists.
+
+| Provider | verify | create |
+|---|---|---|
+| Firefox Relay | `GET /api/v1/profiles/`, plus `GET /api/v1/relayaddresses/` to count against the free allowance of 5 | `POST /api/v1/relayaddresses/` |
+| DuckDuckGo | `GET /api/email/dashboard` | `POST /api/email/addresses` |
+
+What is **not** known is the shape of either `verify` response body, because no
+account existed to see one. Both schemas are therefore permissive, every field
+optional, and both clients degrade to "no label" rather than failing. A strict
+schema here would report a working key as broken, which is the worse error: the
+address a `create` returns is validated strictly, because that value is about to
+be written into a vault entry and handed to a website.
+
+### DuckDuckGo has no public API and no user-facing credential
+
+This is a property of the provider, not of our client, and it is the reason to
+think twice before recommending it to anyone.
+
+DuckDuckGo documents neither endpoint. The token is an internal credential their
+own clients hold, and the supported way to obtain it -- per Bitwarden's own help
+pages, which prescribe it verbatim -- is to open the Autofill tab, open browser
+developer tools, click "Generate Private Duck Address", and read
+`authorization: Bearer ...` out of the Network tab. There is no key page. A
+third-party tool exists on Codeberg purely to extract it.
+
+Three consequences, all live:
+
+- **The contract can change without notice**, because nothing promises it. Addy
+  and SimpleLogin publish real API documentation; this does not.
+- **The token may be tied to a browser session** rather than to the account. If
+  it expires, the user sees "the provider rejected this API key" with no remedy
+  the settings screen can name.
+- **The settings copy has to teach developer tools.** `keyUrl` points at the
+  Autofill tab and the hint explains the rest, because the usual "Create an API
+  key at X" would be a lie. Asking someone to paste a bearer token scraped from a
+  network request into a password manager is a poor experience, and it is stated
+  plainly on the screen rather than glossed.
+
+So DuckDuckGo remains the tempting one -- free, unmetered, widely used, and the
+provider most likely to be asked for -- while being the one whose credential
+story is worst. Firefox Relay, by contrast, is an ordinary account with a real
+API key page, which is why its client was written first.
+
+A DuckDuckGo alias also carries no site and no description: the API accepts
+neither, so unlike every other provider here its aliases are not identifiable in
+the provider's own UI by what they were made for. That is their design, not an
+omission in the client.
 
 ### What the adapter would actually cost
 

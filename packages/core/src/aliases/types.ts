@@ -1,7 +1,7 @@
 // Per-site email aliases from a provider the user already has an account with.
 // See docs/email-aliases.md.
 
-export type AliasProviderId = "addy" | "simplelogin" | "catchall";
+export type AliasProviderId = "addy" | "simplelogin" | "duckduckgo" | "relay" | "catchall";
 
 /** What a create needs from the caller. Everything is optional: a provider can always mint an
  * address with no context, and the context only makes it identifiable later. */

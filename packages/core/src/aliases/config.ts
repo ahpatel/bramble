@@ -1,3 +1,4 @@
+import { ALIAS_PROVIDERS } from "./descriptors";
 import type { AliasProviderId } from "./types";
 
 // Where an alias provider's configuration and API key live. See docs/email-aliases.md.
@@ -79,9 +80,10 @@ export interface AliasConfig {
 export function isAliasConfig(v: unknown): v is AliasConfig {
 	if (!v || typeof v !== "object") return false;
 	const c = v as Partial<AliasConfig>;
-	if (c.provider !== "addy" && c.provider !== "simplelogin" && c.provider !== "catchall") {
-		return false;
-	}
+	// Checked against the descriptors rather than a literal list, because the list was a place to
+	// forget a provider: a missing id here is not a type error and does not throw, it silently
+	// rejects every saved config for that provider, so the feature just never appears.
+	if (!ALIAS_PROVIDERS.some((p) => p.id === c.provider)) return false;
 	if (c.baseUrl !== undefined && typeof c.baseUrl !== "string") return false;
 	if (!c.options || typeof c.options !== "object") return false;
 	// A key is required by the providers that authenticate one and meaningless to the one that

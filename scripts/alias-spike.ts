@@ -15,6 +15,8 @@
  *   SIMPLELOGIN_API_KEY, SIMPLELOGIN_BASE_URL (default https://app.simplelogin.io)
  *   FASTMAIL_API_TOKEN
  *   FORWARDEMAIL_API_KEY, FORWARDEMAIL_DOMAIN (defaults to the first domain on the account)
+ *   RELAY_API_KEY          (relay.firefox.com, from the account settings page)
+ *   DUCKDUCKGO_API_TOKEN   (no key page exists; read it out of devtools, see docs/email-aliases.md)
  *
  * Usage:
  *   pnpm run spike:aliases              # verify tokens + discovery, no writes
@@ -176,6 +178,52 @@ async function simplelogin() {
 	console.log(`     ${bold("alias:")} ${pick(created.body, "email")}`);
 }
 
+async function relay() {
+	const key = process.env.RELAY_API_KEY;
+	const base = "https://relay.firefox.com";
+	if (!key) return console.log(dim("\nrelay: skipped (no RELAY_API_KEY)\n"));
+	console.log(bold(`\nrelay  ${dim(base)}`));
+
+	// `Token`, not `Bearer`.
+	const headers = { Authorization: `Token ${key}`, "Content-Type": "application/json" };
+
+	const profiles = await call("GET profiles", `${base}/api/v1/profiles/`, { headers });
+	const me = (profiles.body as { email?: string; has_premium?: boolean }[] | undefined)?.[0];
+	console.log(dim(`     account: ${me?.email} premium=${me?.has_premium}`));
+	await corsMatrix("profiles", `${base}/api/v1/profiles/`, headers);
+
+	if (!CREATE) return;
+	const created = await call("POST relayaddresses", `${base}/api/v1/relayaddresses/`, {
+		method: "POST",
+		headers,
+		body: JSON.stringify({ enabled: true, generated_for: FOR_DOMAIN, description: DESCRIPTION }),
+	});
+	console.log(`     ${bold("alias:")} ${pick(created.body, "full_address")}`);
+}
+
+async function duckduckgo() {
+	const token = process.env.DUCKDUCKGO_API_TOKEN;
+	const base = "https://quack.duckduckgo.com";
+	if (!token) return console.log(dim("\nduckduckgo: skipped (no DUCKDUCKGO_API_TOKEN)\n"));
+	console.log(bold(`\nduckduckgo  ${dim(base)}`));
+
+	const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+	// The only read-only endpoint found: an unauthenticated GET answers 401 where a nonexistent
+	// path answers 404. Its body has never been seen, so print it whole rather than picking.
+	const dash = await call("GET dashboard", `${base}/api/email/dashboard`, { headers });
+	console.log(dim(`     dashboard: ${JSON.stringify(dash.body)?.slice(0, 200)}`));
+	await corsMatrix("dashboard", `${base}/api/email/dashboard`, headers);
+
+	if (!CREATE) return;
+	// No body, no site, no description: the API accepts none of them.
+	const created = await call("POST addresses", `${base}/api/email/addresses`, {
+		method: "POST",
+		headers,
+	});
+	console.log(`     ${bold("alias:")} ${pick(created.body, "address")}@duck.com`);
+}
+
 async function fastmail() {
 	const token = process.env.FASTMAIL_API_TOKEN;
 	if (!token) return console.log(dim("\nfastmail: skipped (no FASTMAIL_API_TOKEN)\n"));
@@ -278,7 +326,7 @@ async function forwardEmail() {
 	}
 }
 
-const PROVIDERS = { addy, simplelogin, fastmail, forwardemail: forwardEmail };
+const PROVIDERS = { addy, simplelogin, relay, duckduckgo, fastmail, forwardemail: forwardEmail };
 
 // --only exists because a create is not free. Re-running the whole set to exercise one provider
 // spends an Addy alias out of ten every time.

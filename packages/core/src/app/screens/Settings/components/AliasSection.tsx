@@ -91,6 +91,14 @@ export function AliasSection() {
 		return undefined;
 	};
 
+	// DuckDuckGo publishes no API and has no user-facing credential, so the link above cannot go
+	// to a key page and the usual copy would be a lie. Said plainly rather than glossed: someone
+	// about to paste a bearer token into a password manager should know where it came from.
+	const keyHint: string | undefined =
+		provider === "duckduckgo"
+			? t`DuckDuckGo has no API key page. Open the Autofill tab, then your browser's developer tools, click Generate Private Duck Address, and copy the token that follows authorization: Bearer in the Network tab.`
+			: undefined;
+
 	// Adopt the saved provider once it loads. The key is deliberately not restored: it is wrapped
 	// under the vault key and this screen has no reason to hold the plaintext, so the field stays
 	// empty and saving with it empty keeps what is already stored.
@@ -264,9 +272,14 @@ export function AliasSection() {
 						rel="noreferrer"
 						className="mt-1.5 inline-flex items-center gap-1 text-xs text-primary hover:underline"
 					>
-						<Trans>Create an API key at {descriptor.label}</Trans>
+						{provider === "duckduckgo" ? (
+							<Trans>Open Email Protection settings</Trans>
+						) : (
+							<Trans>Create an API key at {descriptor.label}</Trans>
+						)}
 						<ExternalLink className="w-3 h-3" />
 					</a>
+					{keyHint ? <p className="mt-1.5 text-xs text-muted-foreground">{keyHint}</p> : null}
 
 					<div className="mt-3 flex flex-wrap items-center gap-2">
 						<Button
