@@ -30,6 +30,7 @@
 		B100000000000000000B0002 /* QrScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000A0002 /* QrScanner.swift */; };
 		B100000000000000000B0007 /* CredentialExchange.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000A0003 /* CredentialExchange.swift */; };
 		B100000000000000000B0008 /* AppReview.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000A0004 /* AppReview.swift */; };
+		B100000000000000000B0009 /* NativeHttp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000A0005 /* NativeHttp.swift */; };
 		DA77030FEB0F1014AA5F80D0 /* BrambleConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 364AE8F9F5FF147BF36A0FDE /* BrambleConstants.swift */; };
 		F640023DF2FD4BE8BBD9503A /* vault_crypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB4181B60FCE1FC26E8FAE8C /* vault_crypto.swift */; };
 /* End PBXBuildFile section */
@@ -82,6 +83,7 @@
 		B100000000000000000A0002 /* QrScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QrScanner.swift; sourceTree = "<group>"; };
 		B100000000000000000A0003 /* CredentialExchange.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialExchange.swift; sourceTree = "<group>"; };
 		B100000000000000000A0004 /* AppReview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppReview.swift; sourceTree = "<group>"; };
+		B100000000000000000A0005 /* NativeHttp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHttp.swift; sourceTree = "<group>"; };
 		DB4181B60FCE1FC26E8FAE8C /* vault_crypto.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = vault_crypto.swift; sourceTree = "<group>"; };
 		B100000000000000000B0005 /* vault_crypto.autofill.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = vault_crypto.autofill.swift; sourceTree = "<group>"; };
 		FF834C57F536934CFEE77A5F /* CredentialProviderViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CredentialProviderViewController.swift; sourceTree = "<group>"; };
@@ -179,6 +181,7 @@
 				364AE8F9F5FF147BF36A0FDE /* BrambleConstants.swift */,
 				B100000000000000000A0003 /* CredentialExchange.swift */,
 				B100000000000000000A0004 /* AppReview.swift */,
+				B100000000000000000A0005 /* NativeHttp.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -318,6 +321,7 @@
 				42F8623E6B0F198C0367224B /* BrambleConstants.swift in Sources */,
 				B100000000000000000B0007 /* CredentialExchange.swift in Sources */,
 				B100000000000000000B0008 /* AppReview.swift in Sources */,
+				B100000000000000000B0009 /* NativeHttp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

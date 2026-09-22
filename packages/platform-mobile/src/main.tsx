@@ -19,6 +19,7 @@ import { mobileBiometric } from "./adapters/biometric";
 import { mobileClipboard } from "./adapters/clipboard";
 import { mobileCrypto } from "./adapters/crypto";
 import { resolveExchange } from "./adapters/exchange";
+import { mobileHttp } from "./adapters/http";
 import { mobileShell, mobileTarget, registerOpenSetup, resolveAppVersion } from "./adapters/shell";
 import { mobileStorage } from "./adapters/storage";
 import { startAutoLock } from "./auto-lock";
@@ -40,6 +41,7 @@ const platform: Platform = {
 	shell: mobileShell,
 	clipboard: mobileClipboard,
 	biometric: mobileBiometric,
+	http: mobileHttp,
 	// iOS only, and presence just means the plugin exists; the UI asks it whether this
 	// particular device can actually exchange. Kept off the async boot path on purpose.
 	exchange: resolveExchange(),

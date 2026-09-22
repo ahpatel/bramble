@@ -55,6 +55,12 @@ dependencies {
     implementation "androidx.credentials:credentials:$androidxCredentialsVersion"
     // JNA backs the uniffi-generated crypto glue; the @aar bundles jnidispatch's native libs.
     implementation "net.java.dev.jna:jna:5.14.0@aar"
+    // The native HTTP transport (NativeHttpPlugin). HttpURLConnection cannot be used: it obeys the
+    // process-global CookieHandler, and Capacitor's Bridge registers CapacitorCookies as a
+    // built-in whose load() points that at the WebView's cookie jar. OkHttp states NO_COOKIES on
+    // its own client instead. Square, not Google: no Play Services (verified, its only transitive
+    // dep is okio + kotlin-stdlib).
+    implementation "com.squareup.okhttp3:okhttp:$okhttpVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

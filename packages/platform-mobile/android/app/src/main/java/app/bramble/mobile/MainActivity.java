@@ -9,6 +9,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BiometricVaultPlugin.class);
         registerPlugin(NativeCryptoPlugin.class);
+        registerPlugin(NativeHttpPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
