@@ -1200,6 +1200,14 @@ msgstr "Baixando…"
 msgid "Downloads and restarts Bramble. Your vault is untouched."
 msgstr "Baixa e reinicia o Bramble. Seu cofre permanece intacto."
 
+#: packages/core/src/app/screens/Settings/components/AliasSection.tsx
+#~ msgid "DuckDuckGo has no API key page. Open the Autofill tab, then your browser's developer tools, click \"Generate Private Duck Address\", and copy the token after \"authorization: Bearer\" in the Network tab."
+#~ msgstr "O DuckDuckGo não tem uma página de chave de API. Abra a aba Preenchimento automático, depois as ferramentas do desenvolvedor do seu navegador, clique em \\"
+
+#: packages/core/src/app/screens/Settings/components/AliasSection.tsx
+msgid "DuckDuckGo has no API key page. Open the Autofill tab, then your browser's developer tools, click Generate Private Duck Address, and copy the token that follows authorization: Bearer in the Network tab."
+msgstr "O DuckDuckGo não tem página de chave de API. Abra a aba Preenchimento automático, depois as ferramentas do desenvolvedor do seu navegador, clique em Gerar Endereço Duck Privado e copie o token que aparece após authorization: Bearer na aba Rede."
+
 #: packages/core/src/app/components/EntryRow.tsx
 #: packages/core/src/app/screens/EntryDetail/EntryDetail.tsx
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
@@ -1666,7 +1674,7 @@ msgstr "Este é o seu dispositivo?"
 #. placeholder {0}: approval.label
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "It calls itself \"{0}\". Only the symbols above prove who it is."
-msgstr "Ele se autodenomina \\"
+msgstr "Ele se autodenomina \"{0}\". Apenas os símbolos acima comprovam quem ele é."
 
 #: packages/core/src/app/components/ReviewNudgeCard.tsx
 #~ msgid "It's free and open source, and a review is how most people find it. If something is wrong instead, the issue tracker is the place that gets it fixed."
@@ -2101,7 +2109,7 @@ msgstr "Versão mais antiga no outro dispositivo? Compare esta em vez disso:"
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "One-click sign-in for {name} is coming in a future update. For now, pick a provider under \"Bring your own storage\"."
-msgstr "O login com um clique para {name} estará disponível em uma futura atualização. Por enquanto, selecione um provedor em \\"
+msgstr "O login com um clique para {name} estará disponível em uma atualização futura. Por enquanto, escolha um provedor em \"Traga seu próprio armazenamento\"."
 
 #: packages/core/src/app/screens/Settings/components/BiometricSection.tsx
 msgid "Only {brand} can unlock. Adding or removing a face or fingerprint turns this off, and you'll re-enable it with your master password."
@@ -2149,6 +2157,10 @@ msgstr "Abra o Bramble no seu outro dispositivo e escaneie o código ou cole-o l
 #: packages/core/src/app/screens/Import/components/KdbxUnlock.tsx
 msgid "Open database"
 msgstr "Abrir banco de dados"
+
+#: packages/core/src/app/screens/Settings/components/AliasSection.tsx
+msgid "Open Email Protection settings"
+msgstr "Abrir configurações do Email Protection"
 
 #: packages/core/src/app/layouts/AppLayout.tsx
 #: packages/core/src/app/screens/Auth/Auth.tsx
@@ -2297,7 +2309,7 @@ msgstr "Cole o código em vez disso"
 
 #: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
 msgid "Paste the code from your other device's \"Add a device\" screen"
-msgstr "Cole o código do outro dispositivo \\"
+msgstr "Cole o código da tela \"Adicionar dispositivo\" do seu outro dispositivo."
 
 #: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
 msgid "Paste the pairing code from your other device."

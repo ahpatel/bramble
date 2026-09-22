@@ -1200,6 +1200,14 @@ msgstr "Downloading…"
 msgid "Downloads and restarts Bramble. Your vault is untouched."
 msgstr "Downloads and restarts Bramble. Your vault is untouched."
 
+#: packages/core/src/app/screens/Settings/components/AliasSection.tsx
+#~ msgid "DuckDuckGo has no API key page. Open the Autofill tab, then your browser's developer tools, click \"Generate Private Duck Address\", and copy the token after \"authorization: Bearer\" in the Network tab."
+#~ msgstr "DuckDuckGo has no API key page. Open the Autofill tab, then your browser's developer tools, click \"Generate Private Duck Address\", and copy the token after \"authorization: Bearer\" in the Network tab."
+
+#: packages/core/src/app/screens/Settings/components/AliasSection.tsx
+msgid "DuckDuckGo has no API key page. Open the Autofill tab, then your browser's developer tools, click Generate Private Duck Address, and copy the token that follows authorization: Bearer in the Network tab."
+msgstr "DuckDuckGo has no API key page. Open the Autofill tab, then your browser's developer tools, click Generate Private Duck Address, and copy the token that follows authorization: Bearer in the Network tab."
+
 #: packages/core/src/app/components/EntryRow.tsx
 #: packages/core/src/app/screens/EntryDetail/EntryDetail.tsx
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
@@ -2149,6 +2157,10 @@ msgstr "Open Bramble on your other device and scan the code, or paste it there."
 #: packages/core/src/app/screens/Import/components/KdbxUnlock.tsx
 msgid "Open database"
 msgstr "Open database"
+
+#: packages/core/src/app/screens/Settings/components/AliasSection.tsx
+msgid "Open Email Protection settings"
+msgstr "Open Email Protection settings"
 
 #: packages/core/src/app/layouts/AppLayout.tsx
 #: packages/core/src/app/screens/Auth/Auth.tsx

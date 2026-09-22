@@ -34,22 +34,38 @@ if (process.argv.includes("--extract")) {
 }
 
 // --- Lingui .po: any target locale with an empty msgstr is untranslated ---
+// `\\.` before the character class is what keeps an escaped quote inside the string rather than
+// ending it. The naive `"[^]*?"` reads a msgid containing \\" as stopping there; see the same
+// pattern, and the bug it caused, in scripts/i18n/po.mjs.
+const QUOTED = '"(?:\\\\.|[^"\\\\])*"';
+const field = (name) => new RegExp(`^${name} ((?:${QUOTED}\\s*)+)`, "m");
 const decode = (raw) =>
-	raw ? [...raw.matchAll(/"([^]*?)"/g)].map((m) => m[1]).join("") : "";
+	raw
+		? [...raw.matchAll(new RegExp(QUOTED, "g"))]
+				.map((m) => m[0].slice(1, -1))
+				.join("")
+		: "";
 for (const { code } of LOCALES) {
 	const path = PO_CATALOG(code);
 	if (!existsSync(path)) {
 		note(`po[${code}]: catalog missing (run pnpm i18n:extract)`);
 		continue;
 	}
-	const missing = readFileSync(path, "utf8")
+	const blocks = readFileSync(path, "utf8")
 		.split(/\n\n+/)
-		.filter((b) => {
-			const id = decode(b.match(/^msgid ((?:"[^]*?"\s*)+)/m)?.[1]);
-			const str = decode(b.match(/^msgstr ((?:"[^]*?"\s*)+)/m)?.[1]);
-			return id && !str;
-		}).length;
+		.map((b) => ({
+			id: decode(b.match(field("msgid"))?.[1]),
+			str: decode(b.match(field("msgstr"))?.[1]),
+		}));
+	const missing = blocks.filter((b) => b.id && !b.str).length;
 	if (missing) note(`po[${code}]: ${missing} untranslated string(s)`);
+	// A msgstr ending in a backslash was cut mid-escape: the translator emitted a quote it did not
+	// escape and the parser stopped there. The result is non-empty, so the emptiness check above is
+	// happy while the locale ships a sentence that stops mid-word. Seen for real, in five locales
+	// at once, from one source string that contained escaped double quotes. Natural-language copy
+	// never ends in a backslash, so this costs no false positives.
+	const truncated = blocks.filter((b) => b.id && /\\$/.test(b.str)).length;
+	if (truncated) note(`po[${code}]: ${truncated} string(s) cut mid-escape (avoid quotes in source copy)`);
 }
 
 // --- Android: every translatable source string present in each values-<locale> ---

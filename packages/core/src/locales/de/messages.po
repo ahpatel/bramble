@@ -1200,6 +1200,14 @@ msgstr "Herunterladen…"
 msgid "Downloads and restarts Bramble. Your vault is untouched."
 msgstr "Bramble wird heruntergeladen und neu gestartet. Ihr Tresor bleibt unberührt."
 
+#: packages/core/src/app/screens/Settings/components/AliasSection.tsx
+#~ msgid "DuckDuckGo has no API key page. Open the Autofill tab, then your browser's developer tools, click \"Generate Private Duck Address\", and copy the token after \"authorization: Bearer\" in the Network tab."
+#~ msgstr "DuckDuckGo hat keine Seite für API-Schlüssel. Öffnen Sie den Autofill-Tab, dann die Entwicklertools Ihres Browsers, klicken Sie auf \\"
+
+#: packages/core/src/app/screens/Settings/components/AliasSection.tsx
+msgid "DuckDuckGo has no API key page. Open the Autofill tab, then your browser's developer tools, click Generate Private Duck Address, and copy the token that follows authorization: Bearer in the Network tab."
+msgstr "DuckDuckGo hat keine Seite für API-Schlüssel. Öffnen Sie den Autofill-Tab und dann die Entwicklertools Ihres Browsers, klicken Sie auf „Generate Private Duck Address“ und kopieren Sie das Token, das im Netzwerk-Tab auf „authorization: Bearer“ folgt."
+
 #: packages/core/src/app/components/EntryRow.tsx
 #: packages/core/src/app/screens/EntryDetail/EntryDetail.tsx
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
@@ -1506,7 +1514,7 @@ msgstr "Hut"
 
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Have a pairing code from another device? Add a vault and choose \"Join a device\" to sync its vault onto this one. Once enrolled, devices sync automatically in the background while unlocked, no button or window needed."
-msgstr "Haben Sie einen Pairing-Code von einem anderen Gerät? Fügen Sie einen Tresor hinzu und wählen Sie \\"
+msgstr "Haben Sie einen Kopplungscode von einem anderen Gerät? Fügen Sie einen Tresor hinzu und wählen Sie „Gerät beitreten“, um den Tresor des anderen Geräts auf dieses Gerät zu synchronisieren. Nach der Registrierung synchronisieren sich Geräte automatisch im Hintergrund, solange sie entsperrt sind – ganz ohne Schaltfläche oder Fenster."
 
 #: packages/core/src/app/components/SasDisplay.tsx
 msgid "Headphones"
@@ -1666,7 +1674,7 @@ msgstr "Ist dies Ihr Gerät?"
 #. placeholder {0}: approval.label
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "It calls itself \"{0}\". Only the symbols above prove who it is."
-msgstr "Es nennt sich \\"
+msgstr "Es nennt sich „{0}“. Nur die Symbole oben beweisen, wer es ist."
 
 #: packages/core/src/app/components/ReviewNudgeCard.tsx
 #~ msgid "It's free and open source, and a review is how most people find it. If something is wrong instead, the issue tracker is the place that gets it fixed."
@@ -2150,6 +2158,10 @@ msgstr "Öffnen Sie Bramble auf Ihrem anderen Gerät und scannen Sie den Code od
 msgid "Open database"
 msgstr "Datenbank öffnen"
 
+#: packages/core/src/app/screens/Settings/components/AliasSection.tsx
+msgid "Open Email Protection settings"
+msgstr "E-Mail-Schutz-Einstellungen öffnen"
+
 #: packages/core/src/app/layouts/AppLayout.tsx
 #: packages/core/src/app/screens/Auth/Auth.tsx
 msgid "Open in window"
@@ -2297,7 +2309,7 @@ msgstr "Code stattdessen einfügen"
 
 #: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
 msgid "Paste the code from your other device's \"Add a device\" screen"
-msgstr "Fügen Sie den Code vom anderen Gerät ein, ohne das \\"
+msgstr "Fügen Sie den Code vom Bildschirm „Gerät hinzufügen“ Ihres anderen Geräts ein."
 
 #: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
 msgid "Paste the pairing code from your other device."
