@@ -1,10 +1,10 @@
-# Email aliases (planned)
+# Email aliases
 
-Design note for the per-site email alias generation asked for in issue #74:
-Bramble holds an API key for an alias provider the user already has, and creates
-a fresh address at signup time so every site gets its own. It records the
-provider surfaces, where the key lives, and which platform can reach which host,
-so the shape is decided before any code.
+Per-site email alias generation, issue #74: Bramble holds an API key for an alias
+provider the user already has, and creates a fresh address at signup time so
+every site gets its own. This began as a design note written before any code and
+still reads as one, because the reasoning is the useful part; where a decision
+was later reversed, the original argument is kept next to what overturned it.
 
 Fast-moving facts (provider endpoints, CORS behaviour, quotas) are dated
 **September 2026**. Those measured against live accounts by
@@ -182,7 +182,7 @@ not settled by the public docs and is unproven. It matters: if it can, Fastmail
 is the only provider here whose stored key cannot read the user's mail, and that
 is worth saying in the settings copy.
 
-## Transport: plain `fetch`, on every platform
+## Transport: `fetch` for four providers, native for two
 
 The expensive assumption here was that this would need a native HTTP path per
 platform, the way cloud backups do. It does not. Measured September 2026, with
@@ -197,9 +197,21 @@ an `OPTIONS` preflight carrying `Access-Control-Request-Method: POST` and
 | `https://localhost` | `*` | reflected | reflected |
 
 All three answer a cross-origin preflight, and two of them reflect whatever
-origin is asked. So the client is one implementation in `core`, calling `fetch`,
-shared by the extension, the desktop and both mobile apps. No `net` adapter, no
-Rust command, no Capacitor HTTP plugin.
+origin is asked. So for these the client is one implementation in `core`, calling
+`fetch`, shared by the extension, the desktop and both mobile apps.
+
+**This held for the four providers measured here and broke on the two added
+later.** DuckDuckGo and Firefox Relay send no CORS headers at all, which is what
+eventually forced the native transport this section was relieved to avoid: a
+Tauri command on the desktop, an in-house Capacitor plugin on iOS and Android,
+both behind `HttpTransport` in `@core/adapters/http`. Nothing below changed as a
+result. `fetch` is still the default and still what Addy, SimpleLogin and the
+catch-all provider use everywhere; a platform supplies a transport only when it
+has one, and a client that never sees one behaves exactly as it did before.
+
+The lesson worth keeping is that the relief was provider-specific rather than
+structural. "These consumer APIs expect browser-extension callers" was true of
+the four asked, and said nothing about the fifth.
 
 This is the opposite of the backups situation and worth understanding rather
 than just enjoying, because the difference is not luck: these are consumer APIs
@@ -399,12 +411,13 @@ neither, so unlike every other provider here its aliases are not identifiable in
 the provider's own UI by what they were made for. That is their design, not an
 omission in the client.
 
-### What the adapter would actually cost
+### What the adapter cost
 
-Priced against the shipped code (September 2026), so the deferral is a number
-rather than a feeling. The total is about a week, and it is worth reading which
-part of the week it is, because the expensive platform is not the one the desktop
-precedent suggests.
+Priced against the shipped code (September 2026), so the deferral was a number
+rather than a feeling. The estimate was about a week, and the interesting part
+was always which part of the week, because the expensive platform is not the one
+the desktop precedent suggests. It is left here as written; how it held up is at
+the end of the section.
 
 **The seam is one function.** `core/aliases/http.ts` holds the only `fetch` in
 the feature, and every provider goes through it by construction, so the core
@@ -447,15 +460,29 @@ verification on both, which is where most of the week goes.
 written down in the table above, so each is a file the size of `addy.ts`, plus
 descriptors, settings fields, and an `i18n:extract` run for the new copy.
 
+**How that held up.** The shape was right: the extension needed no change at all,
+the desktop command was `backup_send` with the credential half removed, mobile
+was the bulk and for the predicted reason, and the clients were small. Three
+things the estimate did not see. On Android the culprit was not `CapacitorHttp`
+but the Bridge itself, which is a stronger and less avoidable constraint than the
+one priced. `isAliasConfig` compared provider ids against a hand-written list, so
+adding a provider meant first removing a trap that fails silently. And the
+`i18n:extract` line quietly assumed the translation pipeline worked, which it did
+not: a `.po` string containing an escaped quote was being read as ending there,
+so three already-shipped strings were truncated mid-sentence in every locale.
+None of that changes the verdict, but "plus an `i18n:extract` run" is the kind of
+clause that hides a day.
+
 ### The cost is not the aliases feature's alone
 
 The arithmetic changes once the adapter is priced against everything waiting on
-it. [cloud-storage-backups.md](cloud-storage-backups.md) leaves mobile at
-`cloudBackup: false` and blocked on the same unanswered question, in the same
-words: whether a Capacitor webview can reach an arbitrary provider or needs a
-native transport. For S3 and WebDAV that answer is already known to be no, for
-the reason the desktop found. And the interface both features want is the same
-one, so a single native HTTP primitive on iOS and Android discharges both.
+it. At the time this was written, [cloud-storage-backups.md](cloud-storage-backups.md)
+left mobile at `cloudBackup: false`, blocked on the same unanswered question and
+in nearly the same words: whether a Capacitor webview can reach an arbitrary
+provider or needs a native transport. For S3 and WebDAV that answer was already
+known to be no, for the reason the desktop found. And the interface both features
+want is the same one, so a single native HTTP primitive on iOS and Android
+discharges both.
 
 Charged to aliases alone, a week for two providers is a bad trade and the
 deferral above stands. Charged across both, it is the missing piece of a feature
@@ -686,6 +713,17 @@ link is not made clickable.
    this cheap to provoke deliberately and worth doing before Phase 2 designs the
    error surface.
 4. Rate limits, undocumented on all four.
+5. **DuckDuckGo and Firefox Relay are unverified against a live account.** Both
+   endpoints are reachable and both authenticate (see [What is unproven about
+   these two](#what-is-unproven-about-these-two-and-why)), but no authenticated
+   `2xx` has been seen from either, and neither `verify` response body has ever
+   been observed, which is why both of those schemas are permissive.
+6. Whether DuckDuckGo's token **expires with the browser session** it was scraped
+   from. If it does, an expiry is indistinguishable from a bad key and the
+   settings screen has no remedy to offer.
+7. **Mobile cloud backups are built but not device-verified** end to end
+   ([cloud-storage-backups.md](cloud-storage-backups.md)). The transport under
+   them is device-proven on both platforms; the composition is not.
 
 ## Phases
 
@@ -696,6 +734,12 @@ link is not made clickable.
 | 2 | Shared UI: the settings section and the entry-form button, in six locales. | done |
 | 3 | Extension in-page suggestion: the email-field trigger, the picker row, the background round trip, save wiring, `_locales`, dom tests. | done, exercised in Chromium |
 | 4 | Firefox, mobile, release. | outstanding |
+| 5 | `HttpTransport`: the shared seam, a Tauri command, and an in-house Capacitor plugin for iOS and Android. | done, device-verified on an iPhone and a Pixel |
+| 6 | The DuckDuckGo and Firefox Relay clients, on that transport. | done, no live account to prove the success path |
+
+Phases 5 and 6 were not in the original plan. They exist because the deferral
+below was re-priced once it became clear the same transport also unblocked mobile
+cloud backups, which had been waiting on the identical question.
 
 ### What running it in a browser found
 
