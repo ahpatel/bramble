@@ -24,6 +24,7 @@ import { mobileShell, mobileTarget, registerOpenSetup, resolveAppVersion } from 
 import { mobileStorage } from "./adapters/storage";
 import { startAutoLock } from "./auto-lock";
 import { consumePendingAutofillSave } from "./autofill-pending";
+import { startBackupRuns } from "./backup";
 import { hasPendingImport, onImportAvailable } from "./credential-exchange";
 import { installNativeWebRtc } from "./native-webrtc";
 import { initRosterSync } from "./sync/sync-manager";
@@ -123,6 +124,8 @@ function Root() {
 
 	// Run ongoing roster sync while unlocked + enrolled (started on unlock).
 	useEffect(() => initRosterSync(), []);
+	// No background scheduler exists on either OS, so backups happen on unlock and on resume.
+	useEffect(() => startBackupRuns(), []);
 
 	if (view === "app")
 		return (

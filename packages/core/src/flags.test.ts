@@ -5,14 +5,15 @@ const TARGETS: Target[] = ["chromium", "firefox", "android", "ios"];
 
 describe("can()", () => {
 	it("resolves an { extension, mobile } capability by surface", () => {
-		// `cloudBackup`: the extension and the desktop, not mobile. Desktop is the one that can
-		// keep a schedule (tray-resident, credentials in the OS store, so a locked vault still
-		// backs up); mobile has no background scheduler at all.
+		// `cloudBackup`: everywhere, once mobile had a transport that could reach a provider at
+		// all. What differs is the promise, not the capability: only the desktop keeps a schedule
+		// (tray-resident, credentials in the OS store, so a locked vault still backs up), while
+		// mobile has no background scheduler and runs opportunistically on unlock and resume.
 		expect(can("cloudBackup", "chromium")).toBe(true);
 		expect(can("cloudBackup", "firefox")).toBe(true);
 		expect(can("cloudBackup", "desktop")).toBe(true);
-		expect(can("cloudBackup", "android")).toBe(false);
-		expect(can("cloudBackup", "ios")).toBe(false);
+		expect(can("cloudBackup", "android")).toBe(true);
+		expect(can("cloudBackup", "ios")).toBe(true);
 	});
 
 	it("keeps webauthnUnlock a superset of securityKeys, which is the whole point of two flags", () => {

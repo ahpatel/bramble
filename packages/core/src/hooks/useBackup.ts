@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createTarget, runBackup } from "../backup";
+import { createTarget, runBackup, signingTransport } from "../backup";
 import {
 	applyBackupOutcomes,
 	type BackupFrequency,
@@ -62,7 +62,7 @@ function originOf(t: {
  * reaches any provider via host permissions. See docs/cloud-storage-backups.md.
  */
 export function useBackup() {
-	const { storage, crypto, shell, backupCreds } = usePlatform();
+	const { storage, crypto, shell, backupCreds, http } = usePlatform();
 	// Targets, credentials and snapshots all belong to the vault the user is currently in.
 	const { activeId, vaults, ready } = useVaultRegistry();
 	const vaultId = activeId ?? vaults[0]?.id;
@@ -318,16 +318,20 @@ export function useBackup() {
 								throw new Error(FOREIGN_CREDS_ERROR);
 							}
 						}
-						// Which transport, if any. Where the platform cannot reach a provider from
-						// this process at all (the desktop's webview has no CORS grant), BOTH cases
-						// have to route through it: the stored-credential one, and the one where we
-						// just unwrapped the secret ourselves. Undefined here means the platform can
-						// simply fetch, which is the extension and mobile.
+						// Which transport, if any, and it turns on two separate questions: can this
+						// platform reach a provider from this process, and where do the credentials
+						// live. The desktop answers no and "in the OS store", so BOTH of its cases
+						// route through Rust: the stored-credential one and the one where we just
+						// unwrapped the secret ourselves. Mobile answers no and "in the vault", so
+						// it signs here with the secret in hand and only the sending goes native.
+						// The extension answers yes, gets undefined, and simply fetches.
+						const providerCfg = toProviderConfig(t, secrets);
 						const bt = createTarget(
-							toProviderConfig(t, secrets),
-							credsAreOsHeld(creds) && vaultId
+							providerCfg,
+							(credsAreOsHeld(creds) && vaultId
 								? backupCreds?.transport(vaultId, t)
-								: backupCreds?.transportWithSecrets(t, secrets),
+								: backupCreds?.transportWithSecrets(t, secrets)) ??
+								(http ? signingTransport(providerCfg, http) : undefined),
 						);
 						const prefix = targetPrefixFor(t, vaultId ?? "", isDefault);
 						const r = await runBackup(bt, blob, {
@@ -356,7 +360,7 @@ export function useBackup() {
 			await persist(applyBackupOutcomes(latest, byId, Date.now()));
 			setRunningIds(new Set());
 		},
-		[targets, storage, crypto, persist, vaultId, isDefault, backupCreds],
+		[targets, storage, crypto, persist, vaultId, isDefault, backupCreds, http],
 	);
 
 	// The folder this vault's snapshots actually land in for a target, so the UI can show a

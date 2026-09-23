@@ -73,11 +73,14 @@ export const CAPABILITIES = {
 	// Desktop webcams exist, but webview camera access is inconsistent across the three
 	// engines; pairing codes are pasted instead. See docs/desktop-port.md.
 	cameraScan: { extension: false, mobile: true, desktop: false },
-	// Not shipped on mobile yet. Desktop is the natural host and the only one that can keep a
-	// schedule: tray-resident, credentials in the OS store, so a vault's timer is honoured while
-	// it is locked. Its S3 + WebDAV tiles work; the one-click OAuth tile stays hidden there until
-	// the shell adapter grows `connectBackupOAuth`.
-	cloudBackup: { extension: true, mobile: false, desktop: true },
+	// On everywhere, but what each target can promise differs. Desktop is the only one that keeps
+	// a schedule: tray-resident, credentials in the OS store, so a vault's timer is honoured while
+	// it is locked. Mobile has no background scheduler at all, so its backups are opportunistic
+	// (on unlock and on resume) and its credentials stay VEK-wrapped, which means they only run
+	// while that vault is open. It reaches a provider at all only through the native transport;
+	// see @core/adapters/http. The one-click OAuth tile stays hidden off the extension until the
+	// shell adapter grows `connectBackupOAuth`.
+	cloudBackup: { extension: true, mobile: true, desktop: true },
 	// EXTERNAL security keys (YubiKey). Firefox supports `prf` for platform authenticators only,
 	// not for external keys, so this stays off there even though webauthnUnlock is on. Mobile has
 	// no `prf`; desktop webviews have no usable WebAuthn at all and wait on a native CTAP path.

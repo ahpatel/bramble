@@ -463,6 +463,21 @@ that currently ships dark on half its targets. Whoever picks this up should pick
 it up as the mobile transport, with DuckDuckGo and Firefox Relay as two of its
 callers, rather than as a provider request that happens to need plumbing.
 
+**It was built that way, and both bets paid.** `HttpTransport` lives in
+`@core/adapters/http`; the desktop implements it as a Tauri command and mobile as
+an in-house Capacitor plugin, device-verified on both an iPhone and a Pixel. The
+measurement that justifies it: the same POST to a CORS-less host fails with
+`TypeError: Failed to fetch` from the WebView and returns a real HTTP status
+through the plugin, on both platforms.
+
+Mobile cloud backups turned on in the same stroke
+([cloud-storage-backups.md](cloud-storage-backups.md)), which is the second
+caller the estimate was predicated on. The one surprise was on Android, where the
+obvious `HttpURLConnection` turned out to be unusable for any authenticated
+request: Capacitor's Bridge registers `CapacitorCookies` as a built-in whose
+`load()` points the process-global `CookieHandler` at the WebView's cookie jar,
+with no per-connection opt-out and regardless of config.
+
 Outside those six there is little. iCloud Hide My Email and Proton Pass aliases
 have no public creation API (Proton owns SimpleLogin, so a Proton user's route in
 is the SimpleLogin client we already have). Self-hosted Addy and SimpleLogin need

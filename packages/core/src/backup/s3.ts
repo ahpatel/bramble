@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { fetchTransport, type HttpTransport } from "../adapters/http";
 import { signS3Request } from "./sigv4";
 import {
 	type BackupObject,
@@ -11,11 +12,18 @@ import {
 const xml = new XMLParser();
 
 /**
- * The default transport: sign with the config's credentials here, then `fetch`. The desktop
- * replaces it with one that signs and sends in Rust, where the credentials live and where the
- * request is not subject to the webview's CORS. See BackupTransport.
+ * Sign with the config's credentials here, then hand the request to `send`.
+ *
+ * Who signs and who sends are separate questions, and the platforms answer them differently.
+ * The extension does both in JS. Mobile signs here and sends over its native transport, because
+ * no S3 endpoint grants CORS to a webview origin but the credentials are already in hand. The
+ * desktop does neither here: it replaces this whole transport with one that signs and sends in
+ * Rust, where the credentials live. See BackupTransport and @core/adapters/http.
  */
-function webTransport(cfg: S3Config): BackupTransport {
+export function s3SigningTransport(
+	cfg: S3Config,
+	send: HttpTransport = fetchTransport,
+): BackupTransport {
 	const credentials = {
 		accessKeyId: cfg.accessKeyId,
 		secretAccessKey: cfg.secretAccessKey,
@@ -24,19 +32,9 @@ function webTransport(cfg: S3Config): BackupTransport {
 	return {
 		async send({ method, url, headers, body }) {
 			const signed = await signS3Request({ method, url, body, headers, credentials });
-			// credentials: "omit" for the same reason as WebDAV: a self-hosted endpoint
-			// (MinIO, Garage) may sit behind a cookie session that outranks our signature.
-			const res = await fetch(url, {
-				method,
-				body: body as BodyInit | undefined,
-				headers: signed.headers,
-				credentials: "omit",
-			});
-			return {
-				status: res.status,
-				ok: res.ok,
-				body: new Uint8Array(await res.arrayBuffer()),
-			};
+			// The sender omits ambient cookies for the same reason as WebDAV: a self-hosted
+			// endpoint (MinIO, Garage) may sit behind a cookie session that outranks our signature.
+			return send.send({ method, url, headers: signed.headers, body });
 		},
 	};
 }
@@ -44,7 +42,7 @@ function webTransport(cfg: S3Config): BackupTransport {
 /** An S3-compatible BackupTarget (Backblaze B2, R2, Storj, Wasabi, MinIO, ...). */
 export function createS3Target(
 	cfg: S3Config,
-	transport: BackupTransport = webTransport(cfg),
+	transport: BackupTransport = s3SigningTransport(cfg),
 ): BackupTarget {
 	const base = cfg.endpoint.replace(/\/+$/, "");
 	const objectUrl = (key: string) => `${base}/${cfg.bucket}/${key}`;

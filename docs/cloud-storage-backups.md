@@ -627,9 +627,30 @@ bad property for a feature whose whole promise is that it works while you are no
 *(`apt install bramble` from `apt.bramble.sh` on a clean machine is done, and is now
 `pnpm run test:apt`.)*
 
-**Mobile is untouched** (`cloudBackup: false`). Enabling it needs an answer to the same question
-the desktop had: whether a Capacitor webview can reach an arbitrary provider, or whether it needs
-a native transport the way the desktop does. Do not assume the extension's answer transfers.
+**Mobile now ships** (`cloudBackup: true`), and the question this paragraph used to ask has an
+answer: a Capacitor webview cannot reach an arbitrary provider, so it needed a native transport
+after all. The extension's answer did not transfer, exactly as the warning here suspected.
+
+What made it worth building is that the same transport was also the only thing standing between
+the email-alias feature and two providers that send no CORS headers, so one native HTTP primitive
+discharged both. It is `HttpTransport` (`@core/adapters/http`), implemented in Rust on the desktop
+and as an in-house Capacitor plugin on iOS and Android; see docs/email-aliases.md for why neither
+`CapacitorHttp` nor `HttpURLConnection` could be used.
+
+Mobile splits the work differently from the desktop, and the split is the point. The desktop has
+to do **both** halves in Rust, because its credentials live in the OS store and never enter the
+webview. Mobile holds its credentials in the vault, so it signs in JS with the secret it just
+unwrapped and sends only the bytes natively: `signingTransport(cfg, send)` in `@core/backup`.
+That is why mobile provides no `BackupCredentialsAdapter` at all -- it has no credential store,
+and the "no credential store" UI that adapter drives is for a Linux session missing Secret
+Service, not for a phone.
+
+**What mobile cannot promise is a schedule.** There is no background scheduler on either OS, so
+`platform-mobile/src/backup.ts` runs on unlock and on resume, and the frequency setting means
+"next time you open Bramble after this long" rather than a wall-clock time. Credentials stay
+VEK-wrapped, so a run only happens while that vault is open. Every dep re-checks the lock state
+rather than trusting the state on entry, because auto-lock can fire mid-run when the app is
+backgrounded.
 
 **Dropbox on desktop.** The OAuth connect is extension-only (`shell.connectBackupOAuth`), so the
 desktop shows the S3 and WebDAV tiles and hides one-click sign-in.

@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { fetchTransport, type HttpTransport } from "../adapters/http";
 import {
 	type BackupHttpResponse,
 	type BackupObject,
@@ -32,36 +33,32 @@ function reason(res: BackupHttpResponse): string {
 }
 
 /**
- * The default transport: Basic auth from the config, then `fetch`. The desktop replaces it with
- * one that authenticates and sends in Rust, where the credentials live and where the request is
- * not subject to the webview's CORS. See BackupTransport.
+ * Authenticate with the config's credentials here, then hand the request to `send`.
+ *
+ * Who authenticates and who sends are separate questions. The extension does both in JS; mobile
+ * authenticates here and sends over its native transport, because no WebDAV server grants CORS
+ * to a webview origin; the desktop replaces this whole transport with one that does both in
+ * Rust, where the credentials live. See BackupTransport and @core/adapters/http.
  */
-function webTransport(cfg: WebdavConfig): BackupTransport {
+export function webdavSigningTransport(
+	cfg: WebdavConfig,
+	send: HttpTransport = fetchTransport,
+): BackupTransport {
 	const auth = `Basic ${btoa(`${cfg.username}:${cfg.password}`)}`;
 	return {
-		async send({ method, url, headers, body }) {
-			const res = await fetch(url, {
-				method,
-				body: body as BodyInit | undefined,
-				// Never send ambient cookies: a browser session for the same host (e.g. the
-				// Nextcloud web UI in another tab) outranks our Basic header server-side and
-				// then fails the server's CSRF check, turning valid credentials into a 401.
-				credentials: "omit",
-				headers: { Authorization: auth, ...headers },
-			});
-			return {
-				status: res.status,
-				ok: res.ok,
-				body: new Uint8Array(await res.arrayBuffer()),
-			};
-		},
+		// Ambient cookies are never sent, which every sender guarantees: a browser session for the
+		// same host (e.g. the Nextcloud web UI in another tab) outranks our Basic header
+		// server-side and then fails the server's CSRF check, turning valid credentials into a
+		// 401. That cost a day once (1255ab7b), which is why the rule lives in the transport.
+		send: ({ method, url, headers, body }) =>
+			send.send({ method, url, headers: { Authorization: auth, ...headers }, body }),
 	};
 }
 
 /** A WebDAV BackupTarget (Nextcloud, ownCloud, Fastmail, pCloud, Koofr, ...). */
 export function createWebdavTarget(
 	cfg: WebdavConfig,
-	transport: BackupTransport = webTransport(cfg),
+	transport: BackupTransport = webdavSigningTransport(cfg),
 ): BackupTarget {
 	const base = joinUrl(cfg.serverUrl, "");
 	const basePath = new URL(base).pathname;

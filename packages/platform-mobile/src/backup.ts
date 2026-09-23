@@ -1,0 +1,144 @@
+// Opportunistic cloud backups on mobile.
+//
+// There is no background scheduler on iOS or Android, so a wall-clock promise cannot be kept
+// here: the only moments this process is reliably alive and able to decrypt are an unlock and a
+// resume, and those are what this listens to. The desktop keeps a real schedule because it is
+// tray-resident with credentials in the OS store; mobile has neither, so the setting means "next
+// time you open Bramble after this long" rather than "at this time".
+//
+// Everything below is platform I/O. The due decision and the orchestration are the pure, tested
+// runScheduledBackups/isDue in @core, the same ones the extension and the desktop drive.
+// See docs/cloud-storage-backups.md.
+
+import { App as CapacitorApp } from "@capacitor/app";
+import { createTarget, runBackup, sha256Hex, signingTransport } from "@core/backup";
+import {
+	type BackupSecrets,
+	type BackupTargetConfig,
+	backupTargetsKeyFor,
+	keyVaultIdFor,
+	targetPrefixFor,
+	toProviderConfig,
+} from "@core/backup/config";
+import { runScheduledBackups, type VaultBackup } from "@core/backup/run";
+import { parseRegistry, VAULT_REGISTRY_KEY } from "@core/vault/vault-registry";
+import { mobileCrypto } from "./adapters/crypto";
+import { mobileHttp } from "./adapters/http";
+import { mobileStorage } from "./adapters/storage";
+import { onVaultStateChange } from "./adapters/vault-session";
+
+/** Mirrors the lock state rather than asking for it: the VEK is what a run actually needs, and
+ * only the crypto adapter knows when it appears and disappears. Starts locked, because it is. */
+let unlocked = false;
+let running = false;
+
+async function loadTargets(vaultId: string): Promise<BackupTargetConfig[]> {
+	return (await mobileStorage.getMeta<BackupTargetConfig[]>(backupTargetsKeyFor(vaultId))) ?? [];
+}
+
+/**
+ * Every registered vault's sealed blob.
+ *
+ * Reading one needs no VEK, so a locked vault still has bytes; whether its targets can be
+ * unwrapped is decided per target below. A vault whose blob will not read is skipped rather than
+ * failing the run, since one unreadable vault should not stop the others.
+ */
+async function listVaults(): Promise<VaultBackup[]> {
+	const reg = parseRegistry(await mobileStorage.getMeta(VAULT_REGISTRY_KEY));
+	const out: VaultBackup[] = [];
+	for (const v of reg.vaults) {
+		try {
+			out.push({
+				id: v.id,
+				blob: await mobileStorage.readVaultBlob(v.id),
+				isDefault: v.id === reg.vaults[0]?.id,
+			});
+		} catch {}
+	}
+	return out;
+}
+
+/**
+ * Run any due and changed backup, if the vault is open. No-op otherwise.
+ *
+ * Exported for the Settings screen's own trigger and for tests; the listeners below are the
+ * ordinary path.
+ */
+export async function runDueBackups(): Promise<void> {
+	if (running || !unlocked) return;
+	running = true;
+	try {
+		const result = await runScheduledBackups(
+			{
+				// Re-checked at every step, not just on entry: auto-lock can fire mid-run when the
+				// app is backgrounded, and continuing after that would be decrypting with a key
+				// that is supposed to be gone.
+				listVaults: async () => (unlocked ? listVaults() : []),
+				loadTargets: async (vaultId) => (unlocked ? loadTargets(vaultId) : []),
+				saveTargets: async (vaultId, targets) => {
+					if (unlocked) await mobileStorage.setMeta(backupTargetsKeyFor(vaultId), targets);
+				},
+				hashVault: async (vault) => (unlocked ? sha256Hex(vault.blob) : ""),
+				decryptSecrets: async (_vaultId, creds) => {
+					if (!unlocked) return null;
+					try {
+						return JSON.parse(
+							await mobileCrypto.decryptWithVek(creds.iv, creds.ciphertext),
+						) as BackupSecrets;
+					} catch {
+						// Null is a skip, not a failure: this is what a target wrapped under another
+						// vault's key looks like, and nothing is wrong with the run.
+						return null;
+					}
+				},
+				upload: async (_vaultId, t, secrets, vault) => {
+					if (!unlocked) throw new Error("vault locked");
+					// Never null here: OS-held credentials are a desktop thing, and this platform
+					// offers no credential store, so every target is VEK-wrapped.
+					if (secrets === null) throw new Error("no credentials for this target");
+					const cfg = toProviderConfig(t, secrets);
+					// Signed here with the secret just unwrapped, sent over the native transport:
+					// no S3 endpoint or WebDAV server grants CORS to the WebView's origin, so a
+					// plain fetch would fail before reaching the network. See @core/adapters/http.
+					const target = createTarget(cfg, signingTransport(cfg, mobileHttp));
+					await runBackup(target, vault.blob, {
+						prefix: targetPrefixFor(t, vault.id, vault.isDefault),
+						keep: t.keep,
+						vaultId: keyVaultIdFor(t, vault.id),
+					});
+				},
+			},
+			Date.now(),
+		);
+		if (result.attempted > 0) {
+			console.info(
+				`[bramble] backup: ${result.succeeded.length} ok, ${result.failed.length} failed`,
+			);
+		}
+		for (const f of result.failed) {
+			console.warn(`[bramble] backup failed for ${f.id} (vault ${f.vaultId}):`, f.error);
+		}
+	} finally {
+		running = false;
+	}
+}
+
+/**
+ * Listen for the two moments a backup can happen. Returns an unsubscribe; call once.
+ *
+ * Resume matters as much as unlock: someone who leaves Bramble open for days would otherwise
+ * never pass a trigger, and the app is commonly resumed while already unlocked (autofill, a
+ * quick copy). The run re-checks the lock state itself, so a resume that races auto-lock is a
+ * no-op rather than a decrypt against a vanished key.
+ */
+export function startBackupRuns(): () => void {
+	const offState = onVaultStateChange((locked) => {
+		unlocked = !locked;
+		if (!locked) void runDueBackups();
+	});
+	const resume = CapacitorApp.addListener("resume", () => void runDueBackups());
+	return () => {
+		offState();
+		void resume.then((h) => h.remove());
+	};
+}
