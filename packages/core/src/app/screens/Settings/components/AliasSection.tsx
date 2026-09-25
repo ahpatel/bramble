@@ -233,6 +233,10 @@ export function AliasSection() {
 				disabled={busy}
 				onChange={(e) => {
 					setProvider(e.target.value as AliasProviderId);
+					// A typed key belongs to the provider it was typed for. Kept across a switch, the
+					// next Check sent it as a credential to the new provider's server and the next blur
+					// saved it there.
+					setApiKey("");
 					// Options belong to the provider that declared them, so a switch drops them rather
 					// than carrying an Addy domain into a SimpleLogin config.
 					setOptions({});

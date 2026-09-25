@@ -127,4 +127,35 @@ describe("AliasSection persistence", () => {
 		// only fail when pressed.
 		expect(h.set).not.toHaveBeenCalled();
 	});
+	// A key belongs to the provider it was typed for. Carrying it across a switch meant the next
+	// "Check key" sent one provider's secret in an Authorization header to another provider's
+	// server, and the next blur saved it as that provider's key. Found testing DuckDuckGo: a
+	// SimpleLogin key typed, the provider switched, and the field still held it.
+	it("clears a typed key when the provider changes, so it cannot reach another provider", async () => {
+		const seen: string[] = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string | URL, init?: RequestInit) => {
+				const auth = (init?.headers as Record<string, string> | undefined)?.Authorization;
+				seen.push(`${String(url)} ${auth ?? ""}`);
+				return new Response("{}", { status: 401 });
+			}),
+		);
+		mount(stored({ provider: "simplelogin", options: {}, apiKey: "sl-stored" }));
+		await waitFor(() => expect(providerSelect().value).toBe("simplelogin"));
+
+		const keyField = () => document.querySelector('input[type="password"]') as HTMLInputElement;
+		fireEvent.change(keyField(), { target: { value: "sl-SECRET-typed" } });
+		fireEvent.change(providerSelect(), { target: { value: "duckduckgo" } });
+
+		expect(keyField().value).toBe("");
+
+		fireEvent.click(screen.getByRole("button", { name: /check key/i }));
+		await new Promise((r) => setTimeout(r, 20));
+		// Nothing typed for SimpleLogin may leave for DuckDuckGo, in any header or URL.
+		expect(seen.filter((r) => r.includes("sl-SECRET-typed"))).toEqual([]);
+		// And the stored key belongs to SimpleLogin too, so it must not be borrowed either.
+		expect(seen.filter((r) => r.includes("sl-stored"))).toEqual([]);
+		vi.unstubAllGlobals();
+	});
 });
