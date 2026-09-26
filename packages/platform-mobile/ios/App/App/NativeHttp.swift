@@ -52,10 +52,9 @@ public class NativeHttpPlugin: CAPPlugin, CAPBridgedPlugin {
         config.httpCookieStorage = nil
         config.httpCookieAcceptPolicy = .never
         config.httpShouldSetCookies = false
-        // Idle vs total: a stalled request dies in 60s, a slow upload still moving gets 600s,
-        // the desktop's upload budget. A 60s total failed large vaults on slow uplinks.
+        // Per-request timeouts are set in send(), scaled to the body. This is only the ceiling.
         config.timeoutIntervalForRequest = 60
-        config.timeoutIntervalForResource = 600
+        config.timeoutIntervalForResource = 3600
         return URLSession(configuration: config, delegate: redirectDelegate, delegateQueue: nil)
     }()
 
@@ -84,6 +83,12 @@ public class NativeHttpPlugin: CAPPlugin, CAPBridgedPlugin {
             }
             request.httpBody = body
         }
+        // iOS's request timeout counts only data RECEIVED, and nothing arrives while a body is
+        // uploading, so it has to cover the whole upload. Measured: a 2 MiB upload at 20 KiB/s,
+        // bytes moving the entire time, died at exactly 60s with a flat limit. Scaled to the body
+        // at an 8 KiB/s floor (a poor 2G uplink), a small request keeps ~60s to notice a stall and
+        // a vault gets time: 2 MiB gets about five minutes.
+        request.timeoutInterval = 60 + Double(request.httpBody?.count ?? 0) / 8_192
 
         // A request outlives the app being left. iOS suspends an app within seconds of it going to
         // the background, which would freeze an upload partway, so each request asks for the time

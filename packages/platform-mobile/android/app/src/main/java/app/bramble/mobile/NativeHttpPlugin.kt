@@ -49,13 +49,10 @@ class NativeHttpPlugin : Plugin() {
         .cookieJar(CookieJar.NO_COOKIES)
         .followRedirects(false)
         .followSslRedirects(false)
-        // Idle vs total, as on iOS. Read/write are per-operation idle limits and default to 10s,
-        // which a single blocked write on a poor uplink can exceed; the total matches the
-        // desktop's 600s upload budget, where 60s failed large vaults on slow uplinks.
+        // Writes time out per operation (OkHttp's default is 10s, too short for one write on a poor
+        // uplink). Read and call timeouts are set per request in send(), scaled to the body.
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
-        .callTimeout(600, TimeUnit.SECONDS)
         .build()
 
     @PluginMethod
@@ -88,7 +85,16 @@ class NativeHttpPlugin : Plugin() {
                 .headers(headers.toHeaders())
                 .build()
 
-            client.newCall(request).execute().use { res ->
+            // The read timer starts once the body is handed to the OS, which may still be draining
+            // megabytes of it over a slow uplink, so a flat read limit fails an upload that is still
+            // moving. Scaled to the body at an 8 KiB/s floor, as on iOS; the call limit covers the
+            // send and the wait after it.
+            val idle = 60L + (body?.size ?: 0) / 8_192L
+            val timed = client.newBuilder()
+                .readTimeout(idle, TimeUnit.SECONDS)
+                .callTimeout(maxOf(600L, 2 * idle), TimeUnit.SECONDS)
+                .build()
+            timed.newCall(request).execute().use { res ->
                 val bytes = res.body?.bytes() ?: ByteArray(0)
                 call.resolve(
                     JSObject()
