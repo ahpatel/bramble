@@ -1,6 +1,9 @@
 Neu in dieser Version:
 
-- Das Koppeln mit einem anderen Gerät bricht nicht mehr ab, während Sie es bestätigen. Der Countdown für den Kopplungscode lief auch nach der Eingabe des Codes weiter. Dadurch konnte die Bestätigung, wenn nur noch wenige Sekunden übrig waren, die Kopplung beenden und dem anderen Gerät mitteilen, sie sei abgelehnt worden, obwohl niemand sie abgelehnt hatte. Der Countdown stoppt jetzt, sobald der Code verwendet wird, und die Bestätigung erhält ihr eigenes vollständiges Zeitfenster.
-- Einstellungen, Über enthält jetzt den neuen Link „Bramble bewerten“, falls Sie eine Rezension hinterlassen möchten.
+- Cloud-Backups funktionieren jetzt auf dem iPhone. Richten Sie Bramble auf vorhandenen Speicher ein, z. B. einen S3-kompatiblen Bucket wie Backblaze B2, Cloudflare R2 oder Wasabi oder einen WebDAV-Server wie Nextcloud, und Bramble bewahrt dort eine Kopie Ihres Tresors auf, weiterhin mit Ihrem Master-Passwort versiegelt, sodass der Anbieter sie nicht lesen kann. iOS erlaubt es Apps nicht, im Hintergrund nach einem Zeitplan zu laufen; ein Backup wird deshalb erstellt, wenn Sie Bramble entsperren oder zu Bramble zurückkehren, nachdem das von Ihnen gewählte Intervall verstrichen ist. „Jetzt sichern“ führt es sofort aus.
+- Zwei weitere E-Mail-Alias-Dienste: DuckDuckGo Email Protection und Firefox Relay. DuckDuckGo bietet keine Seite für API-Schlüssel; in den Einstellungen wird erklärt, wo Sie den verwendeten Schlüssel finden.
+- Beim Wechsel zu einem anderen Alias-Dienst wird das Feld für den API-Schlüssel jetzt geleert. Zuvor blieb ein für einen Dienst eingegebener Schlüssel dort stehen; beim Überprüfen wurde er an den Dienst gesendet, zu dem Sie gerade gewechselt hatten.
+- Das Suchen und Auswählen in einem großen Tresor ist jetzt flüssiger. Die Liste zeichnet nicht mehr bei jedem Tastendruck jeden Eintrag neu.
+- Auf Deutsch, Spanisch, Französisch, Italienisch und Portugiesisch wurden einige Anweisungen mitten im Satz abgeschnitten, darunter die Anweisungen zum Koppeln mit einem anderen Gerät. Sie sind jetzt vollständig.
 
 Kein Konto, keine Cloud. Alles bleibt auf Ihren Geräten.

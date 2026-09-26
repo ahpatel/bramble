@@ -1,6 +1,13 @@
 Novedades de esta versión:
 
-- El emparejamiento con otro dispositivo ya no se cancela mientras se está confirmando. La cuenta atrás del código de emparejamiento seguía avanzando después de introducir el código, de modo que llegar a la confirmación con pocos segundos restantes podía dar por finalizado el emparejamiento e indicar al otro dispositivo que había sido rechazado, algo que nadie había hecho. La cuenta atrás se detiene ahora en cuanto se utiliza el código, y la confirmación dispone de su propia ventana completa.
-- Ajustes, Acerca de incluye un nuevo enlace «Valorar Bramble» por si desea dejar una reseña.
+- Las copias de seguridad en la nube ya funcionan en el iPhone. Apunte Bramble al almacenamiento que ya tiene, a un bucket compatible con S3 como Backblaze B2, Cloudflare R2 o Wasabi, o a un servidor WebDAV como Nextcloud, y Bramble guarda allí una copia de su bóveda, aún sellada con su contraseña maestra para que el proveedor no pueda leerla. iOS no permite que las aplicaciones se ejecuten en segundo plano según un horario, por lo que la copia se realiza al desbloquear Bramble o al volver a abrir la aplicación después de que haya transcurrido el intervalo elegido. Con «Realizar copia de seguridad ahora» se ejecuta de inmediato.
+
+- Dos servicios más de alias de correo electrónico: DuckDuckGo Email Protection y Firefox Relay. DuckDuckGo no tiene ninguna página de claves API, por lo que en Ajustes se explica dónde encontrar la que utiliza.
+
+- Al cambiar a un servicio de alias distinto, el campo de clave API se vacía. Antes, una clave escrita para un servicio se quedaba ahí y, al comprobarla, se enviaba al servicio al que acababa de cambiar.
+
+- Buscar y seleccionar en una bóveda grande es más fluido. La lista ya no vuelve a dibujar cada elemento con cada pulsación de tecla.
+
+- En alemán, español, francés, italiano y portugués, algunas instrucciones quedaban cortadas a mitad de frase, incluidas las de emparejamiento con otro dispositivo. Ahora están completas.
 
 Sin cuenta, sin nube. Todo permanece en sus dispositivos.

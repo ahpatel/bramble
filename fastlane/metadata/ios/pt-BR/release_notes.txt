@@ -1,6 +1,9 @@
 Novidades desta versão:
 
-- O pareamento com outro dispositivo não é mais interrompido durante a confirmação. A contagem regressiva do código de pareamento continuava em andamento depois que o código havia sido inserido; por isso, chegar à confirmação com poucos segundos restantes podia encerrar o pareamento e informar ao outro dispositivo que o pareamento havia sido recusado, o que ninguém tinha feito. Agora a contagem regressiva para quando o código é usado, e a confirmação ganha uma janela própria.
-- Em Configurações, Sobre, agora há um novo link “Avaliar o Bramble”, se desejar deixar uma avaliação.
+- O backup na nuvem agora funciona no iPhone. Aponte o Bramble para o armazenamento que você já tem (um bucket compatível com S3, como Backblaze B2, Cloudflare R2 ou Wasabi, ou um servidor WebDAV, como Nextcloud) e ele manterá uma cópia do seu cofre lá, ainda lacrada com a sua senha mestra, para que o provedor não consiga lê-la. O iOS não permite que apps sejam executados em segundo plano de forma programada, então o backup acontece quando você desbloqueia o Bramble ou volta a ele depois que o intervalo que você escolheu tiver passado. “Fazer backup agora” faz isso imediatamente.
+- Mais dois serviços de alias de e-mail: DuckDuckGo Email Protection e Firefox Relay. O DuckDuckGo não tem uma página de chaves de API, então a tela Configurações explica onde encontrar a chave que ele usa.
+- Trocar para outro serviço de alias agora limpa o campo da chave de API. Antes, uma chave digitada para um serviço permanecia lá e, ao verificá-la, ela era enviada para o serviço para o qual você tinha acabado de trocar.
+- Pesquisar e selecionar em um cofre grande está mais fluido. A lista não redesenha mais todos os itens a cada tecla digitada.
+- Em alemão, espanhol, francês, italiano e português, algumas instruções estavam cortadas no meio da frase, incluindo as de pareamento com outro dispositivo. Agora estão completas.
 
-Sem conta, sem nuvem. Tudo fica nos seus dispositivos.
+Sem conta, sem nuvem. Tudo permanece nos seus dispositivos.

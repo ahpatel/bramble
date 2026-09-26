@@ -1,6 +1,9 @@
 What's new in this release:
 
-- Pairing with another device no longer gives up while you are confirming it. The countdown on the pairing code kept running after the code had been entered, so reaching the confirmation with seconds left could end the pairing and tell the other device it had been refused, which nobody had done. The countdown now stops once the code is used, and confirming gets a full window of its own.
-- Settings, About has a new Rate Bramble link, if you would like to leave a review.
+- Cloud backups now work on iPhone. Point Bramble at storage you already have, an S3-compatible bucket such as Backblaze B2, Cloudflare R2 or Wasabi, or a WebDAV server such as Nextcloud, and it keeps a copy of your vault there, still sealed with your master password so the provider cannot read it. iOS does not let apps run on a schedule in the background, so a backup happens when you unlock Bramble or come back to it after the interval you chose has passed. Back up now does it straight away.
+- Two more email alias services: DuckDuckGo Email Protection and Firefox Relay. DuckDuckGo has no page for API keys, so Settings explains where to find the one it uses.
+- Switching to a different alias service now clears the API key box. Before, a key typed for one service stayed there, and checking it would send it to the service you had just switched to.
+- Searching and selecting in a large vault is smoother. The list no longer redraws every item on each keystroke.
+- In German, Spanish, French, Italian and Portuguese, a few instructions were cut off mid-sentence, including the ones for pairing with another device. They are complete now.
 
 No account, no cloud. Everything stays on your devices.

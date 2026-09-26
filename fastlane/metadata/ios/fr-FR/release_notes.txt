@@ -1,6 +1,9 @@
 Nouveautés de cette version :
 
-- L’association avec un autre appareil ne s’interrompt plus pendant que vous la confirmez. Le compte à rebours du code d’association continuait après la saisie du code : arriver à la confirmation avec quelques secondes restantes pouvait alors mettre fin à l’association et indiquer à l’autre appareil qu’elle avait été refusée, alors que personne ne l’avait refusée. Le compte à rebours s’arrête désormais dès que le code est utilisé, et la confirmation bénéficie d’un délai complet qui lui est propre.
-- Paramètres, À propos propose un nouveau lien « Évaluer Bramble » si vous souhaitez laisser un avis.
+- Les sauvegardes cloud fonctionnent désormais sur iPhone. Pointez Bramble vers un espace de stockage que vous possédez déjà, un compartiment compatible S3 tel que Backblaze B2, Cloudflare R2 ou Wasabi, ou un serveur WebDAV tel que Nextcloud, et Bramble y conserve une copie de votre coffre, toujours scellée avec votre mot de passe principal afin que le fournisseur ne puisse pas la lire. iOS n’autorise pas les applications à s’exécuter en arrière-plan selon un calendrier ; une sauvegarde a donc lieu lorsque vous déverrouillez Bramble ou que vous y revenez après l’intervalle que vous avez choisi. « Sauvegarder maintenant » effectue la sauvegarde immédiatement.
+- Deux services d’alias d’e-mails supplémentaires : DuckDuckGo Email Protection et Firefox Relay. DuckDuckGo ne propose pas de page pour les clés API ; la section Réglages explique donc où trouver celle qu’il utilise.
+- Passer à un autre service d’alias efface désormais le champ de clé API. Auparavant, une clé saisie pour un service y restait, et sa vérification l’envoyait au service vers lequel vous veniez de basculer.
+- La recherche et la sélection dans un coffre volumineux sont plus fluides. La liste ne redessine plus chaque élément à chaque frappe.
+- En allemand, en espagnol, en français, en italien et en portugais, quelques instructions étaient tronquées en cours de phrase, notamment celles pour l’appairage avec un autre appareil. Elles sont désormais complètes.
 
 Aucun compte, aucun cloud. Tout reste sur vos appareils.
