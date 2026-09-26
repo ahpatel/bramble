@@ -70,16 +70,21 @@ export async function runDueBackups(): Promise<void> {
 	try {
 		const result = await runScheduledBackups(
 			{
-				// Re-checked at every step, not just on entry: auto-lock can fire mid-run when the
-				// app is backgrounded, and continuing after that would be decrypting with a key
-				// that is supposed to be gone.
+				// Auto-lock fires when the app is backgrounded, so a lock mid-run is the normal case
+				// here. The rule: start nothing new once locked, but finish and record what is
+				// already in hand. Only starting a run and unwrapping a credential are gated.
+				//
+				// The target list is read and written regardless, and the two must move together:
+				// the runner re-reads it after uploading and saves a merged copy, so a gated read
+				// with an ungated save would write an empty list and delete every target.
 				listVaults: async () => (unlocked ? listVaults() : []),
-				loadTargets: async (vaultId) => (unlocked ? loadTargets(vaultId) : []),
-				saveTargets: async (vaultId, targets) => {
-					if (unlocked) await mobileStorage.setMeta(backupTargetsKeyFor(vaultId), targets);
-				},
-				hashVault: async (vault) => (unlocked ? sha256Hex(vault.blob) : ""),
+				loadTargets: loadTargets,
+				saveTargets: (vaultId, targets) =>
+					mobileStorage.setMeta(backupTargetsKeyFor(vaultId), targets),
+				hashVault: (vault) => sha256Hex(vault.blob),
 				decryptSecrets: async (_vaultId, creds) => {
+					// No VEK once locked, and no new work either: this target stays due and goes next
+					// time, rather than failing.
 					if (!unlocked) return null;
 					try {
 						return JSON.parse(
@@ -92,9 +97,9 @@ export async function runDueBackups(): Promise<void> {
 					}
 				},
 				upload: async (_vaultId, t, secrets, vault) => {
-					if (!unlocked) throw new Error("vault locked");
-					// Never null here: OS-held credentials are a desktop thing, and this platform
-					// offers no credential store, so every target is VEK-wrapped.
+					// Not gated: the credential was unwrapped before the lock, and stopping now would
+					// throw away an upload the user is waiting on. Never null here: OS-held
+					// credentials are a desktop thing, so every target on this platform is VEK-wrapped.
 					if (secrets === null) throw new Error("no credentials for this target");
 					const cfg = toProviderConfig(t, secrets);
 					// Signed here with the secret just unwrapped, sent over the native transport:

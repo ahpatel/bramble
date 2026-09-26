@@ -1,0 +1,126 @@
+import { type BackupTargetConfig, backupTargetsKeyFor } from "@core/backup/config";
+import { VAULT_REGISTRY_KEY } from "@core/vault/vault-registry";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// A lock mid-run is the normal case on mobile: auto-lock fires when the app is backgrounded. This
+// drives the REAL core runner rather than a mock, because the trap is in how the two meet: the
+// runner re-reads the target list after uploading and saves a merged copy, so a read that
+// answered "nothing" once locked, paired with a save that still wrote, would delete every target.
+
+const h = vi.hoisted(() => ({
+	meta: new Map<string, unknown>(),
+	stateListeners: [] as ((locked: boolean) => void)[],
+	/** Called inside the upload, i.e. after the credential was unwrapped. */
+	duringUpload: () => {},
+	uploads: 0,
+}));
+
+vi.mock("@capacitor/app", () => ({
+	App: { addListener: async () => ({ remove: () => {} }) },
+}));
+vi.mock("./adapters/vault-session", () => ({
+	onVaultStateChange: (cb: (locked: boolean) => void) => {
+		h.stateListeners.push(cb);
+		return () => {};
+	},
+}));
+vi.mock("./adapters/storage", () => ({
+	mobileStorage: {
+		getMeta: async (key: string) => h.meta.get(key),
+		setMeta: async (key: string, value: unknown) => void h.meta.set(key, value),
+		readVaultBlob: async () => new Uint8Array([1, 2, 3]),
+	},
+}));
+vi.mock("./adapters/crypto", () => ({
+	mobileCrypto: { decryptWithVek: async () => JSON.stringify({ username: "u", password: "p" }) },
+}));
+vi.mock("./adapters/http", () => ({ mobileHttp: { send: async () => ({}) } }));
+// Only the network is faked; the runner, the due logic and the outcome folding are all real.
+vi.mock("@core/backup", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@core/backup")>()),
+	runBackup: async () => {
+		h.duringUpload();
+		h.uploads += 1;
+		return { key: "k", hash: "h", uploaded: 3, prunedKeys: [] };
+	},
+}));
+
+const { runDueBackups, startBackupRuns } = await import("./backup");
+
+const TARGETS_KEY = backupTargetsKeyFor("v1");
+const target = (id: string): BackupTargetConfig =>
+	({
+		id,
+		providerId: "nextcloud",
+		provider: "webdav",
+		serverUrl: "https://dav.example/",
+		frequency: "daily",
+		keep: 3,
+		creds: { iv: "i", ciphertext: "c" },
+	}) as unknown as BackupTargetConfig;
+
+const setLocked = (locked: boolean) => {
+	for (const cb of h.stateListeners) cb(locked);
+};
+
+beforeEach(() => {
+	h.meta = new Map<string, unknown>([
+		[VAULT_REGISTRY_KEY, { vaults: [{ id: "v1", label: "", createdAt: 1 }] }],
+		[TARGETS_KEY, [target("t1"), target("t2")]],
+	]);
+	h.stateListeners = [];
+	h.uploads = 0;
+	h.duringUpload = () => {};
+	startBackupRuns();
+});
+
+const saved = () => h.meta.get(TARGETS_KEY) as BackupTargetConfig[];
+
+/** Unlocking starts a run on its own (that is the feature), so tests unlock and then wait for the
+ * run they triggered to record its outcome, rather than calling the runner a second time. */
+async function unlockAndSettle(): Promise<void> {
+	setLocked(false);
+	await vi.waitFor(() => {
+		if (!saved().some((t) => t.lastBackupAt != null || t.lastError != null))
+			throw new Error("run not done");
+	});
+}
+
+describe("a lock in the middle of a backup run", () => {
+	beforeEach(() => {
+		// The lock arrives while the first upload is in flight, as it does when the app is left.
+		h.duringUpload = () => setLocked(true);
+	});
+
+	it("never deletes the target list", async () => {
+		await unlockAndSettle();
+		expect(
+			saved()
+				.map((t) => t.id)
+				.sort(),
+		).toEqual(["t1", "t2"]);
+	});
+
+	it("records the upload that finished after the lock", async () => {
+		await unlockAndSettle();
+		const done = saved().filter((t) => t.lastBackupAt != null);
+		expect(done).toHaveLength(1);
+		expect(done[0]?.lastError).toBeUndefined();
+	});
+
+	// The second target needed its credential unwrapped after the lock, and there is no key to do
+	// it with. It is left due, untouched and error-free, for the next open to pick up.
+	it("starts nothing new after the lock, and leaves the rest due without an error", async () => {
+		await unlockAndSettle();
+		expect(h.uploads).toBe(1);
+		const pending = saved().filter((t) => t.lastBackupAt == null);
+		expect(pending).toHaveLength(1);
+		expect(pending[0]?.lastError).toBeUndefined();
+	});
+
+	it("does not start a run at all while locked", async () => {
+		setLocked(true);
+		await runDueBackups();
+		expect(h.uploads).toBe(0);
+	});
+});

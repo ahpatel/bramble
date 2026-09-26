@@ -152,9 +152,10 @@ describe("mobile backup runs", () => {
 		expect(h.deps).toBeNull();
 	});
 
-	// Auto-lock can fire mid-run when the app is backgrounded. Every dep re-checks rather than
-	// trusting the state that was true on entry.
-	it("stops handing out work if the vault locks mid-run", async () => {
+	// Auto-lock fires when the app is backgrounded, so a lock mid-run is normal. Nothing new starts
+	// once locked, but what is already in hand is finished and recorded; backup.lock.test.ts drives
+	// the real runner through it. Here: exactly which steps are gated.
+	it("gates only starting a run and unwrapping a credential once locked", async () => {
 		startBackupRuns();
 		unlock();
 		await runDueBackups();
@@ -163,12 +164,13 @@ describe("mobile backup runs", () => {
 
 		lock();
 		expect(await deps.listVaults()).toEqual([]);
-		expect(await deps.loadTargets("v1")).toEqual([]);
-		expect(await deps.hashVault(VAULT)).toBe("");
 		expect(await deps.decryptSecrets("v1", { iv: "i", ciphertext: "c" })).toBeNull();
-		await expect(
-			deps.upload("v1", TARGET, { username: "u", password: "p" }, VAULT),
-		).rejects.toThrow(/locked/);
+		// Reads, the hash and the save all still work, so a finished upload can be recorded...
+		expect(await deps.loadTargets("v1")).toEqual([]);
+		expect(await deps.hashVault(VAULT)).toBe("hash");
+		// ...and an upload whose credential was already unwrapped is allowed to finish.
+		await deps.upload("v1", TARGET, { username: "u", password: "p" }, VAULT);
+		expect(h.runs).toBe(1);
 	});
 
 	// A target wrapped under another vault's key. Nothing is wrong with the run, so it is a skip
