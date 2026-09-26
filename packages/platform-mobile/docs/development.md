@@ -446,6 +446,32 @@ Background-time measurements are native-side only. An attached Web Inspector (qu
 WebContent process alive, so what JavaScript does while backgrounded cannot be trusted from a
 debugging session.
 
+### 24. Android: one plugin thread, a page that freezes, and debug logging that ANRs
+
+**Capacitor runs every Android plugin method on one thread** (`HandlerThread("CapacitorPlugins")`
+in `Bridge.java`). "Off the main thread" is true and misleading: a method that blocks holds up every
+other plugin in the app until it returns. `NativeHttpPlugin` did exactly that for whole uploads, so
+crypto and storage calls waited behind a backup. Enqueue and resolve from the callback instead;
+`PluginCall.resolve` is safe from any thread.
+
+**Debug builds log every plugin call's full arguments on the main thread** (`Bridge.callPluginMethod`
+calls `call.getData().toString()` for its verbose log). A ~1.9 MB upload body took ~14 seconds of
+CPU there and the app was killed for an ANR the moment "Back up now" was tapped; it also writes
+Basic-auth headers into logcat. Release builds are unaffected, since `loggingBehavior` defaults to
+debug-only. For large-body tests, build once with `loggingBehavior: "none"` in `capacitor.config.ts`
+and revert it, then `npx cap sync android` again so the gitignored generated config follows.
+
+**Measuring what leaving the app does.** `adb shell dumpsys activity p app.bramble.mobile` shows each
+process's `oom adj` and `isFrozen`, the WebView's sandboxed renderer included, and `dumpsys
+activity` has a "Freezer settings" block (`freeze_debounce_timeout=10000` on a Pixel 8, Android 17).
+The page has a freeze of its own: listen for `document`'s `freeze` and `resume` events over CDP,
+which still evaluates in a frozen page. Leaving is `adb shell input keyevent KEYCODE_HOME`.
+
+**`adb reverse` hides a stalled sender.** With the throttling proxy on the Mac, the bytes an app has
+written are already buffered outside it, so an upload kept arriving at the server for 78 seconds
+after the app was frozen. Such a test shows whether the bytes arrived, not whether the app kept
+sending; watch `isFrozen` and the JS result for that.
+
 ## Reclaiming disk space
 
 The iOS runtimes are the big consumers (~8 GB each). List and delete unused ones rather

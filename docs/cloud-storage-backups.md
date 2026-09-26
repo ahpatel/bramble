@@ -716,8 +716,35 @@ An alias request cut off the same way may already have reached the provider, so 
 "could not reach the provider": it says Bramble was closed before the provider answered and to
 check before trying again, since a blind retry could make a second alias.
 
-On Android a backgrounded process keeps running, so there is no equivalent expiry. If the OS kills
-the process mid-upload nothing is recorded, and the target simply stays due.
+**Android freezes a left app too**, just later and less politely. Measured on a Pixel 8 (Android
+17), Bramble stays the "previous app" for about 60 seconds after Home, then drops to cached, and
+the cached-apps freezer stops the process 10 seconds later, WebView included. Switching through
+other apps gets it there sooner. A request frozen mid-flight is worse than one that fails: the
+frozen time counts against its timeout, so when Bramble was reopened, a 1 MiB PUT the server had
+stored (201 at 152 seconds) came back as `timeout`. A real backup would have recorded a failure,
+backed off, and for WebDAV stopped between the upload and the `MOVE`.
+
+So the Android plugin holds a foreground service (`TransferService`, type `dataSync`) while any
+request is in flight, which exempts the process from the freezer. It is started as the request
+begins, while Bramble is still in front, and lingers five seconds after the last one ends so the
+several requests of one backup share it. Its notification is deferred, so a request that finishes
+within ten seconds shows nothing, and on Android 13+ without the notification permission it shows
+only in the Task Manager. A request that fails after Bramble was left with no service holding it
+(the start was refused, or Android 15's six-hours-a-day `dataSync` budget ran out) is reported as
+`interrupted`, the same as iOS.
+
+The service keeps the *process*; it cannot keep the *page*. Chromium freezes a hidden WebView page
+60 seconds after it is hidden (the `freeze` event fires at 63 seconds), regardless of process
+state, and its opt-outs, Web Locks included, do not apply on mobile. So a request already in flight
+finishes in the background, and whatever JavaScript comes next (a WebDAV `MOVE`, the prune,
+recording the outcome) runs when Bramble is reopened. Nothing is mislabelled in between: the target
+still reads as due, and a finished `.partial` waits beside the snapshots. If the process is killed
+before then, nothing is recorded, the target stays due, and the prune later sweeps the temporary.
+
+The Android plugin used to block while a request ran, and Capacitor runs every plugin method in the
+app on one shared thread, so a two-minute upload held up every other native call (crypto,
+storage, biometrics) for two minutes, in the foreground too. It now enqueues and resolves from
+OkHttp's own threads, which is what the iOS half always did.
 
 ### Timeouts sized to the body
 
@@ -773,10 +800,19 @@ com.apple.Preferences`):
 These measure native behaviour. What JavaScript does while backgrounded could not be measured
 reliably, because an attached Web Inspector may keep the WebContent process alive.
 
+**Leaving the app, on the Pixel 8** (Android 17), through the same throttling proxy via `adb
+reverse`, with a vault grown to 1.87 MB. "Back up now", then Home after two seconds: the service
+started (`Background started FGS: Allowed ... uidState: TOP`), S3 landed at once, and both WebDAV
+uploads finished while hidden, after 263 seconds at 8 KiB/s, with the process never frozen. The
+page froze at 63 seconds, so each folder held a finished `.partial`; on reopening, both were moved
+into place and all three targets recorded the new vault with no error, although auto-lock had
+locked the vault by then. Without the service, the same kind of upload was frozen at 74 seconds and
+reported `timeout` on return despite having landed.
+
 Not yet verified: backups on a physical iPhone (a real device cannot reach the Mac's `localhost`
-and would refuse cleartext to a LAN address, so it needs an HTTPS tunnel); the lock-mid-run,
-interrupted and timeout changes on Android, which was verified before them; and a resume, rather
-than an unlock, as the trigger on either platform.
+and would refuse cleartext to a LAN address, so it needs an HTTPS tunnel); Android's `interrupted`
+path, which needs the service refused or its daily budget spent; and a resume, rather than an
+unlock, as the trigger on either platform.
 
 ## Target these two adapters first
 
