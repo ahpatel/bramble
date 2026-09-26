@@ -5,17 +5,22 @@ import { AliasError, type AliasErrorKind } from "./types";
 // The one place an alias provider is spoken to. Every provider goes through `request` so the
 // transport rules hold everywhere rather than per client. See docs/email-aliases.md.
 
-/** A provider's error body. All four measured providers answer with `{ message }`. */
+/**
+ * A provider's error body. Addy and SimpleLogin answer with `{ message }`, DuckDuckGo with
+ * `{ error }`, and Firefox Relay with Django REST Framework's `{ detail }`, which is also where
+ * its free-plan mask limit is explained, so dropping it would leave that user with no reason.
+ */
 const ErrorBodySchema = z.object({
 	message: z.string().optional(),
 	error: z.string().optional(),
+	detail: z.string().optional(),
 });
 
 /** The provider's own words, when it gave any. Never assembled from the status. */
 function providerMessage(body: unknown): string | undefined {
 	const parsed = ErrorBodySchema.safeParse(body);
 	if (!parsed.success) return undefined;
-	const m = parsed.data.message?.trim() || parsed.data.error?.trim();
+	const m = parsed.data.message?.trim() || parsed.data.error?.trim() || parsed.data.detail?.trim();
 	return m || undefined;
 }
 

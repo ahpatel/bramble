@@ -58,6 +58,15 @@ describe("request", () => {
 		expect(err.message).not.toContain("verify your email");
 	});
 
+	// Firefox Relay is Django REST Framework, measured: `{"detail":"Invalid token."}`. Its
+	// free-plan mask limit is explained the same way, which is the case that most needs words.
+	it("accepts `detail` as the message field, as Firefox Relay sends it", async () => {
+		reply(json({ detail: "Invalid token." }, 401));
+		const err = await call().catch((e) => e);
+		expect(err.kind).toBe("auth");
+		expect(err.providerMessage).toBe("Invalid token.");
+	});
+
 	it("accepts `error` as the message field when `message` is absent", async () => {
 		reply(json({ error: "Unauthorized" }, 401));
 		const err = await call().catch((e) => e);
