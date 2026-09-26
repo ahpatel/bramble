@@ -724,7 +724,7 @@ link is not made clickable.
 6. Whether DuckDuckGo's token **expires with the browser session** it was scraped
    from. If it does, an expiry is indistinguishable from a bad key and the
    settings screen has no remedy to offer.
-7. **Mobile cloud backups are device-verified on Android, not yet on iOS**
+7. **Mobile cloud backups are verified on an Android device and the iOS Simulator**, not yet on a physical iPhone
    ([cloud-storage-backups.md](cloud-storage-backups.md)).
 
 ## Phases

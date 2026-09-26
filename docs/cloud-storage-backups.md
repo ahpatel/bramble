@@ -664,7 +664,15 @@ phone with `adb reverse`, which is also why cleartext `http://localhost` worked 
   unlocked with nothing else pressed: it uploaded by itself. The two targets already backed up on
   that same unlock were correctly left alone, so an unlock does not re-upload what is current.
 
-Not yet verified: the same on iOS, and a resume (rather than an unlock) as the trigger.
+**The same three on the iOS Simulator** (iOS 26.4), through the Swift `URLSession` plugin rather
+than OkHttp. The simulator shares the Mac's network, so `localhost` reaches the containers with no
+tunnel, and App Transport Security lets loopback cleartext through with no exception in the
+Info.plist. S3 and WebDAV both landed as sealed vaults, `MKCOL` created the folder, and an unlock
+uploaded the due target by itself while leaving the current ones alone.
+
+Not yet verified: backups on a physical iPhone (a real device cannot reach the Mac's `localhost`
+and would refuse cleartext to a LAN address, so it needs an HTTPS tunnel), and a resume, rather
+than an unlock, as the trigger on either platform.
 
 **Dropbox on desktop.** The OAuth connect is extension-only (`shell.connectBackupOAuth`), so the
 desktop shows the S3 and WebDAV tiles and hides one-click sign-in.

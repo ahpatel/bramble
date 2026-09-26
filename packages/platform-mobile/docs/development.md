@@ -382,6 +382,19 @@ ios_webkit_debug_proxy -c <hardware-udid>:9222 --no-frontend &
 curl -s http://localhost:9222/json     # -> ws://localhost:9222/devtools/page/1
 ```
 
+**The simulator works the same way, with three differences.** Its inspector socket has moved:
+find it with `lsof -aU -c launchd_sim | grep webinspectord_sim` (it was under
+`/private/var/tmp/com.apple.launchd.*/` on macOS 26, not `/private/tmp/`) and pass it as
+`ios_webkit_debug_proxy -s unix:<socket>`. The proxy defaults to port 9222, which is also the
+conventional `adb forward` port for Android's CDP, so a leftover forward silently wins and your
+driver ends up evaluating in the Android WebView; check `Capacitor.getPlatform()` before trusting
+anything. And loopback is exempt from ATS, so `http://localhost` reaches services on the Mac.
+
+**In wrapped mode, ignore everything that is not `Target.dispatchMessageFromTarget`.** The proxy
+first acknowledges the outer `Target.sendMessageToTarget` with an empty result, and if outer and
+inner ids share a counter that ack resolves the inner request with nothing. A poll built on it
+never sees a value and just hangs.
+
 **ATS blocks a local probe server.** There are no `NSAppTransportSecurity` exceptions, so cleartext
 HTTP to a LAN address is refused before it reaches the network, and there is no iOS equivalent of
 `adb reverse` to a loopback server. Test against HTTPS endpoints instead. A failure here surfaces as a
