@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { fetchTransport, type HttpTransport } from "../adapters/http";
+import { uploadTempKey } from "./orchestrator";
 import {
 	type BackupHttpResponse,
 	type BackupObject,
@@ -103,10 +104,23 @@ export function createWebdavTarget(
 	return {
 		async put(key, body, contentType) {
 			await ensureParent(key);
-			await req("PUT", fileUrl(key), {
-				body,
-				headers: contentType ? { "Content-Type": contentType } : undefined,
-			});
+			// Written aside and moved into place, because many servers write a PUT in place: an upload
+			// cut off partway would leave a truncated file under a real snapshot name, counted by the
+			// prune and only found out at restore. A MOVE within one server is atomic.
+			const temp = uploadTempKey(key);
+			try {
+				await req("PUT", fileUrl(temp), {
+					body,
+					headers: contentType ? { "Content-Type": contentType } : undefined,
+				});
+				await req("MOVE", fileUrl(temp), {
+					headers: { Destination: fileUrl(key), Overwrite: "T" },
+				});
+			} catch (e) {
+				// Best effort; a later run's prune sweeps whatever survives this.
+				await transport.send({ method: "DELETE", url: fileUrl(temp) }).catch(() => {});
+				throw e;
+			}
 		},
 		async get(key) {
 			return (await req("GET", fileUrl(key))).body;

@@ -35,6 +35,39 @@ export function backupKey(prefix: string, stamp: string, hash: string, vaultId?:
 }
 
 /**
+ * Where a snapshot is written before it is moved into place: the same folder, a leading dot, and
+ * `.partial`. Both keep it out of `selectForPruning` (which matches `/bramble-`) and out of sight in
+ * most file browsers, so a snapshot name only ever appears on a complete file.
+ */
+export function uploadTempKey(key: string): string {
+	const slash = key.lastIndexOf("/");
+	return `${key.slice(0, slash + 1)}.${key.slice(slash + 1)}.partial`;
+}
+
+/** How old an upload's temporary file must be before a later run treats it as abandoned. Long
+ * enough that another device's upload still in flight to the same folder is never swept from
+ * under it. */
+export const STALE_UPLOAD_MS = 60 * 60 * 1000;
+
+/**
+ * Temporary files left by uploads that never finished (the app was killed between the write and
+ * the move), for the next run to delete. Scoped to this vault the same way `selectForPruning` is,
+ * and only when the server says how old the file is: an undated one might be in flight.
+ */
+export function selectStaleUploads(objects: BackupObject[], now: Date, vaultId?: string): string[] {
+	const tag = vaultId ? `-v${vaultTag(vaultId)}.bramble.partial` : undefined;
+	return objects
+		.filter((o) => {
+			const name = o.key.slice(o.key.lastIndexOf("/") + 1);
+			if (!name.startsWith(".bramble-") || !name.endsWith(".bramble.partial")) return false;
+			if (tag ? !name.endsWith(tag) : /-v[0-9a-f]{8}\.bramble\.partial$/i.test(name)) return false;
+			const modified = Date.parse(o.lastModified ?? "");
+			return Number.isFinite(modified) && now.getTime() - modified > STALE_UPLOAD_MS;
+		})
+		.map((o) => o.key);
+}
+
+/**
  * Keep-last-N retention: the keys to delete, computed deterministically from the
  * listing (so concurrent prunes from two devices converge). The compact stamp in
  * each key sorts chronologically, so lexical order is chronological.
@@ -76,7 +109,8 @@ export async function runBackup(
 	const prefix = opts.prefix ?? "bramble";
 	const keep = opts.keep ?? 30;
 	const hash = await sha256Hex(blob);
-	const key = backupKey(prefix, compactStamp(opts.now ?? new Date()), hash, opts.vaultId);
+	const now = opts.now ?? new Date();
+	const key = backupKey(prefix, compactStamp(now), hash, opts.vaultId);
 	await target.put(key, blob, "application/octet-stream");
 
 	// Pruning is housekeeping, and the snapshot is already safely uploaded by this point. A
@@ -90,8 +124,10 @@ export async function runBackup(
 	let prunedKeys: string[] = [];
 	if (keep <= 0) return { key, hash, uploaded: blob.byteLength, prunedKeys };
 	try {
-		prunedKeys = selectForPruning(await target.list(`${prefix}/`), keep, opts.vaultId);
-		for (const k of prunedKeys) {
+		const listing = await target.list(`${prefix}/`);
+		prunedKeys = selectForPruning(listing, keep, opts.vaultId);
+		// Abandoned upload temporaries ride along with the prune: same listing, same tolerance.
+		for (const k of [...prunedKeys, ...selectStaleUploads(listing, now, opts.vaultId)]) {
 			// A failed delete is not fatal; the next run retries it (delete is idempotent).
 			try {
 				await target.remove(k);

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { backupKey, runBackup, selectForPruning } from "./orchestrator";
+import {
+	backupKey,
+	runBackup,
+	STALE_UPLOAD_MS,
+	selectForPruning,
+	selectStaleUploads,
+	uploadTempKey,
+} from "./orchestrator";
 import type { BackupObject, BackupTarget } from "./types";
 
 function mockTarget() {
@@ -186,5 +193,65 @@ describe("append-only: keep everything", () => {
 		const result = await runBackup(noList, new Uint8Array([1]), { keep: 1 });
 		expect(result.prunedKeys).toEqual([]);
 		expect(store.size).toBe(1);
+	});
+});
+
+// An upload is written aside and moved into place (see webdav.ts), so an app killed between the
+// two leaves a temporary file behind. These pin that it is swept, and that nothing else is.
+describe("abandoned upload temporaries", () => {
+	const VAULT = "7c8cf540-0000-4000-8000-000000000000";
+	const NOW = new Date("2026-09-26T12:00:00Z");
+	const ago = (ms: number) => new Date(NOW.getTime() - ms).toUTCString();
+	const snap = backupKey("b", "20260926T100000Z", "a".repeat(64), VAULT);
+
+	it("names the temporary beside the snapshot, hidden, and invisible to pruning", () => {
+		expect(uploadTempKey(snap)).toBe(`b/.${snap.slice(2)}.partial`);
+		expect(uploadTempKey("x.bramble")).toBe(".x.bramble.partial");
+		const objs: BackupObject[] = [{ key: uploadTempKey(snap), size: 1 }];
+		expect(selectForPruning(objs, 1, VAULT)).toEqual([]);
+	});
+
+	it("sweeps only this vault's temporaries that are old enough to be abandoned", () => {
+		const other = backupKey("b", "20260926T100000Z", "b".repeat(64), "deadbeef-0000");
+		const objs: BackupObject[] = [
+			{ key: uploadTempKey(snap), size: 1, lastModified: ago(STALE_UPLOAD_MS + 1000) },
+			// Recent: another device's upload may still be in flight to this folder.
+			{
+				key: uploadTempKey(backupKey("b", "20260926T110000Z", "c".repeat(64), VAULT)),
+				size: 1,
+				lastModified: ago(60_000),
+			},
+			// Undated: its age cannot be known, so it is not judged.
+			{ key: uploadTempKey(backupKey("b", "20260926T090000Z", "d".repeat(64), VAULT)), size: 1 },
+			// Another vault's, however old.
+			{ key: uploadTempKey(other), size: 1, lastModified: ago(STALE_UPLOAD_MS * 10) },
+			// A real snapshot, however old, is never a temporary.
+			{ key: snap, size: 1, lastModified: ago(STALE_UPLOAD_MS * 10) },
+		];
+		expect(selectStaleUploads(objs, NOW, VAULT)).toEqual([uploadTempKey(snap)]);
+	});
+
+	it("deletes them during a backup's prune", async () => {
+		const removed: string[] = [];
+		const stale = uploadTempKey(snap);
+		const target: BackupTarget = {
+			async put() {},
+			async get() {
+				return new Uint8Array();
+			},
+			async list() {
+				return [{ key: stale, size: 1, lastModified: ago(STALE_UPLOAD_MS + 1000) }];
+			},
+			async remove(key) {
+				removed.push(key);
+			},
+		};
+		await runBackup(target, new Uint8Array([1]), {
+			prefix: "b",
+			keep: 5,
+			now: NOW,
+			vaultId: VAULT,
+		});
+		expect(removed).toEqual([stale]);
 	});
 });

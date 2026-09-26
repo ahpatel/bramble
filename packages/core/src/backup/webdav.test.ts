@@ -27,6 +27,16 @@ function route(handler: (url: string, init: RequestInit) => Response): {
 	return calls;
 }
 
+/** The MOVE the call under test made, or a failure that says there was none. */
+function moveOf(calls: { url: string; init: RequestInit }[]): {
+	url: string;
+	headers: Record<string, string>;
+} {
+	const m = calls.find((c) => c.init.method === "MOVE");
+	if (!m) throw new Error("no MOVE was sent");
+	return { url: m.url, headers: m.init.headers as Record<string, string> };
+}
+
 const CSRF_401 = `<?xml version="1.0" encoding="utf-8"?>
 <d:error xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns">
   <s:exception>Sabre\\DAV\\Exception\\NotAuthenticated</s:exception>
@@ -44,13 +54,54 @@ describe("createWebdavTarget", () => {
 		for (const c of calls) expect(c.init.credentials).toBe("omit");
 	});
 
-	// The folder now arrives in the key, so it must appear exactly once in the URL.
+	// The folder now arrives in the key, so it must appear exactly once in each URL.
 	it("puts a folder-prefixed key at the right depth", async () => {
 		const calls = route(() => new Response("", { status: 201 }));
 		await createWebdavTarget(CFG).put("backups/x.bramble", new Uint8Array([1]));
-		const put = calls.find((c) => c.init.method === "PUT");
-		expect(put?.url).toBe("http://localhost:8080/remote.php/dav/files/admin/backups/x.bramble");
+		expect(moveOf(calls).headers.Destination).toBe(
+			"http://localhost:8080/remote.php/dav/files/admin/backups/x.bramble",
+		);
 	});
+
+	// Many servers write a PUT in place, so an upload cut off partway would leave a truncated file
+	// under a real snapshot name. Written aside and moved, a snapshot name only ever appears on a
+	// complete file, because a MOVE within one server is atomic.
+	it("writes aside and moves into place, never PUTting the snapshot name itself", async () => {
+		const calls = route(() => new Response("", { status: 201 }));
+		await createWebdavTarget(CFG).put("backups/x.bramble", new Uint8Array([1]));
+		const puts = calls.filter((c) => c.init.method === "PUT").map((c) => c.url);
+		expect(puts).toEqual([
+			"http://localhost:8080/remote.php/dav/files/admin/backups/.x.bramble.partial",
+		]);
+		expect(moveOf(calls).url).toBe(
+			"http://localhost:8080/remote.php/dav/files/admin/backups/.x.bramble.partial",
+		);
+		expect(moveOf(calls).headers.Overwrite).toBe("T");
+		// The move comes after the write, or it would move nothing.
+		expect(calls.findIndex((c) => c.init.method === "MOVE")).toBeGreaterThan(
+			calls.findIndex((c) => c.init.method === "PUT"),
+		);
+	});
+
+	it.each(["PUT", "MOVE"])(
+		"deletes the temporary file and fails the backup when the %s fails",
+		async (failing) => {
+			const calls = route((_url, init) =>
+				init.method === failing
+					? new Response("", { status: 507 })
+					: new Response("", { status: 201 }),
+			);
+			await expect(
+				createWebdavTarget(CFG).put("backups/x.bramble", new Uint8Array([1])),
+			).rejects.toThrow(`WebDAV ${failing} failed (507)`);
+			const del = calls.find((c) => c.init.method === "DELETE");
+			expect(del?.url).toBe(
+				"http://localhost:8080/remote.php/dav/files/admin/backups/.x.bramble.partial",
+			);
+			// And the real name was never touched by anything but a successful move.
+			expect(calls.some((c) => c.url.endsWith("/backups/x.bramble"))).toBe(false);
+		},
+	);
 
 	it("creates each intermediate collection, outermost first", async () => {
 		const calls = route(() => new Response("", { status: 201 }));
