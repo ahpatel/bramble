@@ -1,5 +1,6 @@
 import Capacitor
 import Foundation
+import UIKit
 
 /**
  * Outbound HTTP for hosts the WKWebView cannot reach.
@@ -84,10 +85,35 @@ public class NativeHttpPlugin: CAPPlugin, CAPBridgedPlugin {
             request.httpBody = body
         }
 
+        // A request outlives the app being left. iOS suspends an app within seconds of it going to
+        // the background, which would freeze an upload partway, so each request asks for the time
+        // to finish. If even that runs out, the request is stopped here and reported as
+        // "interrupted", which the caller retries, rather than surfacing later as a network error
+        // nobody can explain. Created before the background time is asked for, and only started
+        // after, so the expiry handler always has a real task to cancel.
+        let state = NSLock()
+        var expired = false
+        var background = UIBackgroundTaskIdentifier.invalid
+        let finishBackground = {
+            state.lock()
+            let id = background
+            background = .invalid
+            state.unlock()
+            if id != .invalid { UIApplication.shared.endBackgroundTask(id) }
+        }
+
         // Resolved from the completion handler, never waited on. The bridge dispatches EVERY
         // plugin call in the app on one serial queue, so blocking here would stall every other
         // plugin for the length of a network request. See BiometricVault's keychainQueue.
-        session.dataTask(with: request) { data, response, error in
+        let task = session.dataTask(with: request) { data, response, error in
+            defer { finishBackground() }
+            state.lock()
+            let wasExpired = expired
+            state.unlock()
+            if wasExpired {
+                call.reject("Bramble was closed before this finished", "interrupted")
+                return
+            }
             if let error = error {
                 // Offline, DNS, TLS, timeout. All mean the host was not reached, so nothing
                 // happened on the other end.
@@ -102,6 +128,17 @@ public class NativeHttpPlugin: CAPPlugin, CAPBridgedPlugin {
                 "status": http.statusCode,
                 "body": (data ?? Data()).base64EncodedString()
             ])
-        }.resume()
+        }
+        let id = UIApplication.shared.beginBackgroundTask(withName: "Bramble transfer") {
+            state.lock()
+            expired = true
+            state.unlock()
+            task.cancel()
+            finishBackground()
+        }
+        state.lock()
+        background = id
+        state.unlock()
+        task.resume()
     }
 }

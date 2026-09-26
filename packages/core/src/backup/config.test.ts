@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TRANSFER_INTERRUPTED } from "../adapters/http";
 import type { BackupMetaStore, BackupTargetConfig } from "./config";
 import {
 	applyBackupOutcomes,
@@ -13,6 +14,7 @@ import {
 	targetPrefixFor,
 	toProviderConfig,
 } from "./config";
+import { isDue } from "./schedule";
 
 const TARGET = {
 	id: "t1",
@@ -267,5 +269,65 @@ describe("clearBackoff", () => {
 	it("returns the same object when there is nothing to clear", () => {
 		const t = TARGET as BackupTargetConfig;
 		expect(clearBackoff(t)).toBe(t);
+	});
+});
+
+// An interruption (iOS stopped an upload because the app was left) is not the provider refusing.
+// It must show, so nobody assumes the backup landed, but it must not trigger the backoff meant for
+// a refusing provider, or "it will run again next time you open Bramble" would be untrue.
+describe("an interrupted upload", () => {
+	const base = {
+		id: "t1",
+		providerId: "s3",
+		provider: "s3",
+		frequency: "daily",
+		keep: 30,
+		creds: { iv: "i", ciphertext: "c" },
+		lastBackupAt: 1_000,
+	} as unknown as BackupTargetConfig;
+
+	it("is recorded, without counting as a failure or moving the last good backup", () => {
+		const [t] = applyBackupOutcomes(
+			[base],
+			new Map([["t1", { error: TRANSFER_INTERRUPTED }]]),
+			5_000,
+		);
+		expect(t?.lastError).toBe(TRANSFER_INTERRUPTED);
+		expect(t?.failures).toBeUndefined();
+		expect(t?.failedAt).toBeUndefined();
+		expect(t?.lastBackupAt).toBe(1_000);
+	});
+
+	it("leaves the target due at the very next run, where a real failure would back off", () => {
+		// Due: a full day since the last good backup. The run fails one of two ways at that moment.
+		const at = 1_000 + 24 * 60 * 60 * 1000;
+		const [interrupted] = applyBackupOutcomes(
+			[base],
+			new Map([["t1", { error: TRANSFER_INTERRUPTED }]]),
+			at,
+		);
+		const [refused] = applyBackupOutcomes(
+			[base],
+			new Map([["t1", { error: "WebDAV PUT failed (500)" }]]),
+			at,
+		);
+		expect(isDue(interrupted as BackupTargetConfig, at + 1)).toBe(true);
+		// The contrast is what shows this is about backoff, not about the clock.
+		expect(isDue(refused as BackupTargetConfig, at + 1)).toBe(false);
+	});
+
+	it("is cleared by the next success, like any other error", () => {
+		const [interrupted] = applyBackupOutcomes(
+			[base],
+			new Map([["t1", { error: TRANSFER_INTERRUPTED }]]),
+			5_000,
+		);
+		const [ok] = applyBackupOutcomes(
+			[interrupted as BackupTargetConfig],
+			new Map([["t1", { hash: "h" }]]),
+			6_000,
+		);
+		expect(ok?.lastError).toBeUndefined();
+		expect(ok?.lastBackupAt).toBe(6_000);
 	});
 });

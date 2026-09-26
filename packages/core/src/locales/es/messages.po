@@ -1775,6 +1775,11 @@ msgstr "Últimas 5"
 msgid "Last backed up {0}"
 msgstr "Última copia de seguridad: {0}"
 
+#. placeholder {0}: formatWhen(target.lastBackupAt)
+#: packages/core/src/app/screens/Settings/components/BackupSection.tsx
+msgid "Last complete backup {0}"
+msgstr "Última copia de seguridad completa {0}"
+
 #. placeholder {0}: relativeTime(lastSynced)
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Last synced {0}"
@@ -2040,6 +2045,10 @@ msgstr "URL del relé Nostr"
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Not backed up yet"
 msgstr "Aún no se ha realizado una copia de seguridad"
+
+#: packages/core/src/app/screens/Settings/components/BackupSection.tsx
+msgid "Not finished: Bramble was closed before this backup completed. It will run again next time you open Bramble."
+msgstr "No se completó: se cerró Bramble antes de que finalizara esta copia de seguridad. Se ejecutará de nuevo la próxima vez que abra Bramble."
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 #: packages/core/src/app/screens/Settings/components/DesktopLinkSection.tsx

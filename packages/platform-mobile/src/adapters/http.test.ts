@@ -1,3 +1,4 @@
+import { TRANSFER_INTERRUPTED } from "@core/adapters/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The JS half of the native transport. What is under test is the marshalling and the platform
@@ -79,6 +80,24 @@ describe("mobileHttp on a device", () => {
 		const res = await mobileHttp.send({ method: "GET", url: "https://p.example/x" });
 		expect(res.status).toBe(status);
 		expect(res.ok).toBe(ok);
+	});
+});
+
+describe("mobileHttp when iOS stops a request", () => {
+	it("turns the plugin's interrupted rejection into the shared code", async () => {
+		native.send.mockRejectedValue(
+			Object.assign(new Error("Bramble was closed"), { code: "interrupted" }),
+		);
+		await expect(mobileHttp.send({ method: "PUT", url: "https://p.example/x" })).rejects.toThrow(
+			TRANSFER_INTERRUPTED,
+		);
+	});
+
+	it("passes every other failure through untouched", async () => {
+		native.send.mockRejectedValue(new Error("The Internet connection appears to be offline."));
+		await expect(mobileHttp.send({ method: "GET", url: "https://p.example/x" })).rejects.toThrow(
+			"offline",
+		);
 	});
 });
 

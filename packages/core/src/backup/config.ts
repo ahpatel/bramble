@@ -1,3 +1,4 @@
+import { TRANSFER_INTERRUPTED } from "../adapters/http";
 import type { ProviderConfig } from "./types";
 
 // Device-local backup targets, per vault. Non-secret fields are stored in the clear via
@@ -98,6 +99,10 @@ export function applyBackupOutcomes(
 	return targets.map((t) => {
 		const r = outcomes.get(t.id);
 		if (!r) return t;
+		// The app was left before the upload finished. Shown, so nobody assumes it landed, but not
+		// counted as a failure: backoff exists to spare a provider that is refusing, and this one
+		// was not, so the next open has to retry rather than wait out a delay it did not earn.
+		if (r.error === TRANSFER_INTERRUPTED) return { ...t, lastError: r.error };
 		return r.error !== undefined
 			? { ...t, lastError: r.error, failedAt: now, failures: (t.failures ?? 0) + 1 }
 			: {

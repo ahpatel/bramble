@@ -1775,6 +1775,11 @@ msgstr "5 dernières"
 msgid "Last backed up {0}"
 msgstr "Dernière sauvegarde {0}"
 
+#. placeholder {0}: formatWhen(target.lastBackupAt)
+#: packages/core/src/app/screens/Settings/components/BackupSection.tsx
+msgid "Last complete backup {0}"
+msgstr "Dernière sauvegarde complète {0}"
+
 #. placeholder {0}: relativeTime(lastSynced)
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Last synced {0}"
@@ -2040,6 +2045,10 @@ msgstr "URL du relais Nostr"
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Not backed up yet"
 msgstr "Pas encore sauvegardé"
+
+#: packages/core/src/app/screens/Settings/components/BackupSection.tsx
+msgid "Not finished: Bramble was closed before this backup completed. It will run again next time you open Bramble."
+msgstr "Sauvegarde inachevée : Bramble a été fermé avant la fin de cette sauvegarde. Elle sera relancée à la prochaine ouverture de Bramble."
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 #: packages/core/src/app/screens/Settings/components/DesktopLinkSection.tsx

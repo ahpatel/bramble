@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import type { HttpRequest } from "../adapters/http";
+import { type HttpRequest, TRANSFER_INTERRUPTED } from "../adapters/http";
 import { request } from "./http";
 import { AliasError } from "./types";
 
@@ -159,6 +159,21 @@ describe("request through an injected transport", () => {
 		);
 		expect(err).toBeInstanceOf(AliasError);
 		expect(err.kind).toBe("auth");
+	});
+
+	// The request may have reached the provider before iOS stopped it, so "could not reach" would be
+	// wrong, and a blind retry could make a second alias.
+	it("says an interrupted request may have landed, instead of calling it unreachable", async () => {
+		const http = {
+			send: async () => {
+				throw new Error(TRANSFER_INTERRUPTED);
+			},
+		};
+		const err = await request("https://p.example/x", { headers: {} }, Schema, http).catch((e) => e);
+		expect(err.kind).toBe("network");
+		expect(err.message).toMatch(/closed before the provider answered/i);
+		expect(err.message).not.toMatch(/could not reach/i);
+		expect(err.providerMessage).toBeUndefined();
 	});
 
 	it("reports a throwing transport as a network failure", async () => {

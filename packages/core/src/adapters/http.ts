@@ -23,6 +23,14 @@ export interface HttpTransport {
 	send(req: HttpRequest): Promise<HttpResponse>;
 }
 
+/**
+ * What a transport throws when the platform stopped the request itself, rather than the network
+ * or the server failing it: iOS ran out of the background time it gives an app that was left.
+ * Nothing is wrong with the destination, so callers treat it as "try again", never as a failure
+ * to back off from.
+ */
+export const TRANSFER_INTERRUPTED = "transfer/interrupted";
+
 export interface HttpRequest {
 	method: string;
 	url: string;

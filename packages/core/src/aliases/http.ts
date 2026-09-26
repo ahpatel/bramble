@@ -1,5 +1,10 @@
 import { type ZodType, z } from "zod";
-import { fetchTransport, type HttpResponse, type HttpTransport } from "../adapters/http";
+import {
+	fetchTransport,
+	type HttpResponse,
+	type HttpTransport,
+	TRANSFER_INTERRUPTED,
+} from "../adapters/http";
 import { AliasError, type AliasErrorKind } from "./types";
 
 // The one place an alias provider is spoken to. Every provider goes through `request` so the
@@ -49,6 +54,10 @@ const FALLBACK: Record<AliasErrorKind, string> = {
 	config: "This provider needs more setup before it can create an alias.",
 };
 
+/** Not "could not reach": the request may have landed, so the user is told to check before retrying. */
+const INTERRUPTED_MESSAGE =
+	"Bramble was closed before the provider answered. Check your provider before trying again, in case the alias was made.";
+
 export interface AliasRequestInit {
 	method?: string;
 	headers: Record<string, string>;
@@ -80,6 +89,10 @@ export async function request<T>(
 				init.body === undefined ? undefined : new TextEncoder().encode(JSON.stringify(init.body)),
 		});
 	} catch (e) {
+		// Bramble was left before the provider answered; the provider may or may not have made it.
+		if (e instanceof Error && e.message === TRANSFER_INTERRUPTED) {
+			throw new AliasError("network", INTERRUPTED_MESSAGE);
+		}
 		// Offline, DNS, TLS, or a CORS refusal. All indistinguishable from here, and all mean the
 		// same thing to a user: the provider was not reached, so nothing was created.
 		throw new AliasError("network", FALLBACK.network, {

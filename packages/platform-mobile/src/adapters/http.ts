@@ -1,5 +1,10 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
-import { fetchTransport, type HttpResponse, type HttpTransport } from "@core/adapters/http";
+import {
+	fetchTransport,
+	type HttpResponse,
+	type HttpTransport,
+	TRANSFER_INTERRUPTED,
+} from "@core/adapters/http";
 import { base64ToBytes, bytesToBase64 } from "@core/util/bytes";
 
 // Outbound HTTP for hosts the WebView cannot reach. Its origin is `capacitor://localhost` on iOS
@@ -23,14 +28,24 @@ const Native = registerPlugin<NativeHttpPlugin>("NativeHttp");
 
 const nativeTransport: HttpTransport = {
 	async send({ method, url, headers, body }): Promise<HttpResponse> {
-		const res = await Native.send({
-			method,
-			url,
-			headers: headers ?? {},
-			// Omitted rather than sent empty, so the native side can tell "no body" from "a body
-			// that happens to be zero bytes" and pick the right thing for the method.
-			...(body ? { body: bytesToBase64(body) } : {}),
-		});
+		let res: { status: number; body: string };
+		try {
+			res = await Native.send({
+				method,
+				url,
+				headers: headers ?? {},
+				// Omitted rather than sent empty, so the native side can tell "no body" from "a body
+				// that happens to be zero bytes" and pick the right thing for the method.
+				...(body ? { body: bytesToBase64(body) } : {}),
+			});
+		} catch (e) {
+			// iOS stopped it when the background time it gives a left app ran out. Named as such, so
+			// a backup is retried rather than backed off from, and an alias gets an honest message.
+			if ((e as { code?: string } | null)?.code === "interrupted") {
+				throw new Error(TRANSFER_INTERRUPTED);
+			}
+			throw e;
+		}
 		return {
 			status: res.status,
 			ok: res.status >= 200 && res.status < 300,

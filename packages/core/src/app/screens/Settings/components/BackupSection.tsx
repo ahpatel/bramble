@@ -3,6 +3,7 @@ import { msg } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { Boxes, Cloud, CloudUpload, FolderTree, HardDrive, Mail, Plus, X } from "lucide-react";
 import { type ComponentType, useState } from "react";
+import { TRANSFER_INTERRUPTED } from "../../../../adapters/http";
 import {
 	type BackupFrequency,
 	type BackupTargetConfig,
@@ -418,6 +419,22 @@ function TargetCard({
 							<p className="text-xs text-muted-foreground truncate">
 								<Trans>Backing up…</Trans>
 							</p>
+						) : target.lastError === TRANSFER_INTERRUPTED ? (
+							// Not red: nothing failed. But it must not read as done either, and the time of
+							// the last complete backup is what the reader actually needs to know.
+							<>
+								<p className="text-xs text-amber-500 break-words">
+									<Trans>
+										Not finished: Bramble was closed before this backup completed. It will run again
+										next time you open Bramble.
+									</Trans>
+								</p>
+								{target.lastBackupAt ? (
+									<p className="text-xs text-muted-foreground truncate">
+										<Trans>Last complete backup {formatWhen(target.lastBackupAt)}</Trans>
+									</p>
+								) : null}
+							</>
 						) : target.lastError ? (
 							<>
 								<p className="text-xs text-red-500 break-words" title={target.lastError}>
