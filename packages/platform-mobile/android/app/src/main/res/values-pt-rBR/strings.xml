@@ -29,4 +29,7 @@ Adicione um no Bramble.</string>
     <string name="af_ds_show_all_logins">Mostrar todos os logins</string>
     <string name="af_ds_search_vault">Pesquisar no seu cofre</string>
     <string name="af_ds_show_all">Mostrar todos</string>
+    <string name="transfer_channel_name">Envios</string>
+    <string name="transfer_notification_title">Concluindo um envio</string>
+    <string name="transfer_notification_text">O Bramble continua em segundo plano até terminar.</string>
 </resources>

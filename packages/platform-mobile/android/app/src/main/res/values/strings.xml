@@ -38,4 +38,9 @@
     <string name="af_ds_show_all_logins">Show all logins</string>
     <string name="af_ds_search_vault">Search your vault</string>
     <string name="af_ds_show_all">Show all</string>
+
+    <!-- Foreground-service notification while a request finishes (TransferService) -->
+    <string name="transfer_channel_name">Uploads</string>
+    <string name="transfer_notification_title">Finishing an upload</string>
+    <string name="transfer_notification_text">Bramble keeps running in the background until it is done.</string>
 </resources>

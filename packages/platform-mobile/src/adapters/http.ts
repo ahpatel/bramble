@@ -39,8 +39,9 @@ const nativeTransport: HttpTransport = {
 				...(body ? { body: bytesToBase64(body) } : {}),
 			});
 		} catch (e) {
-			// iOS stopped it when the background time it gives a left app ran out. Named as such, so
-			// a backup is retried rather than backed off from, and an alias gets an honest message.
+			// Bramble was left and the OS stopped it: iOS's background time ran out, or Android's
+			// foreground service could not hold. Named as such, so a backup is retried rather than
+			// backed off from, and an alias gets an honest message.
 			if ((e as { code?: string } | null)?.code === "interrupted") {
 				throw new Error(TRANSFER_INTERRUPTED);
 			}

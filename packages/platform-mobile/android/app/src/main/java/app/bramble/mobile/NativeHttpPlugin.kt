@@ -6,13 +6,17 @@ import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.CookieJar
 import okhttp3.Headers.Companion.toHeaders
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 
 /**
  * Outbound HTTP for hosts the WebView cannot reach.
@@ -41,9 +45,10 @@ class NativeHttpPlugin : Plugin() {
     /**
      * One client for the plugin, so the connection pool is reused across calls.
      *
-     * Capacitor runs `@PluginMethod` off the main thread, so a blocking call here is safe and
-     * cannot ANR. (iOS is the opposite: there every plugin call in the app shares one serial
-     * queue, so its half of this plugin must not block.)
+     * Requests are enqueued, never executed in place: Capacitor runs every plugin method in the
+     * app on one shared thread ("CapacitorPlugins", Bridge.java), so a blocking call here would
+     * hold up every other plugin, crypto and storage included, for as long as an upload takes.
+     * iOS has the same rule for the same reason.
      */
     private val client = OkHttpClient.Builder()
         .cookieJar(CookieJar.NO_COOKIES)
@@ -69,6 +74,9 @@ class NativeHttpPlugin : Plugin() {
         // JSON string cannot carry arbitrary bytes.
         val body = call.getString("body")?.let { Base64.decode(it, Base64.NO_WRAP) }
 
+        // Keeps the process running if Bramble is left mid-request. See TransferService.
+        val transfer = Transfers.begin(context)
+        val pending: Call
         try {
             // OkHttp refuses a body on GET/HEAD and insists on one for POST/PUT/PATCH, so absence
             // has to mean "empty" everywhere else. Phrased as "which methods take no body" rather
@@ -90,23 +98,59 @@ class NativeHttpPlugin : Plugin() {
             // moving. Scaled to the body at an 8 KiB/s floor, as on iOS; the call limit covers the
             // send and the wait after it.
             val idle = 60L + (body?.size ?: 0) / 8_192L
-            val timed = client.newBuilder()
+            pending = client.newBuilder()
                 .readTimeout(idle, TimeUnit.SECONDS)
                 .callTimeout(maxOf(600L, 2 * idle), TimeUnit.SECONDS)
                 .build()
-            timed.newCall(request).execute().use { res ->
-                val bytes = res.body?.bytes() ?: ByteArray(0)
-                call.resolve(
-                    JSObject()
-                        .put("status", res.code)
-                        .put("body", Base64.encodeToString(bytes, Base64.NO_WRAP))
-                )
-            }
-        } catch (e: Throwable) {
-            // Offline, DNS, TLS, timeout. All of them mean the same thing to the caller: the host
-            // was not reached, so nothing happened on the other end.
-            call.reject(e.message ?: e.toString())
+                .newCall(request)
+        } catch (e: Exception) {
+            // A malformed URL or header: nothing was sent.
+            Transfers.end(transfer)
+            return call.reject(e.message ?: e.toString())
         }
+
+        transfer.call = pending
+        if (transfer.expired) pending.cancel()
+        pending.enqueue(object : Callback {
+            override fun onResponse(c: Call, response: Response) {
+                try {
+                    val bytes = response.use { it.body?.bytes() ?: ByteArray(0) }
+                    call.resolve(
+                        JSObject()
+                            .put("status", response.code)
+                            .put("body", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                    )
+                } catch (e: IOException) {
+                    fail(e)
+                } finally {
+                    Transfers.end(transfer)
+                }
+            }
+
+            override fun onFailure(c: Call, e: IOException) {
+                try {
+                    fail(e)
+                } finally {
+                    Transfers.end(transfer)
+                }
+            }
+
+            private fun fail(e: IOException) {
+                if (Transfers.interrupted(transfer)) {
+                    // Same code as iOS, so the shared adapter reports it as interrupted, not failed.
+                    call.reject("Bramble was closed before this finished", "interrupted")
+                } else {
+                    // Offline, DNS, TLS, timeout. All of them mean the same thing to the caller:
+                    // the host was not reached, so nothing happened on the other end.
+                    call.reject(e.message ?: e.toString())
+                }
+            }
+        })
+    }
+
+    override fun handleOnStop() {
+        super.handleOnStop()
+        Transfers.onAppLeft()
     }
 
     private companion object {

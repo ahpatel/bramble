@@ -113,6 +113,13 @@
                 android:name="android.credentials.provider"
                 android:resource="@xml/credential_provider" />
         </service>
+
+        <!-- Keeps Bramble running while a backup or alias request is in flight, so leaving the
+             app does not freeze it mid-transfer. Started only by NativeHttpPlugin. -->
+        <service
+            android:name=".TransferService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
     <!-- Permissions -->
@@ -120,4 +127,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 </manifest>

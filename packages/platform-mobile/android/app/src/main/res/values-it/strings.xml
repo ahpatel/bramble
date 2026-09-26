@@ -29,4 +29,7 @@ Aggiungine uno in Bramble.</string>
     <string name="af_ds_show_all_logins">Mostra tutti i login</string>
     <string name="af_ds_search_vault">Cerca nel tuo caveau</string>
     <string name="af_ds_show_all">Mostra tutto</string>
+    <string name="transfer_channel_name">Caricamenti</string>
+    <string name="transfer_notification_title">Completamento di un caricamento</string>
+    <string name="transfer_notification_text">Bramble resta attivo in background fino al termine.</string>
 </resources>
