@@ -33,9 +33,9 @@ Each is a single authenticated POST once discovery is done. What differs is the
 auth header, whether anything must be fetched first, and how much configuration
 the user has to supply before the first alias can exist. **Addy and SimpleLogin
 are verified end to end against live accounts.** DuckDuckGo and Firefox Relay
-ship too, once the native transport existed to reach them, but neither has been
-exercised with a real key: see [What is unproven about these
-two](#what-is-unproven-about-these-two-and-why). Fastmail and Forward Email are
+ship too, once the native transport existed to reach them; both have been
+connected with a real key, but neither has created an alias under test yet: see
+[What is unproven about these two](#what-is-unproven-about-these-two-and-why). Fastmail and Forward Email are
 researched and deferred, each for the same reason and noted in its own section:
 neither can be proven without a paid account.
 
@@ -713,17 +713,19 @@ link is not made clickable.
    this cheap to provoke deliberately and worth doing before Phase 2 designs the
    error surface.
 4. Rate limits, undocumented on all four.
-5. **DuckDuckGo and Firefox Relay are unverified against a live account.** Both
-   endpoints are reachable and both authenticate (see [What is unproven about
-   these two](#what-is-unproven-about-these-two-and-why)), but no authenticated
-   `2xx` has been seen from either, and neither `verify` response body has ever
-   been observed, which is why both of those schemas are permissive.
+5. **DuckDuckGo and Firefox Relay: `verify` proven, `create` not.** Both were
+   connected with real keys on the desktop build (September 2026), so an
+   authenticated `2xx` has now been seen from each through `http_send`. What is
+   still unseen is a `create` from either, and the `verify` bodies themselves,
+   since the settings screen shows only "Connected." and never the account label;
+   the permissive schemas stay until a body is actually read. Both providers'
+   *error* bodies are measured: DuckDuckGo sends `{"error":"invalid_token"}`,
+   Relay sends Django REST Framework's `{"detail":"Invalid token."}`.
 6. Whether DuckDuckGo's token **expires with the browser session** it was scraped
    from. If it does, an expiry is indistinguishable from a bad key and the
    settings screen has no remedy to offer.
-7. **Mobile cloud backups are built but not device-verified** end to end
-   ([cloud-storage-backups.md](cloud-storage-backups.md)). The transport under
-   them is device-proven on both platforms; the composition is not.
+7. **Mobile cloud backups are device-verified on Android, not yet on iOS**
+   ([cloud-storage-backups.md](cloud-storage-backups.md)).
 
 ## Phases
 

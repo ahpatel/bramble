@@ -652,6 +652,20 @@ VEK-wrapped, so a run only happens while that vault is open. Every dep re-checks
 rather than trusting the state on entry, because auto-lock can fire mid-run when the app is
 backgrounded.
 
+**Verified on a Pixel 8 (September 2026)** against the repo's `docker-compose.yml`, tunnelled to the
+phone with `adb reverse`, which is also why cleartext `http://localhost` worked there:
+
+- **S3 to MinIO.** Signed in JS, sent over the native plugin, and accepted by a real SigV4
+  validator. The object is a genuine sealed vault (`VLT1` header, same as the desktop's).
+- **WebDAV to Nextcloud.** The backup folder did not exist, so the phone created it with `MKCOL`.
+  That is the case the Android plugin's rule for request bodies (empty for every method except GET
+  and HEAD) was written for.
+- **The opportunistic run.** A target that had never run was added, then the vault was locked and
+  unlocked with nothing else pressed: it uploaded by itself. The two targets already backed up on
+  that same unlock were correctly left alone, so an unlock does not re-upload what is current.
+
+Not yet verified: the same on iOS, and a resume (rather than an unlock) as the trigger.
+
 **Dropbox on desktop.** The OAuth connect is extension-only (`shell.connectBackupOAuth`), so the
 desktop shows the S3 and WebDAV tiles and hides one-click sign-in.
 
