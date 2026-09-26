@@ -33,8 +33,7 @@ export interface StorageAdapter {
 	/**
 	 * Subscribe to changes of a metadata key made in another context (e.g. a background
 	 * scheduled backup writing `backup.targets`) so open UI can live-refresh. Returns an
-	 * unsubscribe. Optional: absent where nothing writes metadata out-of-context (mobile
-	 * runs backups in-process, so its own React state already reflects the write).
+	 * unsubscribe. Optional: absent where nothing writes metadata outside the UI's own state.
 	 */
 	subscribeMeta?(key: string, callback: () => void): () => void;
 }

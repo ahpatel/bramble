@@ -24,7 +24,7 @@ import { mobileShell, mobileTarget, registerOpenSetup, resolveAppVersion } from 
 import { mobileStorage } from "./adapters/storage";
 import { startAutoLock } from "./auto-lock";
 import { consumePendingAutofillSave } from "./autofill-pending";
-import { startBackupRuns } from "./backup";
+import { mobileBackupActivity, startBackupRuns } from "./backup";
 import { hasPendingImport, onImportAvailable } from "./credential-exchange";
 import { installNativeWebRtc } from "./native-webrtc";
 import { initRosterSync } from "./sync/sync-manager";
@@ -43,6 +43,7 @@ const platform: Platform = {
 	clipboard: mobileClipboard,
 	biometric: mobileBiometric,
 	http: mobileHttp,
+	backupActivity: mobileBackupActivity,
 	// iOS only, and presence just means the plugin exists; the UI asks it whether this
 	// particular device can actually exchange. Kept off the async boot path on purpose.
 	exchange: resolveExchange(),

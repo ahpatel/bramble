@@ -145,6 +145,13 @@ async function deleteFlatVaultKeys(): Promise<void> {
 	for (const base of MOBILE_PER_VAULT_META_KEYS) await Preferences.remove({ key: `meta:${base}` });
 }
 
+/** Keys an open screen is watching. The automatic backup run writes `backup.targets` from outside
+ * React, so without this the settings screen showed a finished backup only after a reopen. */
+const metaListeners = new Map<string, Set<() => void>>();
+const notifyMeta = (key: string) => {
+	for (const cb of metaListeners.get(key) ?? []) cb();
+};
+
 export const mobileStorage: StorageAdapter = {
 	async hasVaultHandle(vaultId) {
 		await ensureMigrated();
@@ -237,8 +244,19 @@ export const mobileStorage: StorageAdapter = {
 	async setMeta<T>(key: string, value: T): Promise<void> {
 		await ensureMigrated();
 		await Preferences.set({ key: `meta:${key}`, value: JSON.stringify(value) });
+		notifyMeta(key);
 	},
 	async removeMeta(key: string): Promise<void> {
 		await Preferences.remove({ key: `meta:${key}` });
+		notifyMeta(key);
+	},
+	subscribeMeta(key: string, callback: () => void): () => void {
+		const set = metaListeners.get(key) ?? new Set();
+		metaListeners.set(key, set);
+		set.add(callback);
+		return () => {
+			set.delete(callback);
+			if (set.size === 0) metaListeners.delete(key);
+		};
 	},
 };

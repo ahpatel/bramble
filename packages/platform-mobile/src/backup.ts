@@ -11,6 +11,7 @@
 // See docs/cloud-storage-backups.md.
 
 import { App as CapacitorApp } from "@capacitor/app";
+import type { BackupActivityAdapter } from "@core/adapters/backup-activity";
 import { createTarget, runBackup, sha256Hex, signingTransport } from "@core/backup";
 import {
 	type BackupSecrets,
@@ -31,6 +32,24 @@ import { onVaultStateChange } from "./adapters/vault-session";
  * only the crypto adapter knows when it appears and disappears. Starts locked, because it is. */
 let unlocked = false;
 let running = false;
+
+/** Targets this runner is uploading right now, for the settings screen to show. */
+const uploading = new Set<string>();
+const activityListeners = new Set<(ids: ReadonlySet<string>) => void>();
+function setUploading(id: string, on: boolean): void {
+	if (on) uploading.add(id);
+	else uploading.delete(id);
+	const snapshot = new Set(uploading);
+	for (const cb of activityListeners) cb(snapshot);
+}
+
+export const mobileBackupActivity: BackupActivityAdapter = {
+	subscribe(callback) {
+		activityListeners.add(callback);
+		callback(new Set(uploading));
+		return () => activityListeners.delete(callback);
+	},
+};
 
 async function loadTargets(vaultId: string): Promise<BackupTargetConfig[]> {
 	return (await mobileStorage.getMeta<BackupTargetConfig[]>(backupTargetsKeyFor(vaultId))) ?? [];
@@ -106,11 +125,16 @@ export async function runDueBackups(): Promise<void> {
 					// no S3 endpoint or WebDAV server grants CORS to the WebView's origin, so a
 					// plain fetch would fail before reaching the network. See @core/adapters/http.
 					const target = createTarget(cfg, signingTransport(cfg, mobileHttp));
-					await runBackup(target, vault.blob, {
-						prefix: targetPrefixFor(t, vault.id, vault.isDefault),
-						keep: t.keep,
-						vaultId: keyVaultIdFor(t, vault.id),
-					});
+					setUploading(t.id, true);
+					try {
+						await runBackup(target, vault.blob, {
+							prefix: targetPrefixFor(t, vault.id, vault.isDefault),
+							keep: t.keep,
+							vaultId: keyVaultIdFor(t, vault.id),
+						});
+					} finally {
+						setUploading(t.id, false);
+					}
 				},
 			},
 			Date.now(),

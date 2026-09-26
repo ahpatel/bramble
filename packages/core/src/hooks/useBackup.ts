@@ -62,7 +62,7 @@ function originOf(t: {
  * reaches any provider via host permissions. See docs/cloud-storage-backups.md.
  */
 export function useBackup() {
-	const { storage, crypto, shell, backupCreds, http } = usePlatform();
+	const { storage, crypto, shell, backupCreds, http, backupActivity } = usePlatform();
 	// Targets, credentials and snapshots all belong to the vault the user is currently in.
 	const { activeId, vaults, ready } = useVaultRegistry();
 	const vaultId = activeId ?? vaults[0]?.id;
@@ -71,6 +71,14 @@ export function useBackup() {
 	// undefined = still loading (or no vault resolved yet).
 	const [targets, setTargets] = useState<BackupTargetConfig[] | undefined>(undefined);
 	const [runningIds, setRunningIds] = useState<ReadonlySet<string>>(() => new Set());
+	// Runs this screen did not start (mobile's automatic run on unlock), merged into the same set so
+	// every row, the count and the disabled button treat them exactly like a manual run.
+	const [activeElsewhere, setActiveElsewhere] = useState<ReadonlySet<string>>(() => new Set());
+	useEffect(() => backupActivity?.subscribe(setActiveElsewhere), [backupActivity]);
+	const allRunning = useMemo(
+		() => (activeElsewhere.size === 0 ? runningIds : new Set([...runningIds, ...activeElsewhere])),
+		[runningIds, activeElsewhere],
+	);
 	// Whether this device can keep a schedule while the vault is locked. Not a setting and not a
 	// question: the platform picks the best store it has, and this is only the consequence, which
 	// the UI states as behaviour. `noStore` is the one case with a remedy worth offering.
@@ -372,7 +380,7 @@ export function useBackup() {
 
 	return {
 		targets,
-		runningIds,
+		runningIds: allRunning,
 		addTarget,
 		updateTarget,
 		setFrequency,

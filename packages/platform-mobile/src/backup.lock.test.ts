@@ -45,7 +45,7 @@ vi.mock("@core/backup", async (importOriginal) => ({
 	},
 }));
 
-const { runDueBackups, startBackupRuns } = await import("./backup");
+const { mobileBackupActivity, runDueBackups, startBackupRuns } = await import("./backup");
 
 const TARGETS_KEY = backupTargetsKeyFor("v1");
 const target = (id: string): BackupTargetConfig =>
@@ -122,5 +122,22 @@ describe("a lock in the middle of a backup run", () => {
 		setLocked(true);
 		await runDueBackups();
 		expect(h.uploads).toBe(0);
+	});
+});
+
+// What the settings screen shows while an automatic run is going: the target being uploaded, and
+// nothing once it is done, whether it succeeded or not.
+describe("activity", () => {
+	it("reports the target while it uploads and clears it after", async () => {
+		const seen: string[][] = [];
+		const off = mobileBackupActivity.subscribe((ids) => seen.push([...ids]));
+		let during: string[] = [];
+		h.duringUpload = () => {
+			during = seen.at(-1) ?? [];
+		};
+		await unlockAndSettle();
+		off();
+		expect(during).toHaveLength(1);
+		expect(seen.at(-1)).toEqual([]);
 	});
 });

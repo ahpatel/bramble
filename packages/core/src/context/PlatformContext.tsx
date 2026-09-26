@@ -1,5 +1,6 @@
 import { createContext, type ReactNode, useContext } from "react";
 import type { AutofillAdapter } from "../adapters/autofill";
+import type { BackupActivityAdapter } from "../adapters/backup-activity";
 import type { BackupCredentialsAdapter } from "../adapters/backup-creds";
 import type { BiometricUnlock } from "../adapters/biometric";
 import type { ClipboardAdapter } from "../adapters/clipboard";
@@ -38,6 +39,9 @@ export interface Platform {
 	 * webviews cannot reach an arbitrary provider at all. See adapters/http.
 	 */
 	http?: HttpTransport;
+	/** Backups running outside the settings screen, so it can show them. Mobile only; see
+	 * adapters/backup-activity. */
+	backupActivity?: BackupActivityAdapter;
 }
 
 const PlatformContext = createContext<Platform | null>(null);

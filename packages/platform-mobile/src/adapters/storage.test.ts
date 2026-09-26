@@ -219,3 +219,22 @@ describe("mobile one-time namespacing migration", () => {
 		expect("legacyBlobVaultId" in reg()).toBe(false);
 	});
 });
+
+// The automatic backup run writes its outcome from outside React, so an open settings screen
+// only learns of it through this.
+describe("subscribeMeta", () => {
+	it("tells a subscriber when that key is written or removed, and no one else", async () => {
+		const storage = await loadStorage();
+		const seen: string[] = [];
+		const off = storage.subscribeMeta?.("backup.targets:v", () => seen.push("targets"));
+		storage.subscribeMeta?.("other", () => seen.push("other"));
+
+		await storage.setMeta("backup.targets:v", []);
+		await storage.removeMeta("backup.targets:v");
+		expect(seen).toEqual(["targets", "targets"]);
+
+		off?.();
+		await storage.setMeta("backup.targets:v", []);
+		expect(seen).toEqual(["targets", "targets"]);
+	});
+});
