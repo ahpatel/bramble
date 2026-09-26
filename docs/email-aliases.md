@@ -234,7 +234,7 @@ The remaining gap is narrow but real: only an authenticated `2xx` proves the
 success path, since a server can route errors and successes through different
 middleware. That is spike question 1.
 
-Two caveats carried forward:
+Three caveats carried forward:
 
 - Redirects are not followed (`redirect: "manual"`, and reject rather than
   chase). A redirect out of an API call means the session was rejected and the
@@ -245,6 +245,11 @@ Two caveats carried forward:
   `access-control-allow-credentials: true`, and ambient cookies have already
   cost this repo a day once (1255ab7b, WebDAV uploads authenticating as the
   wrong thing). The token goes in a header, deliberately and only.
+- A request iOS cancels because Bramble was left mid-call (see "Leaving the
+  app mid-upload" in [cloud-storage-backups.md](cloud-storage-backups.md)) may
+  already have reached the provider. It does not say "could not reach the
+  provider": it says Bramble was closed before the provider answered and to
+  check before trying again, since a blind retry could make a second alias.
 
 ## A catch-all domain, with no provider at all
 

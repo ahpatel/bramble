@@ -178,7 +178,7 @@ own interval**. The cap is the part that matters, since it means a backoff can n
 daily backup into a weekly one however long it has been failing; a daily target that cannot
 authenticate settles at one attempt a day rather than 288.
 
-Three things deliberately do not back off:
+Four things deliberately do not back off:
 
 - **A skipped target.** A locked vault produces no outcome at all, so it never counts as a
   failure. Backing it off would delay the very run it is waiting for.
@@ -187,6 +187,12 @@ Three things deliberately do not back off:
 - **An edited target.** `clearBackoff` runs on every edit and on a frequency change, because the
   edit is usually the fix, and a corrected password that sits out an accumulated backoff looks
   like it did not work.
+- **An interrupted transfer.** On mobile the OS can cut an upload off when the app is left (see
+  [Leaving the app mid-upload](#leaving-the-app-mid-upload)). Nothing refused it, so it is
+  recorded as `transfer/interrupted` rather than as a failure, and the target is due at the next
+  chance whatever its interval, which is what makes "it will run again next time you open
+  Bramble" true. An interruption of a vault the target already holds is not recorded at all,
+  since nothing was lost.
 
 A success clears the counter along with the error. Both fields are optional and absent until a
 target first fails, so an older stored list reads unchanged and an older build ignores them and
@@ -204,7 +210,8 @@ Opportunistic, per platform:
   iOS or Android, so this is the only path. Native background (iOS
   `BGTaskScheduler`, Android `WorkManager`, the latter pure AndroidX and
   compatible with the no-Google-Play constraint) is a later stretch, OS-throttled
-  and never guaranteed.
+  and never guaranteed. See [Mobile: backups without a
+  scheduler](#mobile-backups-without-a-scheduler).
 - **Desktop:** a timer in the Rust shell, every 5 minutes, and it is not
   unlock-gated. See [Desktop: the one platform that can keep a
   schedule](#desktop-the-one-platform-that-can-keep-a-schedule).
@@ -231,6 +238,17 @@ produced `bramble/bramble/`). Dropbox is the exception, since its `path` is a
 container folder inside the app folder and keeps the `bramble` subfolder.
 Grandfather-father-son retention (hourly / daily / weekly / monthly) is a
 possible later refinement.
+
+**A snapshot name only ever appears on a complete file.** Many WebDAV servers write a PUT in
+place, so an upload cut off partway would leave a truncated file named exactly like a good backup,
+which the prune would count toward keep-last-N and nothing would flag until a restore failed on
+it. WebDAV therefore writes to a hidden temporary beside the snapshot (`.<name>.partial`) and
+`MOVE`s it into place, which is atomic within one server, deleting the temporary if either step
+fails. An app killed between the two leaves the temporary behind, so the prune also sweeps this
+vault's temporaries that the server dates as over an hour old; a younger one may be another
+device's upload still in flight to the same folder. S3 needs none of this, since an object exists
+only once the whole upload has arrived. Nextcloud stages uploads in a `.part` file of its own,
+which is why testing against it never showed the problem.
 
 ### Restore
 
@@ -627,6 +645,19 @@ bad property for a feature whose whole promise is that it works while you are no
 *(`apt install bramble` from `apt.bramble.sh` on a clean machine is done, and is now
 `pnpm run test:apt`.)*
 
+**Dropbox on desktop.** The OAuth connect is extension-only (`shell.connectBackupOAuth`), so the
+desktop shows the S3 and WebDAV tiles and hides one-click sign-in.
+
+**The extension's cross-vault credential fallback is temporary by design.** `decryptSecrets` tries
+every resident vek because targets migrated off the device-global list were wrapped under whichever
+vault happened to be active then. Once those have aged out (every migrated target re-saved, or
+gone), it should be narrowed to the owning vault, which is what a per-vault model should mean.
+
+**arm64 packages.** amd64 only, like Signal. The build container takes `--platform`, so this is a
+runner or an emulated build rather than new code.
+
+## Mobile: backups without a scheduler
+
 **Mobile now ships** (`cloudBackup: true`), and the question this paragraph used to ask has an
 answer: a Capacitor webview cannot reach an arbitrary provider, so it needed a native transport
 after all. The extension's answer did not transfer, exactly as the warning here suspected.
@@ -648,9 +679,67 @@ Service, not for a phone.
 **What mobile cannot promise is a schedule.** There is no background scheduler on either OS, so
 `platform-mobile/src/backup.ts` runs on unlock and on resume, and the frequency setting means
 "next time you open Bramble after this long" rather than a wall-clock time. Credentials stay
-VEK-wrapped, so a run only happens while that vault is open. Every dep re-checks the lock state
-rather than trusting the state on entry, because auto-lock can fire mid-run when the app is
-backgrounded.
+VEK-wrapped, so a run only happens while that vault is open.
+
+**A lock mid-run is the normal case, not an edge.** Auto-lock fires when the app is backgrounded,
+so the runner starts nothing new once locked (listing vaults and unwrapping a credential are
+gated) but finishes and records what is already in hand: an upload whose credential was unwrapped
+before the lock completes, and its outcome is saved. Reading and saving the target list have to
+stay ungated together. The runner re-reads the list after uploading and saves a merged copy, so a
+gated read beside an ungated save would write an empty list and delete every target;
+`backup.lock.test.ts` drives the real core runner, not a mock, to catch exactly that pairing.
+
+**Automatic runs show on the settings screen.** The runner reports what it is uploading through
+the optional `backupActivity` adapter, and mobile storage implements `subscribeMeta`, so an open
+settings screen shows "Backing up" for a run it did not start, disables Back up now while it
+runs, and shows the result without being reopened.
+
+### Leaving the app mid-upload
+
+iOS suspends a backgrounded app within seconds, which froze an upload partway and surfaced later
+as a network error nobody could explain. Each native request now asks for background time
+(`beginBackgroundTask`), so an upload that fits in it finishes and is recorded. Measured on the
+simulator, iOS granted about 27 seconds to a lone request and about 7 when several were running,
+so this covers a typical vault, not a large one on a slow link.
+
+When the time runs out the request is cancelled cleanly and rejected with code `interrupted`,
+which the JS adapter turns into `TRANSFER_INTERRUPTED`. The settings screen then says so in amber,
+not red, since nothing failed: "Interrupted: Bramble was closed before this backup was confirmed",
+followed by "It will run again next time you open Bramble" (or, for a target set to Off, to tap
+Back up now), with the time of the last complete backup beside it, which is what the reader
+actually needs. The wording is "confirmed" rather than "finished" because the simulator showed
+iOS cancelling its side of an upload whose bytes had already left, and the object landed anyway.
+Bramble cannot tell the two apart and a retry is safe in both. The atomic WebDAV write above is
+what makes a cut-off upload harmless to the snapshots already there.
+
+An alias request cut off the same way may already have reached the provider, so it does not say
+"could not reach the provider": it says Bramble was closed before the provider answered and to
+check before trying again, since a blind retry could make a second alias.
+
+On Android a backgrounded process keeps running, so there is no equivalent expiry. If the OS kills
+the process mid-upload nothing is recorded, and the target simply stays due.
+
+### Timeouts sized to the body
+
+iOS's request timeout counts only data received, and nothing arrives while a body uploads.
+Measured through a proxy throttling the upload direction, a 2 MiB upload that had sent 627 KB
+and was still moving died at exactly 61 seconds under a flat 60-second limit. Android has a
+milder form: OkHttp's read timer starts once the body is handed to the OS, which may still be
+draining megabytes of it.
+
+Both plugins therefore scale the idle limit to the body: 60 seconds plus the time to send it at an
+8 KiB/s floor, slower than a poor 2G uplink. A request with little or no body keeps about a minute
+to notice a stall; a 2 MiB vault gets about five. The same upload then completed after 121
+seconds. iOS caps the whole request at an hour; Android's call limit is the larger of 600 seconds
+and twice the idle limit.
+
+Stall detection driven by upload progress cannot replace this, because iOS reports bytes handed to
+the OS, not bytes that have left it, so a slow drain after the last write looks exactly like a
+stall. The floor is a stated trade-off: below 8 KiB/s a large upload still times out, and since a
+timeout cannot tell "never arrived" from "arrived but the answer did not", such a backup may land
+while being reported as failed. It is retried either way, and the extra snapshot is pruned.
+
+### Verification
 
 **Verified on a Pixel 8 (September 2026)** against the repo's `docker-compose.yml`, tunnelled to the
 phone with `adb reverse`, which is also why cleartext `http://localhost` worked there:
@@ -670,20 +759,24 @@ tunnel, and App Transport Security lets loopback cleartext through with no excep
 Info.plist. S3 and WebDAV both landed as sealed vaults, `MKCOL` created the folder, and an unlock
 uploaded the due target by itself while leaving the current ones alone.
 
+**Leaving the app, on the same simulator**, with the throttling proxy in front of both containers
+and Bramble sent to the background by launching Settings (`simctl launch booted
+com.apple.Preferences`):
+
+- An upload that fit in the background time finished while Bramble was in the background and was
+  recorded on return.
+- One that did not was recorded as interrupted with no failure count or backoff, both wordings
+  (scheduled and Off) showed as written, and a lock and unlock retried it by itself and cleared
+  the message.
+- The 2 MiB timeout measurement above, before and after the fix.
+
+These measure native behaviour. What JavaScript does while backgrounded could not be measured
+reliably, because an attached Web Inspector may keep the WebContent process alive.
+
 Not yet verified: backups on a physical iPhone (a real device cannot reach the Mac's `localhost`
-and would refuse cleartext to a LAN address, so it needs an HTTPS tunnel), and a resume, rather
+and would refuse cleartext to a LAN address, so it needs an HTTPS tunnel); the lock-mid-run,
+interrupted and timeout changes on Android, which was verified before them; and a resume, rather
 than an unlock, as the trigger on either platform.
-
-**Dropbox on desktop.** The OAuth connect is extension-only (`shell.connectBackupOAuth`), so the
-desktop shows the S3 and WebDAV tiles and hides one-click sign-in.
-
-**The extension's cross-vault credential fallback is temporary by design.** `decryptSecrets` tries
-every resident vek because targets migrated off the device-global list were wrapped under whichever
-vault happened to be active then. Once those have aged out (every migrated target re-saved, or
-gone), it should be narrowed to the owning vault, which is what a per-vault model should mean.
-
-**arm64 packages.** amd64 only, like Signal. The build container takes `--platform`, so this is a
-runner or an emulated build rather than new code.
 
 ## Target these two adapters first
 

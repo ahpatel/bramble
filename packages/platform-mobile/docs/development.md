@@ -422,6 +422,30 @@ trust prompt is only raised by launching from the home screen. **Tap the icon on
 and it opens. Also note a Debug build leaves the AutoFill provider unregistered (quirk 13), so
 reinstall Release afterwards if autofill matters.
 
+### 23. `URLSession`'s request timeout ignores bytes you are sending
+
+`timeoutIntervalForRequest` (and `URLRequest.timeoutInterval`) is an idle timer that only
+data *received* resets. While a body uploads nothing arrives, so a slow upload that is moving the
+whole time still dies at the limit: measured through a proxy throttling the upload direction, a
+2 MiB PUT failed at exactly 61 seconds having sent 627 KB, about 10 KiB/s and still moving.
+`timeoutIntervalForResource` (the total) never came into play. Progress callbacks cannot rescue it either, because
+`didSendBodyData` counts bytes handed to the OS, not bytes that have left it.
+
+`NativeHttp.swift` therefore sets each request's timeout to 60 seconds plus the body's size at an
+8 KiB/s floor, and Android's plugin mirrors it. See "Timeouts sized to the body" in
+[docs/cloud-storage-backups.md](../../../docs/cloud-storage-backups.md).
+
+To reproduce a slow uplink on the simulator, put a small TCP proxy in front of the local
+containers that throttles client-to-server only, and send the app to the background with
+`xcrun simctl launch booted com.apple.Preferences`. Keep the proxy's chunk size proportional to the
+rate (`max(16, rate / 50)` bytes worked). A fixed small chunk plus a sleep per chunk under-delivers
+badly at higher rates (one configured for 20 KiB/s delivered 9.5), so time a known file through it
+before trusting any rate.
+
+Background-time measurements are native-side only. An attached Web Inspector (quirk 21) may keep the
+WebContent process alive, so what JavaScript does while backgrounded cannot be trusted from a
+debugging session.
+
 ## Reclaiming disk space
 
 The iOS runtimes are the big consumers (~8 GB each). List and delete unused ones rather
