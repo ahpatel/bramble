@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createTarget, runBackup, signingTransport } from "../backup";
+import { createTarget, runBackup, sha256Hex, signingTransport } from "../backup";
 import {
 	applyBackupOutcomes,
 	type BackupFrequency,
@@ -301,6 +301,8 @@ export function useBackup() {
 			// This vault's own targets: read its blob and place snapshots in its own folder,
 			// matching where scheduled backups put this vault.
 			const blob = await storage.readVaultBlob(vaultId);
+			// Carried by a failed outcome too, so an interrupted repeat of a finished backup is not flagged.
+			const blobHash = await sha256Hex(blob);
 			setRunningIds(new Set(toRun.map((t) => t.id)));
 			const results = await Promise.all(
 				toRun.map(async (t) => {
@@ -353,7 +355,7 @@ export function useBackup() {
 							error: undefined as string | undefined,
 						};
 					} catch (e) {
-						return { id: t.id, hash: undefined, error: (e as Error).message };
+						return { id: t.id, hash: blobHash, error: (e as Error).message };
 					}
 				}),
 			);

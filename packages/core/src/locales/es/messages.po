@@ -1662,6 +1662,14 @@ msgstr "Contraseña maestra incorrecta para esta copia de seguridad."
 msgid "Incorrect recovery code"
 msgstr "Código de recuperación incorrecto."
 
+#: packages/core/src/app/screens/Settings/components/BackupSection.tsx
+msgid "Interrupted: Bramble was closed before this backup was confirmed. It will run again next time you open Bramble."
+msgstr "Interrupción: Bramble se cerró antes de que se confirmara esta copia de seguridad. Volverá a ejecutarse la próxima vez que abra Bramble."
+
+#: packages/core/src/app/screens/Settings/components/BackupSection.tsx
+msgid "Interrupted: Bramble was closed before this backup was confirmed. Tap Back up now to try again."
+msgstr "Interrupción: Bramble se cerró antes de que se confirmara esta copia de seguridad. Pulse Realizar copia de seguridad ahora para volver a intentarlo."
+
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Is this your device?"
 msgstr "¿Es este su dispositivo?"
@@ -2047,8 +2055,8 @@ msgid "Not backed up yet"
 msgstr "Aún no se ha realizado una copia de seguridad"
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
-msgid "Not finished: Bramble was closed before this backup completed. It will run again next time you open Bramble."
-msgstr "No se completó: se cerró Bramble antes de que finalizara esta copia de seguridad. Se ejecutará de nuevo la próxima vez que abra Bramble."
+#~ msgid "Not finished: Bramble was closed before this backup completed. It will run again next time you open Bramble."
+#~ msgstr "No se completó: se cerró Bramble antes de que finalizara esta copia de seguridad. Se ejecutará de nuevo la próxima vez que abra Bramble."
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 #: packages/core/src/app/screens/Settings/components/DesktopLinkSection.tsx

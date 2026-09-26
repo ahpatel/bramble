@@ -76,6 +76,7 @@ export interface BackupTargetConfig {
 
 /** What one target's backup attempt produced: a vault hash on success, a message on failure. */
 export interface BackupOutcome {
+	/** The vault the run uploaded, or, alongside an error, the one it was trying to. */
 	hash?: string;
 	error?: string;
 }
@@ -102,7 +103,12 @@ export function applyBackupOutcomes(
 		// The app was left before the upload finished. Shown, so nobody assumes it landed, but not
 		// counted as a failure: backoff exists to spare a provider that is refusing, and this one
 		// was not, so the next open has to retry rather than wait out a delay it did not earn.
-		if (r.error === TRANSFER_INTERRUPTED) return { ...t, lastError: r.error };
+		if (r.error === TRANSFER_INTERRUPTED) {
+			// Nothing was lost if this target already holds exactly that vault, as when a repeat of a
+			// backup that had just finished was cut off. Saying "interrupted" then would be a false alarm.
+			if (r.hash !== undefined && r.hash === t.lastVaultHash) return t;
+			return { ...t, lastError: r.error };
+		}
 		return r.error !== undefined
 			? { ...t, lastError: r.error, failedAt: now, failures: (t.failures ?? 0) + 1 }
 			: {

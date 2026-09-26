@@ -424,10 +424,19 @@ function TargetCard({
 							// the last complete backup is what the reader actually needs to know.
 							<>
 								<p className="text-xs text-amber-500 break-words">
-									<Trans>
-										Not finished: Bramble was closed before this backup completed. It will run again
-										next time you open Bramble.
-									</Trans>
+									{/* "Confirmed", not "finished": the upload may have reached storage just as
+									    the app was stopped, and Bramble cannot tell. Retrying is safe either way. */}
+									{target.frequency === "off" ? (
+										<Trans>
+											Interrupted: Bramble was closed before this backup was confirmed. Tap Back up
+											now to try again.
+										</Trans>
+									) : (
+										<Trans>
+											Interrupted: Bramble was closed before this backup was confirmed. It will run
+											again next time you open Bramble.
+										</Trans>
+									)}
 								</p>
 								{target.lastBackupAt ? (
 									<p className="text-xs text-muted-foreground truncate">

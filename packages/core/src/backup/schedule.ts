@@ -1,3 +1,4 @@
+import { TRANSFER_INTERRUPTED } from "../adapters/http";
 import type { BackupFrequency } from "./config";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -22,6 +23,7 @@ const RETRY_BASE_MS = 15 * 60 * 1000;
 
 interface Schedulable {
 	frequency: BackupFrequency;
+	lastError?: string;
 	lastBackupAt?: number;
 	lastVaultHash?: string;
 	failures?: number;
@@ -51,6 +53,9 @@ export function retryDelayMs(failures: number, frequency: BackupFrequency): numb
  * target is not waiting out a retry backoff. */
 export function isDue(t: Schedulable, now: number): boolean {
 	if (t.frequency === "off") return false;
+	// Interrupted by the app being left, so it goes again at the next chance rather than waiting out
+	// the interval: that is what the settings screen tells the user will happen.
+	if (t.lastError === TRANSFER_INTERRUPTED) return true;
 	if (t.failedAt != null) {
 		const since = now - t.failedAt;
 		// A negative `since` means the clock moved backwards; treating that as "no backoff" costs

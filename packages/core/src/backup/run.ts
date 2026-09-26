@@ -89,7 +89,7 @@ export async function runScheduledBackups(
 				await deps.upload(vault.id, t, secrets, vault);
 				outcome.set(t.id, { hash });
 			} catch (e) {
-				outcome.set(t.id, { error: (e as Error).message });
+				outcome.set(t.id, { error: (e as Error).message, hash });
 			}
 		}
 		if (outcome.size === 0) continue;

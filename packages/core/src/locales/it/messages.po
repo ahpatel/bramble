@@ -1662,6 +1662,14 @@ msgstr "Password principale errata per questo backup."
 msgid "Incorrect recovery code"
 msgstr "Codice di recupero errato."
 
+#: packages/core/src/app/screens/Settings/components/BackupSection.tsx
+msgid "Interrupted: Bramble was closed before this backup was confirmed. It will run again next time you open Bramble."
+msgstr "Interrotto: Bramble è stato chiuso prima che questo backup fosse confermato. Verrà eseguito di nuovo alla prossima apertura di Bramble."
+
+#: packages/core/src/app/screens/Settings/components/BackupSection.tsx
+msgid "Interrupted: Bramble was closed before this backup was confirmed. Tap Back up now to try again."
+msgstr "Interrotto: Bramble è stato chiuso prima che questo backup fosse confermato. Tocchi Esegui backup ora per riprovare."
+
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Is this your device?"
 msgstr "È questo il suo dispositivo?"
@@ -2047,8 +2055,8 @@ msgid "Not backed up yet"
 msgstr "Ancora non eseguito il backup"
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
-msgid "Not finished: Bramble was closed before this backup completed. It will run again next time you open Bramble."
-msgstr "Non completato: Bramble è stato chiuso prima che questo backup venisse completato. Verrà eseguito di nuovo alla prossima apertura di Bramble."
+#~ msgid "Not finished: Bramble was closed before this backup completed. It will run again next time you open Bramble."
+#~ msgstr "Non completato: Bramble è stato chiuso prima che questo backup venisse completato. Verrà eseguito di nuovo alla prossima apertura di Bramble."
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 #: packages/core/src/app/screens/Settings/components/DesktopLinkSection.tsx

@@ -316,6 +316,42 @@ describe("an interrupted upload", () => {
 		expect(isDue(refused as BackupTargetConfig, at + 1)).toBe(false);
 	});
 
+	// Seen on the simulator: an automatic run finished, then a manual run of the same unchanged vault
+	// was cut off when the app was left. Nothing was lost, and "interrupted" would have said otherwise.
+	it("is not recorded when the target already holds exactly that vault", () => {
+		const current = { ...base, lastVaultHash: "f6e9d235" } as BackupTargetConfig;
+		const [t] = applyBackupOutcomes(
+			[current],
+			new Map([["t1", { error: TRANSFER_INTERRUPTED, hash: "f6e9d235" }]]),
+			5_000,
+		);
+		expect(t).toEqual(current);
+	});
+
+	it("is recorded when the vault it was uploading differs from the one the target holds", () => {
+		const current = { ...base, lastVaultHash: "f6e9d235" } as BackupTargetConfig;
+		const [t] = applyBackupOutcomes(
+			[current],
+			new Map([["t1", { error: TRANSFER_INTERRUPTED, hash: "0badcafe" }]]),
+			5_000,
+		);
+		expect(t?.lastError).toBe(TRANSFER_INTERRUPTED);
+	});
+
+	// The screen says "it will run again next time you open Bramble". Seen on the simulator: a daily
+	// target backed up minutes earlier was not due, so that promise was untrue until this.
+	it("is due at the next chance even inside the interval, since the screen promises it", () => {
+		const justNow = 10_000;
+		const interrupted = {
+			...base,
+			lastBackupAt: justNow,
+			lastError: TRANSFER_INTERRUPTED,
+		} as BackupTargetConfig;
+		expect(isDue(interrupted, justNow + 1)).toBe(true);
+		// A target set to Off still never runs by itself; its copy says to tap Back up now instead.
+		expect(isDue({ ...interrupted, frequency: "off" }, justNow + 1)).toBe(false);
+	});
+
 	it("is cleared by the next success, like any other error", () => {
 		const [interrupted] = applyBackupOutcomes(
 			[base],
