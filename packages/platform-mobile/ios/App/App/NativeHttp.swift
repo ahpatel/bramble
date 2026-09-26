@@ -51,8 +51,10 @@ public class NativeHttpPlugin: CAPPlugin, CAPBridgedPlugin {
         config.httpCookieStorage = nil
         config.httpCookieAcceptPolicy = .never
         config.httpShouldSetCookies = false
+        // Idle vs total: a stalled request dies in 60s, a slow upload still moving gets 600s,
+        // the desktop's upload budget. A 60s total failed large vaults on slow uplinks.
         config.timeoutIntervalForRequest = 60
-        config.timeoutIntervalForResource = 60
+        config.timeoutIntervalForResource = 600
         return URLSession(configuration: config, delegate: redirectDelegate, delegateQueue: nil)
     }()
 

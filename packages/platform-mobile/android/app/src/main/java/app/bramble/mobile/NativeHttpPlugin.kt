@@ -49,8 +49,13 @@ class NativeHttpPlugin : Plugin() {
         .cookieJar(CookieJar.NO_COOKIES)
         .followRedirects(false)
         .followSslRedirects(false)
+        // Idle vs total, as on iOS. Read/write are per-operation idle limits and default to 10s,
+        // which a single blocked write on a poor uplink can exceed; the total matches the
+        // desktop's 600s upload budget, where 60s failed large vaults on slow uplinks.
         .connectTimeout(20, TimeUnit.SECONDS)
-        .callTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(600, TimeUnit.SECONDS)
         .build()
 
     @PluginMethod
