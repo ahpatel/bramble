@@ -439,7 +439,7 @@ function TargetCard({
 									)}
 								</p>
 								{target.lastBackupAt ? (
-									<p className="text-xs text-muted-foreground truncate">
+									<p className="text-xs text-muted-foreground break-words">
 										<Trans>Last complete backup {formatWhen(target.lastBackupAt)}</Trans>
 									</p>
 								) : null}
@@ -459,13 +459,15 @@ function TargetCard({
 									)}
 								</p>
 								{retryIn !== undefined && retryIn > 0 && (
-									<p className="text-xs text-muted-foreground truncate">
+									<p className="text-xs text-muted-foreground break-words">
 										<Trans>Next attempt {formatIn(retryIn)}</Trans>
 									</p>
 								)}
 							</>
 						) : (
-							<p className="text-xs text-muted-foreground truncate">
+							// Wraps rather than truncating: on a phone the frequency picker takes half the
+							// row, and the time is the one fact this line exists to give.
+							<p className="text-xs text-muted-foreground break-words">
 								{target.lastBackupAt ? (
 									<Trans>Last backed up {formatWhen(target.lastBackupAt)}</Trans>
 								) : summary ? (
@@ -483,7 +485,7 @@ function TargetCard({
 						{/* Behaviour, not mechanism: where the credential lives is our decision, and naming
 						    the store would only invite a judgement nobody can make from here. */}
 						{whileLocked !== undefined && (
-							<p className="text-xs text-muted-foreground truncate">
+							<p className="text-xs text-muted-foreground break-words">
 								{whileLocked ? (
 									<Trans>Backs up on schedule</Trans>
 								) : (
