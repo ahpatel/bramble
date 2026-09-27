@@ -70,7 +70,7 @@ import { AMO_API, amoJwt } from "./amo-auth.ts";
 import { ASC_KEY_AGE } from "./asc-api-key.ts";
 import { CWS_ITEM_ID } from "./cws-ids.ts";
 import { signingKey } from "./desktop-signing-key.ts";
-import { commitFiles, createTag } from "./github-commit.ts";
+import { commitOverReleases, createTag } from "./github-commit.ts";
 import { composeNotes } from "./release-notes.mjs";
 import { notifyYubiKeyTouch } from "./yubikey-notify.ts";
 
@@ -108,6 +108,25 @@ const DESKTOP_MANIFEST = "website/public/desktop/latest.json";
 const DESKTOP_CASK = "packages/platform-desktop/homebrew/bramble.rb";
 /** Branch deploy-website.yml builds from; the manifest is only live once that runs. */
 const WEBSITE_BRANCH = "main";
+const IOS_PBXPROJ = "packages/platform-mobile/ios/App/App.xcodeproj/project.pbxproj";
+
+/**
+ * What release commits write: each target's version and the metadata a release publishes. One
+ * release is committed over another's bump only if that bump touched nothing but these, and none
+ * of this release's own (commitOverReleases in github-commit.ts).
+ */
+const RELEASE_FILES = new Set([
+	ANDROID_GRADLE,
+	IOS_PBXPROJ,
+	FIREFOX_MANIFEST,
+	CHROME_MANIFEST,
+	DESKTOP_CONF,
+	DESKTOP_MANIFEST,
+	DESKTOP_CASK,
+]);
+const isReleaseFile = (path: string): boolean =>
+	RELEASE_FILES.has(path) ||
+	/^fastlane\/metadata\/android\/[^/]+\/changelogs\/\d+\.txt$/.test(path);
 
 // What each target actually ships, as git pathspecs. A commit belongs to a release only if it
 // touched one of these, so the notes describe THAT target rather than everything that happened in
@@ -200,10 +219,9 @@ if (!rawVersion)
 /**
  * Targets that move together, in the order they should be dispatched.
  *
- * ios leads on mobile because it is the one route that commits from this machine, at dispatch
- * time, while the others commit from a job later: going first keeps its commit clear of theirs.
- * Every release commits with an expected head, so a collision is refused rather than mangled, but
- * a refusal costs a build.
+ * The order no longer matters for correctness: a release commits over other releases' version
+ * bumps that landed during its build (commitOverReleases), so dispatches and approvals can come in
+ * any order. Anything else on main still refuses it.
  */
 const GROUPS: Record<string, string[]> = {
 	browser: ["chromium", "firefox"],
@@ -1026,12 +1044,13 @@ async function runnerPublishAndroid(version: string, tag: string): Promise<void>
 	// Nothing has left this runner until here. From the commit on, it is public.
 	const files = meta.files as string[];
 	for (const f of files) copyFileSync(join(HANDOFF, "files", f), f);
-	const commit = commitFiles({
+	const commit = commitOverReleases({
 		repo: REPO,
 		branch: "main",
-		expectedHeadOid: meta.base,
+		base: meta.base,
 		headline: `chore(release): android ${version}`,
 		files,
+		isReleaseFile,
 	});
 	createTag(REPO, tag, commit);
 	// releaseNotes walks the range locally, so the new commit and tag have to be here too.
@@ -1140,12 +1159,13 @@ function receiveHandoff(
 /** The release commit, through GitHub's API; the base itself when the manifest already matched. */
 function commitRelease(meta: Handoff, headline: string): string {
 	return meta.files.length
-		? commitFiles({
+		? commitOverReleases({
 				repo: REPO,
 				branch: "main",
-				expectedHeadOid: meta.base,
+				base: meta.base,
 				headline,
 				files: meta.files,
+				isReleaseFile,
 			})
 		: meta.base;
 }
@@ -1508,12 +1528,13 @@ function runnerBumpDesktop(version: string, tag: string): void {
 	const files = bumpManifestVersion(DESKTOP_CONF, version);
 	let sha = base;
 	if (!dryRun && files.length) {
-		sha = commitFiles({
+		sha = commitOverReleases({
 			repo: REPO,
 			branch: WEBSITE_BRANCH,
-			expectedHeadOid: base,
+			base,
 			headline: `chore(release): desktop ${version}`,
 			files,
+			isReleaseFile,
 		});
 		// build-windows.ts --ci-start insists HEAD is pushed and the tree clean: stand on the commit.
 		run(`git fetch --quiet origin ${WEBSITE_BRANCH}`);
@@ -1727,12 +1748,13 @@ async function runnerPublishDesktop(version: string, tag: string): Promise<void>
 		channels.push(DESKTOP_CASK);
 	}
 	const head = capture(`gh api repos/${REPO}/git/ref/heads/${WEBSITE_BRANCH} --jq .object.sha`);
-	commitFiles({
+	commitOverReleases({
 		repo: REPO,
 		branch: WEBSITE_BRANCH,
-		expectedHeadOid: head,
+		base: head,
 		headline: `chore(release): desktop ${version} update manifest${channels.length > 1 ? " and cask" : ""}`,
 		files: channels,
+		isReleaseFile,
 	});
 	// No dispatch here: the commit above is made with the release app's token, not this workflow's,
 	// and an app's commit fires push workflows like any other, so deploy-website.yml is already
@@ -1869,8 +1891,7 @@ function collectDesktopAssets(
 // ----- ios: App Store Connect / TestFlight via fastlane (no GitHub release) -----
 
 async function releaseIos(version: string, ipaOnly: boolean, ci = false) {
-	const IOS = "packages/platform-mobile/ios/App";
-	const PBXPROJ = `${IOS}/App.xcodeproj/project.pbxproj`;
+	const PBXPROJ = IOS_PBXPROJ;
 
 	// CFBundleShortVersionString: 1-3 dot-separated ints (matches Android + App Store rules).
 	if (!/^\d+(\.\d+){0,2}$/.test(version))
@@ -1959,12 +1980,13 @@ async function releaseIos(version: string, ipaOnly: boolean, ci = false) {
 		try {
 			const head = capture(`gh api repos/${REPO}/git/ref/heads/main --jq .object.sha`);
 			const sha = bumped
-				? commitFiles({
+				? commitOverReleases({
 						repo: REPO,
 						branch: "main",
-						expectedHeadOid: head,
+						base: head,
 						headline: `chore(release): ios ${version} (build ${build})`,
 						files: [PBXPROJ],
+						isReleaseFile,
 					})
 				: head;
 			// The tag IS the build request here, so it has to exist before the dispatch and point at

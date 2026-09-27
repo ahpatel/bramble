@@ -83,9 +83,18 @@ workflow, where it stays in one place:
 
 **The release commit is made through GitHub's API** (`createCommitOnBranch`, in
 `scripts/github-commit.ts`). GitHub signs it, so it shows as verified with no signing key on the
-runner, and it takes an expected head, so it lands only onto the exact commit that was built. That
-also means nothing touches main until the artifact is built and signed, which is stricter than the
-local route, where the bump is committed first and rewound on failure.
+runner, and it takes an expected head, so it lands only onto the commit that was built, or onto
+other releases' version bumps that landed since (`commitOverReleases`). Those are the one thing it
+may go over: every commit in between has to be `chore(release)`, touch only release metadata (each
+target's version, the desktop update manifest and cask), and touch none of this release's own
+files, so the tree tagged is what was built plus other targets' version numbers. Anything else on
+main refuses it, as before. Nothing touches main until the artifact is built and signed, which is
+stricter than the local route, where the bump is committed first and rewound on failure.
+
+Before that exception, releases dispatched together refused each other: each expected main to be
+exactly where its build started, so any bump landing mid-build, however far apart the approvals,
+cost a rebuild. That refused Firefox 1.27.0 and Desktop 0.10.0 on 2026-09-26, and left Android
+0.22.0's first build unable to land at all.
 
 **Each target splits into two jobs along the line of the key.** A *build* job holds no secret, so it
 may use third-party actions for the toolchain, and it hands an unsigned artifact to a *publish* job
@@ -161,11 +170,9 @@ notes and one approval per target**: the saving is the typing, not the attention
 They do not watch. Watching is serial, so the first would block on its approval while the second
 sat undispatched; the run URLs are printed instead.
 
-ios goes first in the pair because it is the one route that commits from the maintainer's machine
-at dispatch time, while the others commit from a job later, and every release commits with an
-expected head. A collision is refused rather than mangled, but a refusal costs a build, so the
-order keeps them apart. Approving one at a time does the rest. `all` deliberately does not exist:
-four approvals, four editors and four racing commits, to save one command.
+Neither the dispatch order nor the approval order matters: each release commits over the others'
+version bumps (see the release commit, above), and retries if two land in the same second. `all`
+still does not exist: four approvals and four sets of notes, to save one command.
 
 ## What this never buys
 
