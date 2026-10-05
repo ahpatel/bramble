@@ -7,7 +7,8 @@ import { useVaultRegistry } from "../../../hooks/useVaultRegistry";
 import { bytesToBase64 } from "../../../util/bytes";
 import {
 	decodeVaultBlob,
-	findPasswordSlot,
+	findUnlockPasswordSlot,
+	type MemberPasswordSlot,
 	type PasswordSlot,
 	verifierPrefix,
 } from "../../../vault-format";
@@ -90,7 +91,7 @@ export function RestoreShell({
 	}, [storage]);
 	const [picked, setPicked] = useState<{
 		bytes: Uint8Array;
-		slot: PasswordSlot;
+		slot: PasswordSlot | MemberPasswordSlot;
 		name: string;
 	} | null>(null);
 	const [password, setPassword] = useState("");
@@ -113,9 +114,12 @@ export function RestoreShell({
 				return;
 			}
 			const bytes = new Uint8Array(await file.arrayBuffer());
-			let slot: PasswordSlot | null;
+			let slot: PasswordSlot | MemberPasswordSlot | null;
 			try {
-				slot = findPasswordSlot(decodeVaultBlob(bytes));
+				// A member's backup restores as a member: its password slot is a member
+				// slot wrapping the member master key. findUnlockPasswordSlot handles
+				// both; the blob is restored verbatim either way.
+				slot = findUnlockPasswordSlot(decodeVaultBlob(bytes));
 			} catch {
 				setError(t`That doesn't look like a Bramble backup (.bramble) file.`);
 				return;
