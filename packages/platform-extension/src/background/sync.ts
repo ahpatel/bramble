@@ -18,11 +18,21 @@ import {
 	SYNC_LAST_SYNCED_KEY,
 	type VaultSyncPort,
 } from "@core/sync";
+import { DEVICE_ID_KEY } from "@core/sync/device-clock";
 import {
 	buildSyncSharingView,
 	localizeDepsFromCrypto,
 	type SyncViewCrypto,
 } from "@core/sync/localize";
+import {
+	buildMailboxEnvelope,
+	type MailboxSigner,
+	type MailboxVerifier,
+	mailboxPushUrl,
+	parseMailboxEnvelope,
+	pushToMailbox,
+} from "@core/sync/mailbox";
+import { deriveRoomId } from "@core/sync/nostr";
 import { syncKeyFor } from "@core/sync/sync-keys";
 import { decodeVault, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
 import { api } from "../platform-api";
@@ -38,6 +48,7 @@ import {
 } from "../sync/messages";
 import {
 	type DeviceKeypair,
+	type GroupConfig,
 	getStoredGroup,
 	getStoredIceUrl,
 	getStoredKeypair,
@@ -307,11 +318,113 @@ export async function maybeStartSync(expectedVekEpoch?: number): Promise<void> {
 	void openSyncLink((frame) => {
 		void sendToOffscreen({ type: "LINK_SYNC_FRAME", payload: { frame } }).catch(() => {});
 	}).catch(() => {});
+	// The device id is the roster node id (the HLC node); the mailbox is
+	// addressed by it, matching how roster entries identify devices.
+	const deviceId = await api.storage.local.get(syncKeyFor(DEVICE_ID_KEY, ctx.vaultId));
+	startMailboxTick(
+		ctx,
+		group,
+		(deviceId?.[syncKeyFor(DEVICE_ID_KEY, ctx.vaultId)] as string) ?? "",
+	);
+}
+
+// --- Mailbox (ADR-0008): store-and-forward for peers that aren't online. ---
+
+let mailboxTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Sign with the stored roster signing key (offscreen has the Ed25519 wasm). */
+async function mailboxSign(message: string): Promise<string> {
+	const ctx = await requireSyncVault();
+	const kp = await getStoredSigningKey(ctx);
+	if (!kp) throw new Error("no signing key for the mailbox");
+	const res = await sendToOffscreen({
+		type: "SYNC_ROSTER_SIGN",
+		payload: { secretB64: kp.secretKey, message },
+	});
+	if (!res.ok || typeof res.data !== "string") throw new Error(res.error ?? "mailbox sign failed");
+	return res.data;
+}
+
+async function mailboxVerify(
+	publicKeyB64: string,
+	message: string,
+	sigB64: string,
+): Promise<boolean> {
+	const res = await sendToOffscreen({
+		type: "SYNC_ROSTER_VERIFY",
+		payload: { publicKeyB64, message, signatureB64: sigB64 },
+	});
+	return res.ok && res.data === true;
+}
+
+/** Push our payload to every rostered peer's queue, pull our own and merge.
+ * BEST-EFFORT: any failure is reported and the live sessions carry on. */
+async function mailboxTick(
+	ctx: SyncVaultCtx,
+	group: GroupConfig,
+	deviceId: string,
+	push: boolean,
+): Promise<void> {
+	try {
+		const relayUrl = await getStoredRelay();
+		const roomId = await deriveRoomId(base64ToBytes(group.groupKey));
+		const signer: MailboxSigner = { sign: mailboxSign, publicKey: async () => "" };
+		const verifier: MailboxVerifier = {
+			signingKeyFor: async (deviceId) =>
+				group.roster.devices.find((d: { id: string }) => d.id === deviceId)?.sigKey ?? null,
+			verify: mailboxVerify,
+		};
+		if (push) {
+			const { payload } = await readLocalState(ctx);
+			for (const peer of group.roster.devices.filter((d: { id: string }) => d.id !== deviceId)) {
+				const envelope = await buildMailboxEnvelope({
+					from: deviceId,
+					to: peer.id,
+					room: roomId,
+					payload,
+					signer,
+				});
+				await pushToMailbox(relayUrl, roomId, peer.id, envelope);
+			}
+		}
+		for (const raw of await pullRawFromMailbox(relayUrl, roomId, deviceId)) {
+			const payload = await parseMailboxEnvelope(raw, roomId, verifier);
+			if (payload) {
+				const { changed } = await applyRemotePayload(makeVaultSyncPort(ctx), payload);
+				if (changed) await broadcastVaultChanged();
+			}
+		}
+	} catch (e) {
+		console.warn("[sync] mailbox unavailable:", (e as Error).message);
+	}
+}
+
+async function pullRawFromMailbox(
+	relayUrl: string,
+	room: string,
+	recipient: string,
+): Promise<string[]> {
+	const res = await fetch(mailboxPushUrl(relayUrl, room, recipient));
+	if (res.status === 404) return [];
+	if (!res.ok) throw new Error(`mailbox pull failed: ${res.status}`);
+	const raw: unknown = await res.json();
+	return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
+}
+
+function startMailboxTick(ctx: SyncVaultCtx, group: GroupConfig, deviceId: string): void {
+	if (mailboxTimer) clearInterval(mailboxTimer);
+	// Pull first (catch up while away), then push+pull on a slow tick.
+	void mailboxTick(ctx, group, deviceId, false);
+	mailboxTimer = setInterval(() => void mailboxTick(ctx, group, deviceId, true), 30_000);
 }
 
 export async function stopSync(): Promise<void> {
 	const stopEpoch = ++syncEpoch;
 	syncRunning = false;
+	if (mailboxTimer) {
+		clearInterval(mailboxTimer);
+		mailboxTimer = null;
+	}
 	// The pipe must not outlive sync: it exists to carry sync, and holding it open would keep a
 	// native host process alive for nothing.
 	void closeSyncLink().catch(() => {});

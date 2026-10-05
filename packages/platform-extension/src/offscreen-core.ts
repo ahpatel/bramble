@@ -747,7 +747,18 @@ export async function handleHostMessage(type: string, payload: unknown): Promise
 				// Ed25519-sign a canonical roster-entry string with this device's seed (from the background).
 				const w = await getWasm();
 				const { secretB64, message } = RosterSignHostMsgSchema.parse(payload);
+				if (!secretB64) return { ok: false, error: "missing secret key" };
 				return { ok: true, data: w.roster_sign(secretB64, message) };
+			}
+			case "SYNC_ROSTER_VERIFY": {
+				// Verify an Ed25519 roster-style signature (mailbox envelopes use the same keys).
+				const w = await getWasm();
+				const { publicKeyB64, message, signatureB64 } = RosterSignHostMsgSchema.parse(payload);
+				if (!publicKeyB64 || !signatureB64) {
+					return { ok: false, error: "missing verify key or signature" };
+				}
+				if (!w.roster_verify) return { ok: false, error: "host not wired for verification" };
+				return { ok: true, data: await w.roster_verify(publicKeyB64, message, signatureB64) };
 			}
 			case "SYNC_ROSTER_ADMISSION_PUBKEY": {
 				// Derive this device's admission verify key from the re-entered master password + slot salt

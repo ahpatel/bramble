@@ -120,7 +120,12 @@ export const ApplyRosterMsgSchema = z.object({ rosterJson: z.string() });
 export const RosterSignEntryMsgSchema = z.object({ canonical: z.string() });
 
 /** background -> offscreen (SYNC_ROSTER_SIGN): the Ed25519 seed + the message to sign. */
-export const RosterSignHostMsgSchema = z.object({ secretB64: z.string(), message: z.string() });
+export const RosterSignHostMsgSchema = z.object({
+	secretB64: z.string().optional(),
+	publicKeyB64: z.string().optional(),
+	message: z.string(),
+	signatureB64: z.string().optional(),
+});
 
 /** shell -> background (SYNC_ADMISSION_PUBKEY) / background -> offscreen (SYNC_ROSTER_ADMISSION_PUBKEY):
  * the re-entered master password + this device's password-slot salt, to derive the admission verify
