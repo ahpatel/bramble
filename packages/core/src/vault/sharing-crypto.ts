@@ -101,6 +101,19 @@ export async function sealToMemberKey(
 	};
 }
 
+/** Try to decrypt under an explicit key; null instead of throwing on failure.
+ * The localize layer's probe: "can this key open this envelope?" */
+export async function tryDecryptWithKey(
+	keyB64: string,
+	envelope: { dekIv: string; wrappedDek: string },
+): Promise<string | null> {
+	try {
+		return await decryptWithKey(keyB64, envelope.dekIv, envelope.wrappedDek);
+	} catch {
+		return null;
+	}
+}
+
 /** Open a seal with the member's private key; returns the raw key, base64. */
 export async function openMemberSeal(privateKeyB64: string, sealed: SealedKey): Promise<string> {
 	const privateKey = base64ToBytes(privateKeyB64);
