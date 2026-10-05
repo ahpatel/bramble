@@ -62,6 +62,7 @@ function harness(opts: { existing: Uint8Array; verify?: boolean; canDecrypt?: bo
 			calls.push("read");
 			return { blob };
 		},
+		readRawBlob: async () => encodeVaultBlob(blob),
 		verifyVekBeforeWrite: opts.verify,
 	});
 	return { store, crypto, storage, calls };
@@ -139,5 +140,48 @@ describe("writeEntriesBlob output", () => {
 				entriesCiphertext: fill(8, 0x90),
 			}),
 		);
+	});
+});
+
+describe("writeEntriesBlob format preservation", () => {
+	it("a sharing-enabled vault re-encodes as VLT2 with its sharing layer intact", async () => {
+		const { decodeVault } = await import("../vault-format");
+		const base = blobWith(fill(8, 0x91));
+		const _region = { index: [], collections: [], wrappers: [], members: [] };
+		const v2 = {
+			slots: base.slots,
+			sharingWraps: [
+				{ kind: 1, iv: new Uint8Array(12).fill(9), wrappedShk: new Uint8Array(60).fill(8) },
+			],
+			entriesIv: base.entriesIv,
+			entriesCiphertext: base.entriesCiphertext,
+			regionIv: new Uint8Array(12).fill(7),
+			regionCiphertext: new Uint8Array(20).fill(6),
+		};
+		const raw = (await import("../vault-format")).VLT2.encode(v2 as never);
+		const crypto2 = {
+			encryptWithVek: vi.fn(async () => ({
+				iv: bytesToBase64(fill(LEN_IV, 0x80)),
+				ciphertext: bytesToBase64(fill(8, 0x90)),
+			})),
+			decryptWithVek: vi.fn(async () => JSON.stringify(emptyEntriesPayload())),
+		};
+		const storage2 = { writeVaultBlob: vi.fn(async () => {}) };
+		const store = createEntriesBlobStore({
+			crypto: crypto2,
+			storage: storage2,
+			readDecodedBlob: async () => ({ blob: v2 as never }),
+			readRawBlob: async () => raw,
+		});
+		await store.writeEntriesBlob(emptyEntriesPayload());
+		expect(storage2.writeVaultBlob).toHaveBeenCalledTimes(1);
+		const writeCalls = (storage2.writeVaultBlob as unknown as { mock: { calls: unknown[][] } }).mock
+			.calls;
+		const written = decodeVault(writeCalls[0]![0] as Uint8Array);
+		expect(written.format).toBe("vlt2");
+		const v2out = written.blob as typeof v2;
+		expect(v2out.sharingWraps).toEqual(v2.sharingWraps);
+		expect(v2out.regionIv).toEqual(v2.regionIv);
+		expect(v2out.regionCiphertext).toEqual(v2.regionCiphertext);
 	});
 });

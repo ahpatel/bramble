@@ -45,6 +45,8 @@ export interface EntryMutationsDeps {
 	storage: Pick<StorageAdapter, "writeVaultBlob">;
 	autofill: Pick<AutofillAdapter, "beginIndexUpdate" | "setIndex">;
 	readDecodedBlob: () => Promise<{ blob: VaultBlob }>;
+	/** Raw blob bytes, for format-tagged writes (VLT2 preservation). */
+	readRawBlob: () => Promise<Uint8Array>;
 	/** Lazily resolves this device's HLC; mutations stamp new writes from it. */
 	clock: () => Promise<HybridClock>;
 }
@@ -103,7 +105,7 @@ export interface EntryMutations {
 }
 
 export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
-	const { crypto, storage, autofill, readDecodedBlob, clock } = deps;
+	const { crypto, storage, autofill, readDecodedBlob, readRawBlob, clock } = deps;
 
 	// The on-disk entries format lives in one place (EntriesBlobStore); these are
 	// the same primitives the sync-enrollment path and mobile roster sync use.
@@ -111,6 +113,7 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 		crypto,
 		storage,
 		readDecodedBlob,
+		readRawBlob,
 	});
 
 	// Encrypt each entry under a fresh DEK and pair it with its stamp.

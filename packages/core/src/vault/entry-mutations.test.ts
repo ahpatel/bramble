@@ -102,6 +102,7 @@ function harness(now: () => number = () => 1000) {
 		storage,
 		autofill,
 		readDecodedBlob,
+		readRawBlob: async () => disk,
 		clock: async () => c,
 	});
 	return { mutations, writes: () => writes, indexCalls };

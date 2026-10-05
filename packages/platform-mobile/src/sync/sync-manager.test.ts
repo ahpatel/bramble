@@ -65,7 +65,23 @@ vi.mock("../adapters/storage", () => ({
 		removeMeta: async (k: string) => {
 			h.meta.delete(k);
 		},
-		readVaultBlob: async () => new Uint8Array([9]),
+		readVaultBlob: async () => {
+			// A minimal valid VLT1 blob: writeEntriesBlob decodes the raw bytes now
+			// (format preservation), so junk bytes would fail the write.
+			const slots = new Uint8Array(6 + 3 + 124);
+			slots.set([0x56, 0x4c, 0x54, 0x31], 0); // magic "VLT1"
+			slots[4] = 2; // version
+			slots[5] = 1; // slot count
+			slots[6] = 1; // kind password
+			const len = 124;
+			slots[7] = (len >> 8) & 0xff;
+			slots[8] = len & 0xff;
+			const iv = new Uint8Array(12).fill(3);
+			const out = new Uint8Array(slots.length + 12 + 4);
+			out.set(slots, 0);
+			out.set(iv, slots.length);
+			return out;
+		},
 		writeVaultBlob: async (_blob: Uint8Array, vaultId?: string) => {
 			h.blobWrites.push({ vaultId });
 		},

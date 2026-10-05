@@ -128,6 +128,7 @@ describe("issue #27: a merge must not seal into a vault whose slots wrap another
 				writeVaultBlob: async (blob) => storage.writeVaultBlob(blob, "A"),
 			} as Pick<StorageAdapter, "writeVaultBlob">,
 			readDecodedBlob: async () => ({ blob: decodeVaultBlob(await storage.readVaultBlob("A")) }),
+			readRawBlob: async () => (await storage.readVaultBlob("A")) ?? new Uint8Array(0),
 			verifyVekBeforeWrite: true,
 		});
 
@@ -157,6 +158,7 @@ describe("issue #27: a merge must not seal into a vault whose slots wrap another
 				writeVaultBlob: async (blob) => storage.writeVaultBlob(blob, "A"),
 			} as Pick<StorageAdapter, "writeVaultBlob">,
 			readDecodedBlob: async () => ({ blob: decodeVaultBlob(await storage.readVaultBlob("A")) }),
+			readRawBlob: async () => (await storage.readVaultBlob("A")) ?? new Uint8Array(0),
 		});
 
 		await crypto.generateVek(); // vault B's key is loaded
@@ -184,6 +186,7 @@ describe("issue #27 recovery: un-bricking from the pre-write snapshot", () => {
 				writeVaultBlob: async (blob) => storage.writeVaultBlob(blob, "A"),
 			} as Pick<StorageAdapter, "writeVaultBlob">,
 			readDecodedBlob: async () => ({ blob: decodeVaultBlob(await storage.readVaultBlob("A")) }),
+			readRawBlob: async () => (await storage.readVaultBlob("A")) ?? new Uint8Array(0),
 		});
 		await crypto.generateVek();
 		await unguarded.writeEntriesBlob(emptyEntriesPayload());

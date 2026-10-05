@@ -23,14 +23,33 @@ import {
 	type SyncEvent,
 	type WireRecoverySlot,
 } from "@core/index";
+import {
+	buildSyncSharingView,
+	localizeDepsFromCrypto,
+	type SyncViewCrypto,
+} from "@core/sync/localize";
 import { syncKeyFor } from "@core/sync/sync-keys";
 import { startEnroll } from "@core/sync/transport/enroll-host";
 import type { MeshSession } from "@core/sync/transport/peer-session";
 import { startRosterSync } from "@core/sync/transport/roster-sync";
 import { parseRegistry, VAULT_REGISTRY_KEY } from "@core/vault/vault-registry";
+import { decodeVault } from "@core/vault-format";
 import { mobileCrypto } from "../adapters/crypto";
 import { mobileStorage } from "../adapters/storage";
 import { notifyExternalChange, onVaultStateChange } from "../adapters/vault-session";
+
+/** The loaded-key crypto the merge localization needs. Mobile is
+ * single-active-vault, so the loaded key is whatever this vault's slots
+ * provide (vault key on the owner's, member master key on a member's). */
+const syncViewCrypto: SyncViewCrypto = {
+	decryptWithVek: async (iv, ciphertext) =>
+		(await nativeSyncCrypto.decrypt_with_vek(iv, ciphertext)) as string,
+	encryptWithVek: async (plaintext) => {
+		const w = await nativeSyncCrypto.encrypt_with_vek(plaintext);
+		return w as { iv: string; ciphertext: string };
+	},
+};
+
 import { nativeSyncCrypto, type SyncCrypto } from "../native-crypto";
 import { secureStorage } from "../secure-storage";
 import { loadWasm } from "../wasm-loader";
@@ -359,6 +378,7 @@ function makeBlobStore(vaultId: string) {
 		readDecodedBlob: async () => ({
 			blob: decodeVaultBlob(await mobileStorage.readVaultBlob(vaultId)),
 		}),
+		readRawBlob: async () => (await mobileStorage.readVaultBlob(vaultId)) ?? new Uint8Array(0),
 		// The backstop behind the id pinning above: merges are the one writer that can be holding a
 		// key belonging to a different vault, because the VEK here is process-global.
 		verifyVekBeforeWrite: true,
@@ -436,6 +456,17 @@ async function startRoster(): Promise<void> {
 						const clock = await getClock(vaultId);
 						for (const hlc of stamps) clock.witness(hlc);
 					},
+					// Member-aware convergence: the sharing view from the current blob
+					// (null for a VLT1 vault — the plain merge it always was). The loaded
+					// key is the vault key on an owner device, the member master key on a
+					// member device, so the localize crypto is the same either way.
+					sharingView: async () => {
+						const bytes = await mobileStorage.readVaultBlob(vaultId);
+						const decoded = decodeVault(bytes);
+						if (decoded.format !== "vlt2") return null;
+						return buildSyncSharingView(syncViewCrypto, decoded.blob);
+					},
+					localizeDeps: localizeDepsFromCrypto(syncViewCrypto),
 					onChanged: notifyExternalChange, // refresh the in-app list with the peer's edits
 				});
 				await applyRemotePayload(port, decodeEntriesPayload(json));

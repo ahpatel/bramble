@@ -15,13 +15,17 @@ import {
 	encodeEntriesPayload,
 } from "../sync/entries-payload";
 import { base64ToBytes, bytesToBase64 } from "../util/bytes";
-import { encodeVaultBlob, type VaultBlob } from "../vault-format";
+import { decodeVault, encodeVaultBlob, type VaultBlob, VLT2 } from "../vault-format";
 
 export interface EntriesBlobDeps {
 	crypto: Pick<CryptoAdapter, "encryptWithVek" | "decryptWithVek">;
 	storage: Pick<StorageAdapter, "writeVaultBlob">;
 	/** The current decoded vault blob (for the slot list + outer ciphertext). */
 	readDecodedBlob: () => Promise<{ blob: VaultBlob }>;
+	/** The raw blob bytes, for a format-tagged decode. Required so a sharing-enabled
+	 * (VLT2) vault keeps its sharing layer across entry writes: without it the
+	 * write would silently re-encode as VLT1 and strip the region and wraps. */
+	readRawBlob: () => Promise<Uint8Array>;
 	/**
 	 * Before overwriting a non-empty entries blob, confirm the loaded VEK can decrypt the one
 	 * already on disk — i.e. that this key belongs to the file we're about to write.
@@ -46,6 +50,7 @@ export function createEntriesBlobStore({
 	crypto,
 	storage,
 	readDecodedBlob,
+	readRawBlob,
 	verifyVekBeforeWrite = false,
 }: EntriesBlobDeps): EntriesBlobStore {
 	return {
@@ -80,13 +85,26 @@ export function createEntriesBlobStore({
 				}
 			}
 			const { iv, ciphertext } = await crypto.encryptWithVek(encodeEntriesPayload(payload));
-			await storage.writeVaultBlob(
-				encodeVaultBlob({
-					slots: blob.slots,
-					entriesIv: base64ToBytes(iv),
-					entriesCiphertext: base64ToBytes(ciphertext),
-				}),
-			);
+			// Format preservation: a sharing-enabled vault re-encodes as VLT2 with
+			// every sharing field carried over; anything else as VLT1.
+			const decoded = decodeVault(await readRawBlob());
+			if (decoded.format === "vlt2") {
+				await storage.writeVaultBlob(
+					VLT2.encode({
+						...decoded.blob,
+						entriesIv: base64ToBytes(iv),
+						entriesCiphertext: base64ToBytes(ciphertext),
+					}),
+				);
+			} else {
+				await storage.writeVaultBlob(
+					encodeVaultBlob({
+						slots: blob.slots,
+						entriesIv: base64ToBytes(iv),
+						entriesCiphertext: base64ToBytes(ciphertext),
+					}),
+				);
+			}
 		},
 	};
 }

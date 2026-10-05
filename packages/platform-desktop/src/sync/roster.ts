@@ -141,6 +141,7 @@ function makeBlobStore(vaultId: string) {
 		readDecodedBlob: async () => ({
 			blob: decodeVaultBlob(await desktopStorage.readVaultBlob(vaultId)),
 		}),
+		readRawBlob: async () => (await desktopStorage.readVaultBlob(vaultId)) ?? new Uint8Array(0),
 		// The backstop behind the pinning above: merges are the one writer that can be holding a
 		// key belonging to a different vault, because the VEK is process-global.
 		verifyVekBeforeWrite: true,

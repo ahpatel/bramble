@@ -426,10 +426,48 @@ async function rotateCollection(
 	);
 }
 
+/** The synced-settings key the sharing region rides for convergence
+ * (ticket: sharing-state convergence). The value is the region JSON, stamped
+ * on every sharing change; devices adopt a newer remote region and refresh
+ * their blob's region section from it. */
+export const SHARING_REGION_SETTING = "sharing.region";
+
+/** Adopt a (possibly newer) region from sync into the local sharing state:
+ * recompute the collection keys this performer holds from the adopted region.
+ * The owner opens every collection's owner wrap; a member opens the seals for
+ * collections they belong to. */
+export async function adoptSharedRegion(
+	deps: SharingDeps,
+	state: SharingState,
+	region: SharingRegion,
+): Promise<SharingState> {
+	const collectionKeys: Record<string, string> = {};
+	if (state.performer.role === "owner") {
+		for (const collection of region.collections) {
+			const wrap = collection.keyWraps.find((w) => w.target === "owner");
+			if (wrap?.target !== "owner") continue;
+			collectionKeys[collection.id] = await deps.decryptWithVek(wrap.iv, wrap.ciphertext);
+		}
+	} else {
+		const member = state.performer;
+		if (member.role !== "member" || !state.memberPrivateKeyB64) {
+			throw new Error("member state without a member private key");
+		}
+		for (const collection of region.collections) {
+			if (!collection.memberIds.includes(member.memberId)) continue;
+			const seal = collection.keyWraps.find(
+				(w) => w.target === "member" && w.memberId === member.memberId,
+			);
+			if (seal?.target !== "member") continue;
+			collectionKeys[collection.id] = await deps.openMemberSeal(state.memberPrivateKeyB64, seal);
+		}
+	}
+	return { ...state, region, collectionKeys };
+}
+
 /** Upsert one minimal index record (existence + stamp + tombstone, no content).
  * Any performer writes their own entries' records; convergence is the sync
- * layer's job (ADR-0003). */
-export function upsertIndexEntry(
+ * layer's job (ADR-0003). */ export function upsertIndexEntry(
 	state: SharingState,
 	entry: { id: string; hlc: SharingRegion["index"][number]["hlc"]; deleted: boolean },
 ): SharingState {

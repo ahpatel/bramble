@@ -221,8 +221,10 @@ import {
 	normalizeRecoveryCode,
 } from "../vault/recovery-code";
 import {
+	adoptSharedRegion,
 	createSharingDeps,
 	grantEntry,
+	SHARING_REGION_SETTING,
 	type SharingDeps,
 	type SharingState,
 	unshareEntry,
@@ -246,6 +248,7 @@ import {
 	unlockRpIdOrder,
 	type WebauthnKeyKind,
 } from "../vault/webauthn-ceremony";
+import type { SharingRegion } from "../vault-format";
 import { VLT2 } from "../vault-format";
 import { type SyncedSettingsAccess, SyncedSettingsContext } from "./synced-settings";
 import { PER_VAULT_PREF_KEYS, PREF_ALIAS_PROVIDER } from "./usePrefs";
@@ -482,6 +485,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	const [sharing, setSharing] = useState<SharingState | null>(null);
 	const sharingRef = useRef<SharingState | null>(null);
 	sharingRef.current = sharing;
+	// Assigned after snapshotEntries/mutations exist (render-time, the blessed
+	// latest-value idiom); the sharing actions call it through the ref so no
+	// declaration ordering issues arise.
+	const stampRegionRef = useRef<(state: SharingState) => Promise<void> | undefined>(undefined);
 
 	// Latest render's reactive state, mirrored to a ref so action callbacks can read
 	// current entries / labels / lock state without listing them as deps. That keeps every
@@ -896,6 +903,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			const bytes = await persistOwnerSharingState(sharingDeps, next, blob);
 			await storage.writeVaultBlob(bytes);
 			setSharing(next);
+			// Stamp the region as a synced setting so it converges via the normal
+			// entries-payload exchange (see SHARING_REGION_SETTING).
+			await stampRegionRef.current?.(next);
 		},
 		[sharingDeps, readDecodedBlob, storage],
 	);
@@ -925,6 +935,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			const bytes = await persistOwnerSharingState(sharingDeps, state, blob);
 			await storage.writeVaultBlob(bytes);
 			setSharing(state);
+			await stampRegionRef.current?.(state);
 		},
 		[sharingDeps, readDecodedBlob, crypto, storage],
 	);
@@ -943,6 +954,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			const bytes = await persistOwnerSharingState(sharingDeps, state, blob);
 			await storage.writeVaultBlob(bytes);
 			setSharing(state);
+			await stampRegionRef.current?.(state);
 		},
 		[sharingDeps, readDecodedBlob, storage],
 	);
@@ -1208,7 +1220,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	// each is a transition that persists and returns the next state, which we
 	// commit here. The shared persist primitives also back the sync-enrollment hook.
 	const mutations = useMemo(
-		() => createEntryMutations({ crypto, storage, autofill, readDecodedBlob, clock: ensureClock }),
+		() =>
+			createEntryMutations({
+				crypto,
+				storage,
+				autofill,
+				readDecodedBlob,
+				readRawBlob: async () => (await storage.readVaultBlob()) ?? new Uint8Array(0),
+				clock: ensureClock,
+			}),
 		[crypto, storage, autofill, readDecodedBlob, ensureClock],
 	);
 
@@ -1223,6 +1243,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		}),
 		[],
 	);
+
+	// Assign the region stamper now that snapshotEntries + mutations exist.
+	// Render-time assignment: idempotent, the same idiom as latestRef above.
+	// Stamps the sharing region as a synced setting so it converges via the
+	// normal entries-payload exchange on every platform.
+	stampRegionRef.current = async (state: SharingState) => {
+		await mutations.setSetting(snapshotEntries(), SHARING_REGION_SETTING, state.region);
+	};
 
 	// Commit a mutation's next state. Only ever runs after a successful persist,
 	// so a failed write leaves entries + refs untouched.
@@ -1945,6 +1973,29 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	// What usePrefs routes a "synced"-scoped pref through. Writing goes via the same mutation
 	// every entry change uses, so there is one writer onto the blob and the settings map cannot
 	// be lost to a race with an entry edit. See docs/synced-settings.md.
+	// Sharing-state convergence: when a synced payload carries a "sharing.region"
+	// setting we have not adopted yet, adopt it (recompute our collection keys from
+	// it) and refresh the blob's region section. Runs for owner and member alike;
+	// a VLT1 vault has no sharing state and skips.
+	const lastRegionAdoptedRef = useRef<string | null>(null);
+	useEffect(() => {
+		const rec = syncedSettings?.[SHARING_REGION_SETTING];
+		if (!rec || isLocked || !sharing) return;
+		const stampKey = JSON.stringify(rec.hlc);
+		if (lastRegionAdoptedRef.current === stampKey) return;
+		lastRegionAdoptedRef.current = stampKey;
+		void (async () => {
+			try {
+				const adopted = await adoptSharedRegion(sharingDeps, sharing, rec.value as SharingRegion);
+				setSharing(adopted);
+				const { blob } = await readDecodedBlob();
+				await storage.writeVaultBlob(await persistOwnerSharingState(sharingDeps, adopted, blob));
+			} catch (e) {
+				console.warn("[vault] sharing region adoption failed:", e);
+			}
+		})();
+	}, [syncedSettings, isLocked, sharing, sharingDeps, readDecodedBlob, storage]);
+
 	const syncedAccess = useMemo<SyncedSettingsAccess>(
 		() => ({
 			settings: syncedSettings,
