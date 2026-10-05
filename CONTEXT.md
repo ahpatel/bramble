@@ -120,6 +120,23 @@ Two consequences worth stating, because both have been got wrong:
   gates a vault is subject to this rule exactly as a pref is: it is keyed by vault
   id, and a process that cannot know the vault id has no business reading it.
 
+## Sharing
+
+- **Member** — a person granted access to a vault, holding a Member key and a display label.
+  Distinct from a Device: a Member may have many devices, and removing one device is not
+  removing the Member. You invite a Member; you enroll a Device.
+  _Avoid_: user, account, person
+- **Member key** — a Member's per-vault key that grants are wrapped for, attested by the
+  Member's devices through the existing roster. Not a Device's Noise key, which only
+  authenticates transport.
+- **Collection** — a sharing set: entries whose DEKs are wrapped under one collection key,
+  granted to specific Members. Not a folder or a tag — it is the unit of grant and of
+  revocation (rotating a collection key is how its access is revoked).
+  _Avoid_: folder, group, tag
+- **Promotion** — a Member making their own private entry shared by wrapping its DEK
+  under a Collection they belong to; afterwards the owner can open, edit, and move it.
+  _Avoid_: sharing (owner-only act), publishing
+
 ## Autofill detection
 
 - **PageFieldModel** — the parsed, in-memory description of a web page's fillable
