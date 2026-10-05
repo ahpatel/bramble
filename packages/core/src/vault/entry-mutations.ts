@@ -8,7 +8,7 @@ import type { AutofillAdapter } from "../adapters/autofill";
 import type { CryptoAdapter } from "../adapters/crypto";
 import type { StorageAdapter } from "../adapters/storage";
 import type { Entry, EntryData } from "../hooks/useVault";
-import type { EntriesPayload, Hlc, HybridClock, SyncedSettings } from "../sync";
+import type { ConflictRecord, EntriesPayload, Hlc, HybridClock, SyncedSettings } from "../sync";
 import { encodeEntriesPayload } from "../sync";
 import { base64ToBytes } from "../util/bytes";
 import type { EncryptedEntry, VaultBlob } from "../vault-format";
@@ -31,6 +31,12 @@ export interface VaultEntries {
 	entries: Entry[];
 	stamps: Map<string, Hlc>;
 	tombstones: Map<string, Hlc>;
+	/**
+	 * Sealed conflict losers (ADR-0006), carried for the same reason settings are:
+	 * buildPayload reconstructs the whole payload on every write, so anything not
+	 * held here is erased by the next entry edit. Absent when there are none.
+	 */
+	conflicts?: ConflictRecord[];
 	/**
 	 * Vault-scoped settings, carried here for one reason: `buildPayload` reconstructs the whole
 	 * payload from this value on every write, so anything not held here is erased by the next
@@ -137,9 +143,10 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 		const tombstones = [...next.tombstones].map(([id, hlc]) => ({ id, hlc }));
 		// Threaded through rather than rebuilt: this is the seam where a synced setting would
 		// otherwise be dropped by an ordinary entry edit.
-		return next.settings
+		const base: EntriesPayload = next.settings
 			? { entries, tombstones, settings: next.settings }
 			: { entries, tombstones };
+		return next.conflicts?.length ? { ...base, conflicts: next.conflicts } : base;
 	};
 
 	const sealAll = async (current: VaultEntries) => {

@@ -66,6 +66,8 @@ interface VaultHomeProps {
 	/** The store-review ask, on the rare turn there is one. A slot rather than a component so the
 	 * list screen keeps knowing nothing about stores; see app/review-nudge.ts. */
 	reviewNudge?: ReactNode;
+	conflictEntryIds?: string[];
+	onResolveConflict?: (entryId: string, choice: "winner" | "other") => Promise<void>;
 }
 
 /** Vault list screen with search, password-health stats, and the entry rows. */
@@ -84,6 +86,8 @@ export function VaultHome({
 	statsCollapsed,
 	onToggleStats,
 	reviewNudge,
+	conflictEntryIds,
+	onResolveConflict,
 }: VaultHomeProps) {
 	const { t } = useLingui();
 	const filtered = useMemo(
@@ -161,6 +165,47 @@ export function VaultHome({
 				tags={tags}
 				trailing={<AddDropdown onCreate={onCreate} />}
 			/>
+
+			{(conflictEntryIds?.length ?? 0) > 0 && (
+				<div
+					role="status"
+					className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3"
+				>
+					<p className="text-sm">
+						<Trans>
+							{(conflictEntryIds ?? []).length}{" "}
+							{(conflictEntryIds ?? []).length === 1 ? "entry" : "entries"}{" "}
+							{(conflictEntryIds ?? []).length === 1 ? "was" : "were"} edited on multiple devices.
+						</Trans>
+					</p>
+					<div className="mt-2 space-y-1.5">
+						{(conflictEntryIds ?? []).map((id) => {
+							const entry = items.find((e) => e.id === id);
+							return (
+								<div key={id} className="flex items-center justify-between gap-2 text-xs">
+									<span className="truncate">{entry?.name ?? id}</span>
+									<span className="flex gap-1.5 shrink-0">
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={() => void onResolveConflict?.(id, "winner")}
+										>
+											<Trans>Keep current</Trans>
+										</Button>
+										<Button
+											variant="secondary"
+											size="sm"
+											onClick={() => void onResolveConflict?.(id, "other")}
+										>
+											<Trans>Use other version</Trans>
+										</Button>
+									</span>
+								</div>
+							);
+						})}
+					</div>
+				</div>
+			)}
 
 			<button
 				type="button"

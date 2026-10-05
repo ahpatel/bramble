@@ -183,6 +183,7 @@ import { aliasConfigKeyFor, aliasConfiguredHintKeyFor, aliasHintValue } from "..
 import { backupTargetsKeyFor } from "../backup/config";
 import { exportToOs } from "../exchange";
 import { toKdbxEntries } from "../export/kdbx";
+import type { ConflictRecord } from "../sync";
 import {
 	DEVICE_ID_KEY,
 	decodeEntriesPayload,
@@ -195,6 +196,7 @@ import {
 	makeClock,
 	type SyncedSettings,
 } from "../sync";
+import { resolveConflict as resolveConflictRecords } from "../sync/conflicts";
 import { PER_VAULT_SYNC_KEYS, syncKeyFor } from "../sync/sync-keys";
 import { base64ToBytes, bytesToBase64 } from "../util/bytes";
 import { toAutofillIndex } from "../vault/autofill-index";
@@ -298,6 +300,9 @@ export interface VaultState {
 	/** The sharing layer of the active vault, when it is sharing-enabled (VLT2) and
 	 * unlocked; null otherwise. See docs/adr/0001..0007 and vault/sharing-mutations. */
 	sharing: SharingState | null;
+	/** Entry ids with unresolved conflicts (ADR-0006): two devices edited, and the
+	 * sealed losing version is kept for the user to compare and resolve. */
+	conflictEntryIds: string[];
 }
 
 /** Vault actions. Referentially stable for the provider's lifetime. */
@@ -313,6 +318,12 @@ export interface VaultActions {
 	): Promise<void>;
 	/** Share entries into a collection (resolves their DEKs from the vault key). */
 	shareEntries(ids: string[], collectionId: string): Promise<void>;
+	/**
+	 * Resolve a conflict on an entry (ADR-0006). "winner" keeps the current version
+	 * (drops the sealed loser record only); "other" adopts the losing version's
+	 * content as a fresh edit, superseding both versions so the resolution syncs.
+	 */
+	resolveConflict(entryId: string, choice: "winner" | "other"): Promise<void>;
 	/** Remove entries from a collection without deleting them. */
 	unshareEntries(ids: string[], collectionId: string): Promise<void>;
 	lock(): Promise<void>;
@@ -518,6 +529,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	// Mirrored in state so consumers re-render when a value changes, including when a remote
 	// merge lands one. The ref is what mutations thread; this is what the UI reads.
 	const [syncedSettings, setSyncedSettings] = useState<SyncedSettings | undefined>(undefined);
+	// Sealed conflict losers (ADR-0006), held like the other payload-level state.
+	const [conflicts, setConflicts] = useState<ConflictRecord[]>([]);
+	const conflictsRef = useRef<ConflictRecord[]>([]);
+	const resolveConflictRef =
+		useRef<(entryId: string, choice: "winner" | "other") => Promise<void> | undefined>(undefined);
 
 	/** Lazily load this device's id and build its clock. The device id is per-vault (each vault
 	 * is its own sync group with its own roster membership), so read/write it under the active
@@ -630,6 +646,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			stampsRef.current = new Map();
 			tombstonesRef.current = new Map();
 			settingsRef.current = undefined;
+			conflictsRef.current = [];
+			setConflicts([]);
 			setSyncedSettings(undefined);
 			setEntries([]);
 			await publishIndex([], indexLease);
@@ -662,6 +680,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		tombstonesRef.current = new Map(payload.tombstones.map((t) => [t.id, t.hlc]));
 		settingsRef.current = payload.settings;
 		setSyncedSettings(payload.settings);
+		conflictsRef.current = payload.conflicts ?? [];
+		setConflicts(payload.conflicts ?? []);
 		// Advance this device's clock past every stamp it just read, so the next
 		// local write is causally ordered after them.
 		const clock = await ensureClock();
@@ -799,6 +819,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			stampsRef.current = new Map();
 			tombstonesRef.current = new Map();
 			settingsRef.current = undefined;
+			conflictsRef.current = [];
+			setConflicts([]);
 			setSyncedSettings(undefined);
 			setEntries([]);
 			setIsLocked(true);
@@ -867,6 +889,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		stampsRef.current = new Map();
 		tombstonesRef.current = new Map();
 		settingsRef.current = undefined;
+		conflictsRef.current = [];
+		setConflicts([]);
 		setSyncedSettings(undefined);
 		setEntries([]);
 		setSharing(null);
@@ -1165,6 +1189,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			stampsRef.current = new Map();
 			tombstonesRef.current = new Map();
 			settingsRef.current = undefined;
+			conflictsRef.current = [];
+			setConflicts([]);
 			setSyncedSettings(undefined);
 			setHasVault(true);
 			setEntries([]);
@@ -1241,6 +1267,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			stamps: stampsRef.current,
 			tombstones: tombstonesRef.current,
 			settings: settingsRef.current,
+			conflicts: conflictsRef.current.length ? conflictsRef.current : undefined,
 		}),
 		[],
 	);
@@ -1259,9 +1286,50 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		stampsRef.current = next.stamps;
 		tombstonesRef.current = next.tombstones;
 		settingsRef.current = next.settings;
+		conflictsRef.current = next.conflicts ?? [];
+		setConflicts(next.conflicts ?? []);
 		setSyncedSettings(next.settings);
 		setEntries(next.entries);
 	}, []);
+
+	/** Resolve a conflict on an entry (ADR-0006). "other" decrypts the sealed loser
+	 * with the loaded key — safe: it was encrypted for this vault — and applies it
+	 * as a fresh edit so it syncs; "winner" just drops the record. */
+	const resolveConflictImpl = useCallback(
+		async (entryId: string, choice: "winner" | "other"): Promise<void> => {
+			const rec = conflictsRef.current.find((c) => c.entryId === entryId);
+			if (!rec) return;
+			if (choice === "other") {
+				const plaintext = await crypto.decryptEntry({
+					ciphertext: rec.envelope.ciphertext,
+					iv: rec.envelope.iv,
+					wrappedDek: rec.envelope.wrappedDek,
+					dekIv: rec.envelope.dekIv,
+				});
+				const data = entryDataSchema.parse(JSON.parse(plaintext)) as EntryData;
+				await commitEntries(
+					await mutations.update({ ...snapshotEntries(), conflicts: [] }, entryId, data),
+				);
+				return;
+			}
+			// Winner: keep the current version, drop the sealed loser. The payload
+			// round-trips through the resolve primitive for the record filtering.
+			const cleaned = resolveConflictRecords(
+				{
+					...snapshotEntries(),
+					conflicts: conflictsRef.current,
+				} as never as import("../sync").EntriesPayload,
+				entryId,
+				"winner",
+			) as unknown as { conflicts?: ConflictRecord[] };
+			commitEntries({
+				...snapshotEntries(),
+				conflicts: cleaned.conflicts,
+			});
+		},
+		[crypto, mutations, snapshotEntries, commitEntries],
+	);
+	resolveConflictRef.current = resolveConflictImpl;
 
 	const addEntry = useCallback(
 		async (data: EntryData) => commitEntries(await mutations.add(snapshotEntries(), data)),
@@ -1771,6 +1839,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			biometryType,
 			biometryEnrolled,
 			sharing,
+			conflictEntryIds: conflicts.map((c) => c.entryId),
 		}),
 		[
 			hasVault,
@@ -1792,6 +1861,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			biometryType,
 			biometryEnrolled,
 			sharing,
+			conflicts,
 		],
 	);
 
@@ -1876,6 +1946,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			runSharingTransition,
 			shareEntries,
 			unshareEntries,
+			resolveConflict: (entryId, choice) =>
+				resolveConflictRef.current?.(entryId, choice) ?? Promise.resolve(),
 			createVault,
 			deleteVault,
 			exportVault,

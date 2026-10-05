@@ -26,7 +26,7 @@ export function VaultHomeRoute() {
 		}),
 		[raw.q, raw.type, raw.sort, raw.archived],
 	);
-	const { entries, ready, deleteEntry, touchEntry } = useVault();
+	const { entries, ready, deleteEntry, touchEntry, conflictEntryIds, resolveConflict } = useVault();
 	const { shell } = usePlatform();
 	const { prefs, update } = usePrefs();
 	// Hide stored breach flags when breach checking is off.
@@ -120,6 +120,8 @@ export function VaultHomeRoute() {
 			statsCollapsed={prefs.statsCollapsed}
 			onToggleStats={() => void update("statsCollapsed", !prefs.statsCollapsed)}
 			reviewNudge={reviewNudge ? <ReviewNudgeCard nudge={reviewNudge} /> : undefined}
+			conflictEntryIds={conflictEntryIds}
+			onResolveConflict={resolveConflict}
 		/>
 	);
 }
