@@ -13,6 +13,7 @@ import type { IndexEntry, SubdomainMatchMode } from "../adapters/autofill";
 import type { BiometryType } from "../adapters/biometric";
 import { usePlatform } from "../context/PlatformContext";
 import {
+	decodeVault,
 	decodeVaultBlob,
 	type EncryptedEntry,
 	encodeVaultBlob,
@@ -209,11 +210,17 @@ import {
 } from "../vault/build-vault";
 import { createEntryMutations, type VaultEntries } from "../vault/entry-mutations";
 import { entryDataSchema, normalizeEntryData } from "../vault/entry-normalize";
+import {
+	enableSharing as enableSharingLayer,
+	loadOwnerSharingState,
+	persistOwnerSharingState,
+} from "../vault/owner-sharing";
 import { decryptEntriesOrRecover } from "../vault/recover-entries";
 import {
 	generateRecoveryCode as makeRecoveryCode,
 	normalizeRecoveryCode,
 } from "../vault/recovery-code";
+import { createSharingDeps, type SharingDeps, type SharingState } from "../vault/sharing-mutations";
 import {
 	addWebauthnSlot,
 	describeWebauthnKeys,
@@ -233,6 +240,7 @@ import {
 	unlockRpIdOrder,
 	type WebauthnKeyKind,
 } from "../vault/webauthn-ceremony";
+import { VLT2 } from "../vault-format";
 import { type SyncedSettingsAccess, SyncedSettingsContext } from "./synced-settings";
 import { PER_VAULT_PREF_KEYS, PREF_ALIAS_PROVIDER } from "./usePrefs";
 import { useSyncEnrollment } from "./useSyncEnrollment";
@@ -278,6 +286,9 @@ export interface VaultState {
 	/** A biometric is actually enrolled, so a biometry-only gate is possible. False on a
 	 * passcode-only device, where passcode fallback is the only gate there is. */
 	biometryEnrolled: boolean;
+	/** The sharing layer of the active vault, when it is sharing-enabled (VLT2) and
+	 * unlocked; null otherwise. See docs/adr/0001..0007 and vault/sharing-mutations. */
+	sharing: SharingState | null;
 }
 
 /** Vault actions. Referentially stable for the provider's lifetime. */
@@ -285,6 +296,12 @@ export interface VaultActions {
 	/** `vaultId` names the vault when the caller just minted it and the registry's active id hasn't
 	 * caught up through React state yet (restore's first vault). Omit it to unlock the active one. */
 	unlock(password: string, vaultId?: string): Promise<void>;
+	/** Enable sharing on the active vault (one-way VLT1 -> VLT2 conversion). */
+	enableSharing(): Promise<void>;
+	/** Apply one sharing transition (from vault/sharing-mutations) and persist. */
+	runSharingTransition(
+		transition: (deps: SharingDeps, state: SharingState) => Promise<SharingState>,
+	): Promise<void>;
 	lock(): Promise<void>;
 	/** Creates a new vault (parallel to any existing ones) and returns its initial plaintext recovery code (shown once). */
 	createVault(password: string, label?: string): Promise<string>;
@@ -439,12 +456,22 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	const [vaultError, setVaultError] = useState<string | null>(null);
 	const [webauthnKeyLabels, setWebauthnKeyLabels] = useState<Record<string, StoredKeyLabel>>({});
 
+	// Sharing state for a VLT2 (sharing-enabled) vault, held like the sync stamps: a
+	// ref threaded through transitions, mirrored to state for the UI. Null when the
+	// vault has no sharing layer (VLT1) or is locked. See docs/adr/0005/0007.
+	const [sharing, setSharing] = useState<SharingState | null>(null);
+	const sharingRef = useRef<SharingState | null>(null);
+	sharingRef.current = sharing;
+
 	// Latest render's reactive state, mirrored to a ref so action callbacks can read
 	// current entries / labels / lock state without listing them as deps. That keeps every
 	// action referentially stable (its own context, never re-firing pure-action subscribers).
 	// Assigned during render: idempotent, the blessed idiom for a latest-value ref.
 	const latestRef = useRef({ entries, webauthnKeyLabels, isLocked, biometricEnabled });
 	latestRef.current = { entries, webauthnKeyLabels, isLocked, biometricEnabled };
+
+	// Sharing deps: pure TS sharing crypto + the loaded vault key. Stable.
+	const sharingDeps = useMemo(() => createSharingDeps(crypto), [crypto]);
 
 	// Sync metadata kept alongside (not on) the user-facing Entry: per-entry HLC
 	// stamps and the deletion graveyard. Held in refs because mutations thread
@@ -504,6 +531,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			return tryDecode();
 		}
 	}, [storage]);
+
+	/** The decoded blob with its format tag, for sharing-aware code. Same
+	 * backup-restore fallback as readDecodedBlob. */
+	const readTaggedBlob = useCallback(async () => {
+		const { bytes } = await readDecodedBlob();
+		return decodeVault(bytes);
+	}, [readDecodedBlob]);
 
 	const refreshSlotMetadata = useCallback(async () => {
 		try {
@@ -622,7 +656,31 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		});
 		setEntries(decrypted);
 		await publishIndex(toAutofillIndex(decrypted), indexLease);
-	}, [readDecodedBlob, crypto, storage, autofill, ensureClock, publishIndex]);
+		// Sharing layer (VLT2 vaults): load the owner's sharing state alongside the
+		// entries. A failure here degrades to "no sharing" — entries still work —
+		// rather than failing the unlock. See docs/adr/0007.
+		try {
+			const decoded = await readTaggedBlob();
+			if (decoded.format === "vlt2") {
+				const ownerState = await loadOwnerSharingState(sharingDeps, decoded.blob);
+				setSharing(ownerState);
+			} else {
+				setSharing(null);
+			}
+		} catch (e) {
+			console.warn("[vault] sharing layer failed to load:", e);
+			setSharing(null);
+		}
+	}, [
+		readDecodedBlob,
+		readTaggedBlob,
+		crypto,
+		storage,
+		autofill,
+		ensureClock,
+		publishIndex,
+		sharingDeps,
+	]);
 
 	// On mount (and when the active vault resolves): detect an existing vault handle and
 	// whether crypto is already unlocked (popup reopened mid-session). Waits for the registry
@@ -783,9 +841,44 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		settingsRef.current = undefined;
 		setSyncedSettings(undefined);
 		setEntries([]);
+		setSharing(null);
 		setIsLocked(true);
 		setLockedByUser(true);
 	}, [crypto, autofill]);
+
+	// --- Sharing (VLT2 vaults) — see docs/adr/0001..0007 ---
+
+	/** Enable sharing on the active vault: the one-way VLT1 -> VLT2 conversion.
+	 * Writes the converted blob, then loads the (empty) sharing state. */
+	const enableSharing = useCallback(async () => {
+		const { blob } = await readDecodedBlob();
+		const bytes = await storage.readVaultBlob();
+		if (decodeVault(bytes).format === "vlt2") {
+			throw new Error("Sharing is already enabled on this vault.");
+		}
+		const v2 = await enableSharingLayer(sharingDeps, blob);
+		await storage.writeVaultBlob(VLT2.encode(v2));
+		const state = await loadOwnerSharingState(sharingDeps, v2);
+		setSharing(state);
+	}, [readDecodedBlob, storage, sharingDeps]);
+
+	/** Apply one sharing transition and persist the layer. The transition comes
+	 * from vault/sharing-mutations; this runs it against the current state,
+	 * writes the re-encoded blob, and updates the in-memory state. */
+	const runSharingTransition = useCallback(
+		async (
+			transition: (deps: SharingDeps, state: SharingState) => Promise<SharingState>,
+		): Promise<void> => {
+			const current = sharingRef.current;
+			if (!current) throw new Error("Sharing is not enabled on this vault.");
+			const next = await transition(sharingDeps, current);
+			const { blob } = await readDecodedBlob();
+			const bytes = await persistOwnerSharingState(sharingDeps, next, blob);
+			await storage.writeVaultBlob(bytes);
+			setSharing(next);
+		},
+		[sharingDeps, readDecodedBlob, storage],
+	);
 
 	/** Run a get() assertion over the given slots, returning the PRF secret. */
 	// Slot wrapping lives in vault/build-vault (shared with device enrollment); these
@@ -1580,6 +1673,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			biometricEnabled,
 			biometryType,
 			biometryEnrolled,
+			sharing,
 		}),
 		[
 			hasVault,
@@ -1600,6 +1694,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			biometricEnabled,
 			biometryType,
 			biometryEnrolled,
+			sharing,
 		],
 	);
 
@@ -1680,6 +1775,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		() => ({
 			unlock,
 			lock,
+			enableSharing,
+			runSharingTransition,
 			createVault,
 			deleteVault,
 			exportVault,
@@ -1750,6 +1847,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			joinGroup,
 			startJoin,
 			removeDevice,
+			enableSharing,
+			runSharingTransition,
 		],
 	);
 

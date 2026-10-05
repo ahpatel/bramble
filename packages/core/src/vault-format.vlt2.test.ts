@@ -85,7 +85,9 @@ function makeVlt2Blob(): Vlt2Blob {
 			{
 				kind: SHARING_WRAP_KIND_VEK,
 				iv: fillBytes(LEN_IV, 0x60),
-				wrappedShk: fillBytes(LEN_WRAPPED_KEY, 0x70),
+				// The owner wrap carries the sharing key's base64 text encrypted
+				// under the vault key: 44 chars + 16 GCM tag.
+				wrappedShk: fillBytes(60, 0x70),
 			},
 			{
 				kind: SHARING_WRAP_KIND_MEMBER,
@@ -170,8 +172,8 @@ describe("VLT2 round-trips", () => {
 		//        + slot TLV(3+124) + owner wrap TLV(3+60) + member wrap TLV(3+103)
 		//        => entriesLen (u32-BE) at this offset.
 		const slotPayload = LEN_SLOT_ID + LEN_SALT + LEN_VERIFIER + LEN_WRAP_IV + LEN_WRAPPED_KEY;
-		const ownerWrapPayload = LEN_IV + LEN_WRAPPED_KEY;
-		const memberWrapPayload = 1 + "member-dad".length + 32 + ownerWrapPayload;
+		const ownerWrapPayload = LEN_IV + 60; // owner: iv + base64-key ciphertext
+		const memberWrapPayload = 1 + "member-dad".length + 32 + LEN_IV + LEN_WRAPPED_KEY;
 		const entriesLenOffset =
 			4 + 2 + 1 + (3 + slotPayload) + (3 + ownerWrapPayload) + (3 + memberWrapPayload);
 		const dv = new DataView(bytes.buffer, bytes.byteOffset + entriesLenOffset, 4);

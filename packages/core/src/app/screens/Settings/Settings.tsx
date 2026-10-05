@@ -23,6 +23,7 @@ import { DesktopLinkSection } from "./components/DesktopLinkSection";
 import { GeneralSection } from "./components/GeneralSection";
 import { RotateSecretSection } from "./components/RotateSecretSection";
 import { SecuritySection } from "./components/SecuritySection";
+import { SharingSection } from "./components/SharingSection";
 import { SupportSection } from "./components/SupportSection";
 import { SyncConnectSection } from "./components/SyncConnectSection";
 import { UpdatesSection } from "./components/UpdatesSection";
@@ -84,6 +85,7 @@ export function Settings() {
 					<>
 						<GeneralSection />
 						<AppearanceSection />
+						<SharingSection />
 						<DeleteVaultSection />
 					</>
 				)}

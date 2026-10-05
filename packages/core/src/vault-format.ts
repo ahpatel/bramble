@@ -316,20 +316,24 @@ export const SHARING_WRAP_KIND_MEMBER = 0x02;
  * cannot be replayed against a different key pair (ADR-0002). */
 const EPH_PUB_LEN = 32;
 
+/** The owner wrap encrypts the sharing key's base64 text (44 chars) under the
+ * vault key: 44 + 16 GCM tag. The member wrap seals the raw 32 bytes: 48. */
+const LEN_WRAPPED_SHK_OWNER = 60;
+
 /** A copy of the sharing key wrapped for one reader. Lives OUTSIDE the region:
  * a member needs it to read the region, so it cannot live inside it. */
 const SharingWrapSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal(SHARING_WRAP_KIND_VEK),
 		iv: bytes(LEN_IV, "iv"),
-		wrappedShk: bytes(LEN_WRAPPED_VEK, "wrappedShk"),
+		wrappedShk: bytes(LEN_WRAPPED_SHK_OWNER, "wrappedShk"),
 	}),
 	z.object({
 		kind: z.literal(SHARING_WRAP_KIND_MEMBER),
 		memberId: z.string().min(1),
 		ephemeralPub: bytes(EPH_PUB_LEN, "ephemeralPub"),
 		iv: bytes(LEN_IV, "iv"),
-		wrappedShk: bytes(LEN_WRAPPED_VEK, "wrappedShk"),
+		wrappedShk: bytes(LEN_WRAPPED_KEY, "wrappedShk"),
 	}),
 ]);
 export type SharingWrap = z.infer<typeof SharingWrapSchema>;
@@ -418,15 +422,17 @@ const Vlt2BlobSchema = VaultBlobSchema.extend({
 export type Vlt2Blob = z.infer<typeof Vlt2BlobSchema>;
 
 const sharingWrapCountLen = 1; // uint8, wraps fit in one byte at member scale
-const wrapFixedLen = LEN_IV + LEN_WRAPPED_VEK;
+const wrapFixedLen = LEN_IV + LEN_WRAPPED_SHK_OWNER; // owner wrap
+const memberWrapFixedLen = LEN_IV + LEN_WRAPPED_KEY;
 
 function encodeSharingWrap(wrap: SharingWrap): Uint8Array {
 	const memberIdBytes =
 		wrap.kind === SHARING_WRAP_KIND_MEMBER ? utf8Bytes(wrap.memberId) : new Uint8Array(0);
 	if (memberIdBytes.length > 0xff) throw new Error("member id too long");
 	const ephLen = wrap.kind === SHARING_WRAP_KIND_MEMBER ? EPH_PUB_LEN : 0;
+	const fixedLen = wrap.kind === SHARING_WRAP_KIND_MEMBER ? memberWrapFixedLen : wrapFixedLen;
 	const payload = new Uint8Array(
-		(wrap.kind === SHARING_WRAP_KIND_MEMBER ? 1 : 0) + memberIdBytes.length + ephLen + wrapFixedLen,
+		(wrap.kind === SHARING_WRAP_KIND_MEMBER ? 1 : 0) + memberIdBytes.length + ephLen + fixedLen,
 	);
 	let off = 0;
 	if (wrap.kind === SHARING_WRAP_KIND_MEMBER) {
@@ -445,6 +451,7 @@ function encodeSharingWrap(wrap: SharingWrap): Uint8Array {
 function decodeSharingWrap(kind: number, payload: Uint8Array): SharingWrap {
 	if (kind === SHARING_WRAP_KIND_VEK) {
 		if (payload.length !== wrapFixedLen) {
+			// owner wrap: iv + base64-key ciphertext
 			throw new Error(`sharing wrap (owner) payload length mismatch: ${payload.length}`);
 		}
 		return SharingWrapSchema.parse({
@@ -454,11 +461,11 @@ function decodeSharingWrap(kind: number, payload: Uint8Array): SharingWrap {
 		});
 	}
 	if (kind === SHARING_WRAP_KIND_MEMBER) {
-		if (payload.length < 1 + EPH_PUB_LEN + wrapFixedLen) {
+		if (payload.length < 1 + EPH_PUB_LEN + memberWrapFixedLen) {
 			throw new Error(`sharing wrap (member) payload too short: ${payload.length}`);
 		}
 		const memberIdLen = payload[0]!;
-		if (1 + memberIdLen + EPH_PUB_LEN + wrapFixedLen !== payload.length) {
+		if (1 + memberIdLen + EPH_PUB_LEN + memberWrapFixedLen !== payload.length) {
 			throw new Error(`sharing wrap (member) payload length mismatch (memberIdLen=${memberIdLen})`);
 		}
 		const decoder = new TextDecoder();

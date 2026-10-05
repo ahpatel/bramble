@@ -21,7 +21,7 @@ export function Section({ icon, title, children }: SectionProps) {
 
 interface RowProps {
 	icon: React.ReactNode;
-	title: string;
+	title: React.ReactNode;
 	subtitle: string;
 	children: React.ReactNode;
 }
