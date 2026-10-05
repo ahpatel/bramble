@@ -116,10 +116,16 @@ export function createVaultSyncPort(deps: {
 	store: EntriesBlobStore;
 	witnessRemote: (stamps: Hlc[]) => Promise<void>;
 	onChanged?: () => void | Promise<void>;
+	/** The device's sharing view for member-aware merges. Absent/null = plain merge. */
+	sharingView?: () => Promise<SyncSharingView | null>;
+	/** The localization crypto. Required together with sharingView. */
+	localizeDeps?: LocalizeDeps;
 }): VaultSyncPort {
 	return {
 		readLocal: () => deps.store.readEntriesPayload(),
 		witnessRemote: deps.witnessRemote,
+		sharingView: deps.sharingView,
+		localizeDeps: deps.localizeDeps,
 		async writeMerged(merged) {
 			await deps.store.writeEntriesBlob(merged);
 			await deps.onChanged?.();

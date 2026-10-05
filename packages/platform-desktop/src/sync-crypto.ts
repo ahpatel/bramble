@@ -50,6 +50,8 @@ const cryptoSlice = {
 	wrap_vek_webauthn: (hmacSecretB64: string, slotIdB64: string, magicVersion: Uint8Array) =>
 		desktopCrypto.wrapVekWebauthn({ hmacSecretB64, slotIdB64, magicVersion }),
 	encrypt_with_vek: (plaintext: string) => desktopCrypto.encryptWithVek(plaintext),
+	decrypt_with_vek: (iv: string, ciphertext: string) =>
+		desktopCrypto.decryptWithVek(iv, ciphertext),
 	verify_password_slot: (
 		password: string,
 		saltB64: string,

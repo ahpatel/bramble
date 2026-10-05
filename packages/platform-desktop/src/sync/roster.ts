@@ -18,6 +18,7 @@ import {
 	createVaultSyncPort,
 	decodeEntriesPayload,
 	decodeRoster,
+	decodeVault,
 	decodeVaultBlob,
 	encodeEntriesPayload,
 	encodeRoster,
@@ -30,6 +31,11 @@ import {
 	type StorageAdapter,
 	SYNC_LAST_SYNCED_KEY,
 } from "@core/index";
+import {
+	buildSyncSharingView,
+	localizeDepsFromCrypto,
+	type SyncViewCrypto,
+} from "@core/sync/localize";
 import { addDevice } from "@core/sync/roster";
 import { syncKeyFor } from "@core/sync/sync-keys";
 import type { MeshSession } from "@core/sync/transport/peer-session";
@@ -37,6 +43,17 @@ import { startRosterSync } from "@core/sync/transport/roster-sync";
 import { parseRegistry, VAULT_REGISTRY_KEY } from "@core/vault/vault-registry";
 import { desktopCrypto } from "../adapters/crypto";
 import { desktopStorage } from "../adapters/storage";
+
+/** The loaded-key crypto the merge localization needs. The loaded key is the
+ * vault key on an owner device, the member master key on a member device. */
+const syncViewCrypto: SyncViewCrypto = {
+	decryptWithVek: (iv, ciphertext) => desktopSyncCrypto.decrypt_with_vek(iv, ciphertext),
+	encryptWithVek: async (plaintext) => {
+		const w = await desktopSyncCrypto.encrypt_with_vek(plaintext);
+		return { iv: w.iv, ciphertext: w.ciphertext };
+	},
+};
+
 import { notifyExternalChange, onVaultStateChange } from "../adapters/vault-session";
 import { desktopSyncCrypto } from "../sync-crypto";
 import { emit, report } from "./bus";
@@ -211,6 +228,15 @@ async function startRoster(): Promise<void> {
 						const clock = await getClock(vaultId);
 						for (const hlc of stamps) clock.witness(hlc);
 					},
+					// Member-aware convergence: build the sharing view from the current
+					// blob (null for a VLT1 vault — the plain merge it always was).
+					sharingView: async () => {
+						const bytes = await desktopStorage.readVaultBlob(vaultId);
+						const decoded = decodeVault(bytes);
+						if (decoded.format !== "vlt2") return null;
+						return buildSyncSharingView(syncViewCrypto, decoded.blob);
+					},
+					localizeDeps: localizeDepsFromCrypto(syncViewCrypto),
 					// Refresh the open list with the peer's edits, rather than leaving the window
 					// showing entries the file no longer matches.
 					onChanged: notifyExternalChange,
