@@ -19,11 +19,33 @@ import type {
 import { canonicalRosterEntry, RosterEntrySchema } from "@core/sync/roster";
 import { startEnroll } from "@core/sync/transport/enroll-host";
 import type { MeshSession } from "@core/sync/transport/peer-session";
+import {
+	buildMemberInvite,
+	encodeMemberInviteBundle,
+	sharingWrapFromWire,
+	sharingWrapToWire,
+	type WireSharingWrap,
+} from "@core/vault/member-invite";
+import * as sharingCrypto from "@core/vault/sharing-crypto";
+import { addMember, type SharingDeps } from "@core/vault/sharing-mutations";
+import type { SharingRegion } from "@core/vault-format";
 import { desktopCrypto } from "../adapters/crypto";
 import { desktopSyncCrypto } from "../sync-crypto";
 import { emit, report } from "./bus";
 import { clearSyncIdentity, deviceKeypair, syncAdmissionSign } from "./keys";
 import { addToLocalRoster, clearGroupState, stopRosterSync, syncTargetVaultId } from "./roster";
+
+/** The deps a member registration needs: pure TS sealing crypto. The vault-key
+ * ops are never reached by addMember; they throw if they ever are. */
+const memberSealDeps: SharingDeps = {
+	...sharingCrypto,
+	encryptWithVek: () => Promise.reject(new Error("not available during a member invite")),
+	decryptWithVek: () => Promise.reject(new Error("not available during a member invite")),
+};
+
+function toWire(wraps: Parameters<typeof sharingWrapToWire>[0][]): WireSharingWrap[] {
+	return wraps.map(sharingWrapToWire);
+}
 
 /** The inviter's material for admitting a joiner: a re-entered password and who is admitting. */
 interface Admission {
@@ -121,7 +143,21 @@ export async function startEnrollInvite(opts: {
 	recoverySlots?: WireRecoverySlot[];
 	/** Lets this process admit the joiner itself rather than relying on the window. See admitJoiner. */
 	admission?: Admission;
+	/** MEMBER INVITE (v2): the sharing state snapshot the bundle is built from. The
+	 * buildBundle callback registers the joining member (sealing the sharing key to
+	 * their key) and packs the bundle; the updated wraps come back on the enrolled
+	 * event for the UI to persist. */
+	memberInvite?: {
+		memberId: string;
+		shkB64: string;
+		sharingWraps: WireSharingWrap[];
+		region: SharingRegion;
+		roster: RosterPayload;
+	};
 }): Promise<void> {
+	// The sharing wraps the member registration produced, emitted on "enrolled" so the
+	// UI can persist the updated sharing state.
+	let pendingMemberWraps: WireSharingWrap[] | null = null;
 	const { privateKey, publicKey } = await deviceKeypair();
 	// Pinned now, for the same reason the VEK is: an invite stays open as long as the code is on
 	// screen, and the roster this enrollment writes to must be the one the user is sharing, not
@@ -131,7 +167,8 @@ export async function startEnrollInvite(opts: {
 	// process-global and an invite stays open as long as the code is on screen, so reading it
 	// at send time would ship whichever vault they had switched to by then, handing the joiner
 	// something it could never open.
-	const vekB64 = await desktopCrypto.exportVek();
+	// A member invite needs no vault key: the bundle carries seals, not the VEK.
+	const vekB64 = opts.memberInvite ? undefined : await desktopCrypto.exportVek();
 
 	session?.stop();
 	// A new invite supersedes any prompt left over from the last one.
@@ -141,6 +178,34 @@ export async function startEnrollInvite(opts: {
 		vekB64,
 		devicePubB64: publicKey,
 		devicePrivB64: privateKey,
+		memberInvite: opts.memberInvite
+			? {
+					buildBundle: async (memberPubB64: string) => {
+						const invite = opts.memberInvite!;
+						const { memberId, shkB64, sharingWraps, region, roster } = invite;
+						// Register the joining member on the snapshot: this seals the
+						// sharing key to their public key. Pure TS, no vault key involved.
+						const state = await addMember(
+							memberSealDeps,
+							{
+								shkB64,
+								sharingWraps: sharingWraps.map(sharingWrapFromWire),
+								region,
+								collectionKeys: {},
+								performer: { role: "owner" },
+							},
+							{ memberId, publicKey: memberPubB64 },
+						);
+						const bundle = buildMemberInvite(state, {
+							memberId,
+							memberPubKey: memberPubB64,
+							entries: [],
+						});
+						pendingMemberWraps = toWire(state.sharingWraps);
+						return encodeMemberInviteBundle({ ...bundle, roster });
+					},
+				}
+			: undefined,
 		// Park the transfer on the user's answer: authenticated is not authorized.
 		approve: (sas, label) =>
 			new Promise<boolean>((resolve) => {
@@ -160,7 +225,11 @@ export async function startEnrollInvite(opts: {
 		onEnrolled: (entryJson) => {
 			void (async () => {
 				if (vaultId) await admitJoiner(vaultId, opts.admission, entryJson);
-				emit({ kind: "enrolled", entryJson });
+				emit({
+					kind: "enrolled",
+					entryJson,
+					sharingWrapsJson: pendingMemberWraps ? JSON.stringify(pendingMemberWraps) : undefined,
+				});
 			})();
 		},
 		relayUrl: opts.relayUrl,

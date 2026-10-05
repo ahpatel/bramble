@@ -56,6 +56,33 @@ export const EnrollInviteMsgSchema = z.object({
 	admission: z
 		.object({ password: z.string(), saltB64: z.string(), adminId: z.string() })
 		.optional(),
+	// MEMBER INVITE (v2): the sharing state snapshot the bundle is built from. The
+	// offscreen's buildBundle registers the joining member and packs the sealed
+	// bundle; the updated wraps come back on the enrolled event.
+	memberInvite: z
+		.object({
+			memberId: z.string(),
+			shkB64: z.string(),
+			sharingWraps: z.array(
+				z.discriminatedUnion("kind", [
+					z.object({
+						kind: z.literal(1),
+						ivB64: z.string(),
+						wrappedShkB64: z.string(),
+					}),
+					z.object({
+						kind: z.literal(2),
+						memberId: z.string(),
+						ephemeralPubB64: z.string(),
+						ivB64: z.string(),
+						wrappedShkB64: z.string(),
+					}),
+				]),
+			),
+			region: z.unknown(),
+			roster: RosterPayloadSchema,
+		})
+		.optional(),
 });
 export type EnrollInviteMsg = z.infer<typeof EnrollInviteMsgSchema>;
 
@@ -132,6 +159,7 @@ export const SyncEventMsgSchema = z.object({
 	vaultBlobB64: z.string().optional(),
 	roster: RosterPayloadSchema.optional(),
 	entryJson: z.string().optional(),
+	sharingWrapsJson: z.string().optional(),
 	message: z.string().optional(),
 	sas: z.string().optional(),
 	sasEmoji: z.array(z.number().int()).optional(),

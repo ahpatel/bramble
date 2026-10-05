@@ -21,7 +21,9 @@ import {
 } from "../sync";
 import { base64ToBytes, bytesToBase64 } from "../util/bytes";
 import { defaultDeviceLabel } from "../util/device-label";
+import { sharingWrapToWire } from "../vault/member-invite";
 import { generateKey, generateMemberKeypair } from "../vault/sharing-crypto";
+import type { SharingState } from "../vault/sharing-mutations";
 import {
 	findPasswordSlot,
 	findRecoverySlots,
@@ -85,6 +87,8 @@ export interface SyncEnrollmentDeps {
 }
 
 type SyncEnrollment = Pick<UseVault, "inviteDevice" | "joinGroup" | "removeDevice"> & {
+	/** MEMBER INVITE (v2): see useVault for the signature. */
+	inviteMember: UseVault["inviteMember"];
 	/** MEMBER JOIN (v2): join a shared vault as a family member with this device's own
 	 * password and key material. See docs/adr/0002 and the member invite module. */
 	joinAsMember: (pairingCode: string, password: string) => Promise<void>;
@@ -507,5 +511,80 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 		[storage, syncKey, ensureClock],
 	);
 
-	return { inviteDevice, joinGroup, joinAsMember, removeDevice, ensureOwnEntrySigned };
+	// Invite a MEMBER (v2): like inviteDevice, but the bundle carries seals to the
+	// joining member's key instead of the vault key. The snapshot of the sharing
+	// state travels with the invite; the host registers the member and the updated
+	// wraps come back on the enrolled event, where we persist them. The relay is the
+	// stored one (the sync settings own relay configuration).
+	const inviteMember = useCallback(
+		async (
+			_relayUrl: string,
+			iceUrl: string | undefined,
+			shareWith: { sharing: SharingState; persistWraps: (wrapsJson: string) => Promise<void> },
+		): Promise<string> => {
+			const relayUrl = (await storage.getMeta<string>("sync.relay")) ?? "";
+			if (!relayUrl) {
+				throw new Error("Set up device sync first — the invite uses the same relay.");
+			}
+			await storage.setMeta("sync.relay", relayUrl);
+			await storage.setMeta("sync.iceUrl", iceUrl ?? "");
+			const groupKey = await ensureGroup();
+			const inviterPub = await shell.syncDevicePublicKey();
+			const psk = randomKeyB64();
+			const group = await storage.getMeta<{ roster: RosterPayload }>(syncKey("sync.group"));
+			const roster = group?.roster ?? emptyRoster();
+			const memberId = globalThis.crypto.randomUUID();
+
+			enrollUnsubRef.current?.();
+			enrollUnsubRef.current = shell.onSyncEvent((ev) => {
+				if (ev.kind !== "enrolled") return;
+				// Roster side is handled by the device path below; here we only need the
+				// updated sharing wraps to persist.
+				if (!ev.sharingWrapsJson) return;
+				void shareWith
+					.persistWraps(ev.sharingWrapsJson)
+					.then(() => {
+						enrollUnsubRef.current?.();
+						enrollUnsubRef.current = null;
+					})
+					.catch(() => {});
+			});
+
+			const exp = Date.now() + INVITE_TTL_MS;
+			await shell.startEnrollInvite({
+				relayUrl,
+				iceUrl,
+				groupKeyB64: groupKey,
+				psk,
+				roster,
+				entries: { entries: [], tombstones: [] },
+				memberInvite: {
+					memberId,
+					shkB64: shareWith.sharing.shkB64,
+					sharingWraps: shareWith.sharing.sharingWraps.map(sharingWrapToWire),
+					region: shareWith.sharing.region,
+					roster,
+				},
+			});
+			return encodePairingCode({
+				v: 1,
+				groupKey,
+				inviterPub,
+				psk,
+				relay: relayUrl,
+				iceUrl: iceUrl || undefined,
+				exp,
+			});
+		},
+		[shell, storage, syncKey, ensureGroup],
+	);
+
+	return {
+		inviteDevice,
+		joinGroup,
+		joinAsMember,
+		inviteMember,
+		removeDevice,
+		ensureOwnEntrySigned,
+	};
 }

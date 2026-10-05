@@ -324,6 +324,9 @@ export interface SyncEvent {
 	roster?: RosterPayload;
 	/** Inviter: a joining device's roster entry (JSON), to add to our roster. */
 	entryJson?: string;
+	/** Inviter, MEMBER join (v2): the updated outer sharing wraps (JSON array, wire
+	 * form) after the host registered the joining member — the UI persists these. */
+	sharingWrapsJson?: string;
 	/** Joiner: a human-readable reason a join failed recoverably (e.g. password mismatch). */
 	message?: string;
 	/** For kind "enroll-approval" (inviter) and "sas" (joiner): the pairing SAS to display. */

@@ -390,6 +390,16 @@ export interface VaultActions {
 	 * is the re-entered master password (Item A) that admission-signs the joiner; omit it (or pass it
 	 * for a security-key-only vault, where it's ignored) to enroll without an admission signature. */
 	inviteDevice(relayUrl: string, iceUrl?: string, password?: string): Promise<string>;
+	/** Invite a MEMBER (v2): seals instead of the vault key. `persistWraps` receives the
+	 * updated sharing wraps (JSON, wire form) after enrollment, for the UI to persist. */
+	inviteMember(
+		relayUrl: string,
+		iceUrl: string | undefined,
+		shareWith: {
+			sharing: SharingState;
+			persistWraps: (wrapsJson: string) => Promise<void>;
+		},
+	): Promise<string>;
 	/** Join an existing group from a pairing code; rebuilds this device's vault under the chosen unlock method. */
 	joinGroup(pairingCode: string, unlock: JoinUnlock): Promise<void>;
 	/** Setup-flow join: create a NEW vault from a pairing code (dedups to an existing vault if already
@@ -1586,15 +1596,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
 	// Device enrollment lives in its own hook; it consumes the shared clock, blob
 	// read, unlock, and entries-payload read from here.
-	const { inviteDevice, joinGroup, removeDevice, ensureOwnEntrySigned } = useSyncEnrollment({
-		storage,
-		syncKey,
-		ensureClock,
-		rotateDeviceId,
-		readDecodedBlob,
-		unlock,
-		readEntriesPayload: mutations.readEntriesPayload,
-	});
+	const { inviteDevice, inviteMember, joinGroup, removeDevice, ensureOwnEntrySigned } =
+		useSyncEnrollment({
+			storage,
+			syncKey,
+			ensureClock,
+			rotateDeviceId,
+			readDecodedBlob,
+			unlock,
+			readEntriesPayload: mutations.readEntriesPayload,
+		});
 
 	// Phase-1 migration: a device enrolled before roster signing existed carries an unsigned entry
 	// that nothing else ever re-signs, and the phase-2 flip would drop its updates. Back it off one
@@ -1866,6 +1877,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			unlockWithBiometric,
 			refreshBiometric,
 			inviteDevice,
+			inviteMember,
 			joinGroup,
 			startJoin,
 			removeDevice,
@@ -1903,6 +1915,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			unlockWithBiometric,
 			refreshBiometric,
 			inviteDevice,
+			inviteMember,
 			joinGroup,
 			startJoin,
 			removeDevice,

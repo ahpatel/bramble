@@ -5,7 +5,10 @@
 
 import { Trans, useLingui } from "@lingui/react/macro";
 import { FolderPlus, Pencil, Share2, Users } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useState } from "react";
+import { usePlatform } from "../../../../context/PlatformContext";
+import { usePendingEnrollApproval } from "../../../../hooks/usePendingEnrollApproval";
 import { useVault } from "../../../../hooks/useVault";
 import { decryptWithKey } from "../../../../vault/sharing-crypto";
 import { createCollection, renameCollection } from "../../../../vault/sharing-mutations";
@@ -45,12 +48,13 @@ function CollectionLabel({
 }
 
 export function SharingSection() {
-	const { sharing, runSharingTransition, enableSharing, isLocked } = useVault();
+	const { sharing, runSharingTransition, enableSharing, inviteMember, isLocked } = useVault();
 	const { t } = useLingui();
 	const { show } = useToast();
 	const [creating, setCreating] = useState(false);
 	const [name, setName] = useState("");
 	const [busy, setBusy] = useState(false);
+	const [inviteCode, setInviteCode] = useState<string | null>(null);
 
 	const act = async (fn: () => Promise<void>) => {
 		setBusy(true);
@@ -71,6 +75,26 @@ export function SharingSection() {
 			await runSharingTransition((deps, state) => createCollection(deps, state, name.trim()));
 			setCreating(false);
 			setName("");
+		});
+
+	const invite = () =>
+		act(async () => {
+			if (!sharing) return;
+			// The relay comes from the sync settings (the hook resolves the stored one);
+			// the invite reuses whatever relay this device already syncs through.
+			const code = await inviteMember("", undefined, {
+				sharing,
+				persistWraps: async (wrapsJson: string) => {
+					// The host registered the member; adopt its wraps and persist.
+					const { sharingWrapFromWire } = await import("../../../../vault/member-invite");
+					const wraps = JSON.parse(wrapsJson) as Parameters<typeof sharingWrapFromWire>[0][];
+					await runSharingTransition(async () => ({
+						...sharing,
+						sharingWraps: wraps.map(sharingWrapFromWire),
+					}));
+				},
+			});
+			setInviteCode(code);
 		});
 
 	// Locked or not sharing-enabled: a single row that turns sharing on.
@@ -193,11 +217,62 @@ export function SharingSection() {
 					title={t`Invite someone`}
 					subtitle={t`In person: they scan the code, you both confirm the words, and they choose their own password.`}
 				>
-					<Button variant="secondary" size="sm" disabled>
-						<Trans>Coming soon</Trans>
+					<Button variant="secondary" size="sm" disabled={busy} onClick={() => void act(invite)}>
+						<Trans>Invite</Trans>
 					</Button>
 				</Row>
 			</RowGroup>
+			{inviteCode && <InvitePanel code={inviteCode} onClose={() => setInviteCode(null)} />}
 		</Section>
+	);
+}
+
+/** The in-person invite: a QR the other device scans, plus the approval prompt
+ * when it connects. Mirrors the device-invite panel's flow in compact form. */
+function InvitePanel({ code, onClose }: { code: string; onClose: () => void }) {
+	const { shell } = usePlatform();
+	const [approval, setApproval] = usePendingEnrollApproval(shell, true);
+	return (
+		<div className="px-4 py-3 space-y-3 border-b border-border/50">
+			<div className="flex justify-center p-2 bg-white rounded-lg w-fit mx-auto">
+				<QRCodeSVG value={code} size={144} />
+			</div>
+			<p className="text-xs text-muted-foreground break-all font-mono">{code}</p>
+			{approval ? (
+				<div className="space-y-2">
+					<p className="text-sm">
+						<Trans>Confirm this code matches on their device:</Trans>{" "}
+						<span className="font-mono font-semibold">{approval.sas}</span>
+					</p>
+					<div className="flex gap-2 justify-end">
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => {
+								setApproval(null);
+								void shell.approveEnrollment?.(false);
+							}}
+						>
+							<Trans>Deny</Trans>
+						</Button>
+						<Button
+							size="sm"
+							onClick={() => {
+								setApproval(null);
+								void shell.approveEnrollment?.(true);
+							}}
+						>
+							<Trans>Approve</Trans>
+						</Button>
+					</div>
+				</div>
+			) : (
+				<div className="flex justify-end">
+					<Button variant="ghost" size="sm" onClick={onClose}>
+						<Trans>Done</Trans>
+					</Button>
+				</div>
+			)}
+		</div>
 	);
 }

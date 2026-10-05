@@ -21,6 +21,15 @@ import { type EnrollWasm, startEnroll } from "@core/sync/transport/enroll-host";
 import type { MeshSession } from "@core/sync/transport/peer-session";
 import { type RosterSyncWasm, startRosterSync } from "@core/sync/transport/roster-sync";
 import {
+	buildMemberInvite,
+	encodeMemberInviteBundle,
+	sharingWrapFromWire,
+	sharingWrapToWire,
+	type WireSharingWrap,
+} from "@core/vault/member-invite";
+import * as sharingCrypto from "@core/vault/sharing-crypto";
+import { addMember, type SharingDeps } from "@core/vault/sharing-mutations";
+import {
 	CryptoDecryptBatchSchema,
 	CryptoDecryptIndexSchema,
 	CryptoDecryptOuterSchema,
@@ -60,6 +69,14 @@ import {
 } from "./sync/messages";
 import type { KeypairWasm, RosterSigWasm } from "./sync/sync-config";
 import { loadWasm, type VaultCrypto } from "./wasm-loader";
+
+/** The deps a member registration needs: pure TS sealing crypto. The vault-key
+ * ops are never reached by addMember; they throw if they ever are. */
+const memberSealDeps: SharingDeps = {
+	...sharingCrypto,
+	encryptWithVek: () => Promise.reject(new Error("not available during a member invite")),
+	decryptWithVek: () => Promise.reject(new Error("not available during a member invite")),
+};
 
 /**
  * The storage round-trips the roster-sync host needs. Local read + merge + write
@@ -757,8 +774,41 @@ export async function handleHostMessage(type: string, payload: unknown): Promise
 				const admission = role === "inviter" ? (opts as EnrollInviteMsg).admission : undefined;
 				enrollSession?.stop();
 				settleApproval(false); // a new enroll supersedes any prompt left over from the last one
+				// MEMBER INVITE (v2): the host registers the joining member on the
+				// snapshot and packs the sealed bundle; the updated wraps ride the
+				// enrolled event back to the UI for persistence.
+				let pendingMemberWraps: WireSharingWrap[] | null = null;
+				const memberInvite = (() => {
+					if (role !== "inviter") return undefined;
+					const invite = (opts as EnrollInviteMsg).memberInvite;
+					if (!invite) return undefined;
+					const sharingRegion = invite.region as Parameters<typeof buildMemberInvite>[0]["region"];
+					return {
+						buildBundle: async (memberPubB64: string) => {
+							const state = await addMember(
+								memberSealDeps,
+								{
+									shkB64: invite.shkB64,
+									sharingWraps: invite.sharingWraps.map(sharingWrapFromWire),
+									region: sharingRegion,
+									collectionKeys: {},
+									performer: { role: "owner" },
+								},
+								{ memberId: invite.memberId, publicKey: memberPubB64 },
+							);
+							const bundle = buildMemberInvite(state, {
+								memberId: invite.memberId,
+								memberPubKey: memberPubB64,
+								entries: [],
+							});
+							pendingMemberWraps = state.sharingWraps.map(sharingWrapToWire);
+							return encodeMemberInviteBundle({ ...bundle, roster: invite.roster });
+						},
+					};
+				})();
 				enrollSession = await startEnroll(role, {
 					...opts,
+					memberInvite,
 					wasm: w,
 					report: reportSyncStatus,
 					// Inviter: park the transfer on the user's answer. The joiner is connected and
@@ -791,6 +841,14 @@ export async function handleHostMessage(type: string, payload: unknown): Promise
 						// Add to the roster in the host (reliable) AND notify the popup (updates its UI +
 						// upgrades the same entry). See addEnrolledToLocalRoster.
 						void addEnrolledToLocalRoster(bridge, admission, entryJson);
+						if (pendingMemberWraps) {
+							broadcastSyncEvent({
+								kind: "enrolled",
+								entryJson,
+								sharingWrapsJson: JSON.stringify(pendingMemberWraps),
+							});
+							return;
+						}
 						broadcastSyncEvent({ kind: "enrolled", entryJson });
 					},
 				});
