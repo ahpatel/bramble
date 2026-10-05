@@ -66,3 +66,7 @@ playwright-report/
 # before this existed.
 packages/platform-desktop/macos/build/
 *.provisionprofile
+
+# Local relay deploy config (custom domain stays out of the public repo)
+nostr-relay/cf-worker/wrangler.local.jsonc
+nostr-relay/cf-worker/.secrets/

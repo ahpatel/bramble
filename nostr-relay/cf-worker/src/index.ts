@@ -44,8 +44,48 @@ const MAX_MAILBOX_PER_RECIPIENT = 64;
 const MAILBOX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 // POST /ice-servers mints short-lived Cloudflare TURN creds so peers across
-// networks/VPNs can relay. See docs/p2p-sync.md.
+// networks/VPNs can relay. See docs/p2p-sync.md. TURN usage is METERED, so this
+// endpoint is the one place an open relay can cost real money: it is rate-limited
+// per IP, and if the ICE_SECRET binding is set, it additionally requires
+// ?k=<secret> on the request (clients put the secret in their stored ICE URL).
 const TURN_TTL_SECONDS = 86400;
+const ICE_LIMIT = 10; // mints per IP per window
+const ICE_WINDOW_MS = 60 * 60 * 1000;
+const PUSH_LIMIT = 120; // mailbox pushes per IP per window
+const PUSH_WINDOW_MS = 60 * 60 * 1000;
+const WS_EVENTS_LIMIT = 120; // broadcasts per connection per window
+const WS_EVENTS_WINDOW_MS = 60 * 1000;
+// Global mailbox row cap: kills the "unlimited recipients" storage-fill vector.
+// Oldest rows are evicted first — sync rebroadcasts, so nothing permanent is lost.
+const MAX_MAILBOX_ROWS = 4096;
+
+// Abuse damping, in-memory (resets on DO eviction: fine for damping, not for
+// correctness). Single-threaded DO, so no locking needed.
+const iceHits = new Map<string, number[]>();
+const pushHits = new Map<string, number[]>();
+
+/** Sliding-window limiter: records a hit for key, returns true if within limit. */
+function withinLimit(
+	map: Map<string, number[]>,
+	key: string,
+	limit: number,
+	windowMs: number,
+	now: number,
+): boolean {
+	const hits = (map.get(key) ?? []).filter((t) => now - t < windowMs);
+	if (hits.length >= limit) {
+		map.set(key, hits);
+		return false;
+	}
+	hits.push(now);
+	map.set(key, hits);
+	if (map.size > 10_000) {
+		// Bound the map itself: drop the oldest key entirely.
+		const first = map.keys().next().value;
+		if (first !== undefined) map.delete(first);
+	}
+	return true;
+}
 const CORS = {
 	"Access-Control-Allow-Origin": "*",
 	"Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -56,6 +96,9 @@ const CORS = {
 interface RelayEnv extends Env {
 	TURN_KEY_TOKEN_ID?: string;
 	TURN_KEY_API_TOKEN?: string;
+	/** Optional: when set, /ice-servers requires ?k=<secret> on the request.
+	 * Unset = open (self-host default), still rate-limited. */
+	ICE_SECRET?: string;
 }
 
 const jsonCors = (body: string, status = 200): Response =>
@@ -115,9 +158,12 @@ export class Relay extends DurableObject {
 	}
 
 	async fetch(req: Request): Promise<Response> {
-		// Non-WebSocket hits (health probe or mailbox API) get handled here.
+		// Non-WebSocket hits (health probe, mailbox or ICE API) get handled here.
 		if (req.headers.get("Upgrade") !== "websocket") {
 			const { pathname } = new URL(req.url);
+			if (pathname === "/ice-servers") {
+				return this.iceServers(req);
+			}
 			const mailbox = /^\/mailbox\/([^/]+)\/([^/]+)$/.exec(pathname);
 			if (mailbox) {
 				const [, room, recipient] = mailbox;
@@ -153,29 +199,76 @@ export class Relay extends DurableObject {
 		);
 	}
 
+	/** Mint short-lived TURN credentials. Rate-limited per IP; requires
+	 * ?k=ICE_SECRET when that secret is configured (unset = open, the
+	 * self-host default). TURN usage is metered, so this endpoint is the one
+	 * place abuse can cost real money. */
+	async iceServers(req: Request): Promise<Response> {
+		if (req.method === "OPTIONS") {
+			return new Response(null, { status: 204, headers: CORS });
+		}
+		if (req.method !== "POST") {
+			return new Response("method not allowed", { status: 405, headers: CORS });
+		}
+		const url = new URL(req.url);
+		const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
+		const secret = (this.env as RelayEnv).ICE_SECRET;
+		if (secret && url.searchParams.get("k") !== secret) {
+			return new Response("unauthorized", { status: 401 });
+		}
+		if (!withinLimit(iceHits, ip, ICE_LIMIT, ICE_WINDOW_MS, Date.now())) {
+			return jsonCors(JSON.stringify({ iceServers: [], error: "rate limited" }), 429);
+		}
+		return handleIceServers(this.env as RelayEnv);
+	}
+
 	#purgeExpired(now: number): void {
 		this.#ensureSchema();
 		this.ctx.storage.sql.exec("DELETE FROM mailbox WHERE created_at < ?", now - MAILBOX_TTL_MS);
 	}
 
 	async mailboxPush(room: string, recipient: string, req: Request): Promise<Response> {
-		this.#purgeExpired(Date.now());
+		const now = Date.now();
+		this.#purgeExpired(now);
+		const ip = req.headers.get("CF-Connecting-IP") ?? "unknown";
+		if (!withinLimit(pushHits, ip, PUSH_LIMIT, PUSH_WINDOW_MS, now)) {
+			return new Response("rate limited", { status: 429 });
+		}
 		const body = await req.text();
 		if (body.length > MAX_MAILBOX_ENVELOPE_BYTES) {
 			return new Response("envelope too large", { status: 413 });
 		}
-		const count = this.ctx.storage.sql
-			.exec("SELECT COUNT(*) AS n FROM mailbox WHERE room = ? AND recipient = ?", room, recipient)
+		// Per-queue cap: evict the OLDEST entry rather than rejecting. A spammer
+		// saturating a queue they know just gets their own junk dropped; legitimate
+		// mail (sent after their burst) still lands.
+		const overflow = this.ctx.storage.sql
+			.exec(
+				"SELECT seq FROM mailbox WHERE room = ? AND recipient = ? ORDER BY seq DESC LIMIT -1 OFFSET ?",
+				room,
+				recipient,
+				MAX_MAILBOX_PER_RECIPIENT - 1,
+			)
 			.toArray();
-		if ((count[0]?.n as number) >= MAX_MAILBOX_PER_RECIPIENT) {
-			return new Response("mailbox full", { status: 507 });
+		for (const r of overflow) {
+			this.ctx.storage.sql.exec("DELETE FROM mailbox WHERE seq = ?", r.seq as number);
+		}
+		// Global row cap: evict oldest rows across all queues, so the
+		// "unlimited recipients" storage-fill vector dies. Sync rebroadcasts, so
+		// evicted mail re-arrives.
+		const total = this.ctx.storage.sql.exec("SELECT COUNT(*) AS n FROM mailbox").toArray();
+		const over = ((total[0]?.n as number) ?? 0) - MAX_MAILBOX_ROWS;
+		if (over > 0) {
+			this.ctx.storage.sql.exec(
+				"DELETE FROM mailbox WHERE seq IN (SELECT seq FROM mailbox ORDER BY seq LIMIT ?)",
+				over,
+			);
 		}
 		this.ctx.storage.sql.exec(
 			"INSERT INTO mailbox (room, recipient, envelope, created_at) VALUES (?, ?, ?, ?)",
 			room,
 			recipient,
 			body,
-			Date.now(),
+			now,
 		);
 		return new Response(null, { status: 204 });
 	}
@@ -238,6 +331,21 @@ export class Relay extends DurableObject {
 					ws.send(JSON.stringify(["OK", event?.id ?? "", false, "only ephemeral kinds"]));
 					return;
 				}
+				// Per-connection broadcast limit: stored on the attachment so it
+				// survives hibernation. Exceeding it silently drops (the sender's
+				// periodic re-broadcast recovers); sustained abuse just gets ignored.
+				const rate = (ws.deserializeAttachment() as Subs & { __rate?: number[] }) ?? {};
+				const now = Date.now();
+				const hits = (rate.__rate ?? []).filter((t) => now - t < WS_EVENTS_WINDOW_MS);
+				if (hits.length >= WS_EVENTS_LIMIT) {
+					rate.__rate = hits;
+					ws.serializeAttachment(rate);
+					ws.send(JSON.stringify(["OK", event.id ?? "", false, "rate limited"]));
+					return;
+				}
+				hits.push(now);
+				rate.__rate = hits;
+				ws.serializeAttachment(rate);
 				// Fan out to every other socket's matching subscription; store nothing.
 				for (const peer of this.ctx.getWebSockets()) {
 					if (peer === ws) continue;
@@ -266,15 +374,8 @@ export default {
 			if (pathname.startsWith("/mailbox/")) {
 				return env.RELAY.getByName("relay").fetch(req);
 			}
-			if (pathname === "/ice-servers") {
-				switch (req.method) {
-					case "OPTIONS":
-						return new Response(null, { status: 204, headers: CORS });
-					case "POST":
-						return handleIceServers(env);
-					default:
-						return new Response("method not allowed", { status: 405, headers: CORS });
-				}
+			if (pathname === "/ice-servers" || pathname.startsWith("/mailbox/")) {
+				return env.RELAY.getByName("relay").fetch(req);
 			}
 			return new Response("bramble signaling relay", { status: 200 });
 		}
