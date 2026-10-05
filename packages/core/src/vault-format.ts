@@ -1,4 +1,9 @@
-// VLT1 v2 multi-key vault blob format. See docs/vault-format.md.
+// VLT vault blob format. See docs/vault-format.md.
+//
+// Structure: a registry of per-version codecs (`VaultFormat`). Adding a format
+// version = adding an entry to `FORMATS` with its own magic/version; the
+// first-version codec is never edited. Dispatch on the magic bytes happens in
+// `findFormat`, which owns the centralized unknown-magic rejection.
 
 import { z } from "zod";
 import { HlcSchema } from "./sync/hlc";
@@ -21,7 +26,6 @@ export const SLOT_KIND_PASSWORD = 0x01;
 export const SLOT_KIND_WEBAUTHN = 0x02;
 export const SLOT_KIND_RECOVERY = 0x03;
 
-const HEADER_FIXED_LEN = MAGIC.length + 1 + 1; // magic + version + slotCount
 const TLV_PREFIX_LEN = 1 + 2; // kind + len
 const PASSWORD_PAYLOAD_LEN = LEN_SLOT_ID + LEN_SALT + LEN_VERIFIER + LEN_WRAP_IV + LEN_WRAPPED_VEK;
 const WEBAUTHN_FIXED_LEN =
@@ -113,12 +117,182 @@ const VaultBlobSchema = z.object({
 });
 export type VaultBlob = z.infer<typeof VaultBlobSchema>;
 
-/** Magic+version bytes that bind a verifier to this format version. */
-export function verifierPrefix(): Uint8Array {
-	const out = new Uint8Array(MAGIC.length + 1);
-	out.set(MAGIC, 0);
-	out[MAGIC.length] = VERSION;
+/** One format version: how a vault maps to bytes and back.
+ * Adding a version = adding an entry to `FORMATS` below; nothing here is edited. */
+export interface VaultFormat {
+	/** Magic bytes that identify the format family. */
+	magic: Uint8Array;
+	/** Version byte that binds a verifier to this format version. */
+	versionByte: number;
+	/** Maximum slot count this version allows. */
+	maxSlots: number;
+	encode(blob: VaultBlob): Uint8Array;
+	decode(bytes: Uint8Array): VaultBlob;
+}
+
+/** Slice the five fixed-length fields shared by password and recovery slots. */
+function slicePasswordFields(payload: Uint8Array) {
+	let off = 0;
+	const slotId = payload.slice(off, off + LEN_SLOT_ID);
+	off += LEN_SLOT_ID;
+	const salt = payload.slice(off, off + LEN_SALT);
+	off += LEN_SALT;
+	const verifier = payload.slice(off, off + LEN_VERIFIER);
+	off += LEN_VERIFIER;
+	const wrapIv = payload.slice(off, off + LEN_WRAP_IV);
+	off += LEN_WRAP_IV;
+	const wrappedVek = payload.slice(off, off + LEN_WRAPPED_VEK);
+	return { slotId, salt, verifier, wrapIv, wrappedVek };
+}
+
+/** Serialize a vault's slots + entries under the given format's header.
+ * Shared by every version; per-version code only supplies the header constants. */
+export function encodeVaultBlobWithFormat(fmt: VaultFormat, blob: VaultBlob): Uint8Array {
+	const v = VaultBlobSchema.parse(blob);
+
+	const slotPayloads = v.slots.map(encodeSlotPayload);
+	let totalSlotsLen = 0;
+	for (const payload of slotPayloads) {
+		if (payload.length > 0xffff) {
+			throw new Error(`slot payload too large (${payload.length} bytes, max 65535)`);
+		}
+		totalSlotsLen += TLV_PREFIX_LEN + payload.length;
+	}
+
+	const out = new Uint8Array(
+		fmt.magic.length + 2 + totalSlotsLen + LEN_IV + v.entriesCiphertext.length,
+	);
+	let off = 0;
+	out.set(fmt.magic, off);
+	off += fmt.magic.length;
+	out[off++] = fmt.versionByte;
+	out[off++] = v.slots.length;
+	for (let i = 0; i < v.slots.length; i++) {
+		const slot = v.slots[i]!;
+		const payload = slotPayloads[i]!;
+		out[off++] = slot.kind;
+		out[off++] = (payload.length >> 8) & 0xff;
+		out[off++] = payload.length & 0xff;
+		out.set(payload, off);
+		off += payload.length;
+	}
+	out.set(v.entriesIv, off);
+	off += LEN_IV;
+	out.set(v.entriesCiphertext, off);
 	return out;
+}
+
+/** Parse a blob under the given format, preserving unknown slot kinds.
+ * Bounds checks guard the untrusted byte stream. The version check is owned
+ * here (per format), so dispatch only needs to resolve the magic bytes. */
+export function decodeVaultBlobWithFormat(fmt: VaultFormat, bytes: Uint8Array): VaultBlob {
+	const headerLen = fmt.magic.length + 2; // magic + version + slotCount
+	if (bytes.length < headerLen) {
+		throw new Error(`vault blob too short: ${bytes.length} bytes (need at least ${headerLen})`);
+	}
+
+	for (let i = 0; i < fmt.magic.length; i++) {
+		if (bytes[i] !== fmt.magic[i]) {
+			throw new Error("invalid vault magic bytes (not a VLT file)");
+		}
+	}
+
+	const version = bytes[fmt.magic.length];
+	if (version !== fmt.versionByte) {
+		throw new Error(`unsupported vault version: ${version} (expected ${fmt.versionByte})`);
+	}
+
+	const slotCount = bytes[fmt.magic.length + 1]!;
+	if (slotCount === 0) {
+		throw new Error("vault has no slots");
+	}
+	if (slotCount > fmt.maxSlots) {
+		throw new Error(`vault has ${slotCount} slots (max ${fmt.maxSlots})`);
+	}
+
+	const slots: Slot[] = [];
+	let off = headerLen;
+	for (let i = 0; i < slotCount; i++) {
+		if (off + TLV_PREFIX_LEN > bytes.length) {
+			throw new Error(`slot ${i} truncated (header overruns blob)`);
+		}
+		const kind = bytes[off++]!;
+		const len = ((bytes[off]! << 8) | bytes[off + 1]!) & 0xffff;
+		off += 2;
+		if (off + len > bytes.length) {
+			throw new Error(`slot ${i} truncated (payload overruns blob)`);
+		}
+		const payload = bytes.slice(off, off + len);
+		off += len;
+		slots.push(decodeSlotPayload(kind, payload));
+	}
+
+	if (off + LEN_IV > bytes.length) {
+		throw new Error("vault blob truncated (entries IV overruns blob)");
+	}
+	const entriesIv = bytes.slice(off, off + LEN_IV);
+	off += LEN_IV;
+	const entriesCiphertext = bytes.slice(off);
+
+	return { slots, entriesIv, entriesCiphertext };
+}
+
+/** Magic+version bytes that bind a verifier to the given format version. */
+export function verifierPrefixFor(fmt: VaultFormat): Uint8Array {
+	const out = new Uint8Array(fmt.magic.length + 1);
+	out.set(fmt.magic, 0);
+	out[fmt.magic.length] = fmt.versionByte;
+	return out;
+}
+
+/** The registered first version of the VLT format. */
+export const VLT1: VaultFormat = {
+	magic: MAGIC,
+	versionByte: VERSION,
+	maxSlots: MAX_SLOTS,
+	encode: (blob) => encodeVaultBlobWithFormat(VLT1, blob),
+	decode: (bytes) => decodeVaultBlobWithFormat(VLT1, bytes),
+};
+
+/** All registered format versions, in dispatch order. Adding a version appends here. */
+const FORMATS: VaultFormat[] = [VLT1];
+
+const MIN_DISPATCH_LEN = 4 + 2; // longest magic among versions + version + slotCount
+
+/** Resolve the format version from a blob's magic bytes.
+ * Centralized rejection: unknown magic fails here, once, with one message. */
+export function findFormat(bytes: Uint8Array): VaultFormat {
+	if (bytes.length < MIN_DISPATCH_LEN) {
+		throw new Error(
+			`vault blob too short: ${bytes.length} bytes (need at least ${MIN_DISPATCH_LEN})`,
+		);
+	}
+	for (const fmt of FORMATS) {
+		let match = true;
+		for (let i = 0; i < fmt.magic.length; i++) {
+			if (bytes[i] !== fmt.magic[i]) {
+				match = false;
+				break;
+			}
+		}
+		if (match) return fmt;
+	}
+	throw new Error("invalid vault magic bytes (not a VLT file)");
+}
+
+/** Serialize a vault to the current format version's byte layout. */
+export function encodeVaultBlob(blob: VaultBlob): Uint8Array {
+	return VLT1.encode(blob);
+}
+
+/** Parse a vault blob, dispatching on the magic bytes to the right version. */
+export function decodeVaultBlob(bytes: Uint8Array): VaultBlob {
+	return findFormat(bytes).decode(bytes);
+}
+
+/** Magic+version bytes that bind a verifier to the current format version. */
+export function verifierPrefix(): Uint8Array {
+	return verifierPrefixFor(VLT1);
 }
 
 function encodePasswordPayload(slot: PasswordSlot | RecoverySlot): Uint8Array {
@@ -162,21 +336,6 @@ function encodeSlotPayload(slot: Slot): Uint8Array {
 	if (slot.kind === SLOT_KIND_WEBAUTHN) return encodeWebauthnPayload(slot as WebauthnSlot);
 	if (slot.kind === SLOT_KIND_RECOVERY) return encodePasswordPayload(slot as RecoverySlot);
 	return (slot as OpaqueSlot).payload;
-}
-
-/** Slice the five fixed-length fields shared by password and recovery slots. */
-function slicePasswordFields(payload: Uint8Array) {
-	let off = 0;
-	const slotId = payload.slice(off, off + LEN_SLOT_ID);
-	off += LEN_SLOT_ID;
-	const salt = payload.slice(off, off + LEN_SALT);
-	off += LEN_SALT;
-	const verifier = payload.slice(off, off + LEN_VERIFIER);
-	off += LEN_VERIFIER;
-	const wrapIv = payload.slice(off, off + LEN_WRAP_IV);
-	off += LEN_WRAP_IV;
-	const wrappedVek = payload.slice(off, off + LEN_WRAPPED_VEK);
-	return { slotId, salt, verifier, wrapIv, wrappedVek };
 }
 
 function decodeWebauthnPayload(payload: Uint8Array): WebauthnSlot {
@@ -224,96 +383,6 @@ function decodeSlotPayload(kind: number, payload: Uint8Array): Slot {
 		return RecoverySlotSchema.parse({ kind, ...slicePasswordFields(payload) });
 	}
 	return { kind, payload };
-}
-
-/** Serialize a vault to the VLT1 v2 byte layout. */
-export function encodeVaultBlob(blob: VaultBlob): Uint8Array {
-	const v = VaultBlobSchema.parse(blob);
-
-	const slotPayloads = v.slots.map(encodeSlotPayload);
-	let totalSlotsLen = 0;
-	for (const payload of slotPayloads) {
-		if (payload.length > 0xffff) {
-			throw new Error(`slot payload too large (${payload.length} bytes, max 65535)`);
-		}
-		totalSlotsLen += TLV_PREFIX_LEN + payload.length;
-	}
-
-	const out = new Uint8Array(
-		HEADER_FIXED_LEN + totalSlotsLen + LEN_IV + v.entriesCiphertext.length,
-	);
-	let off = 0;
-	out.set(MAGIC, off);
-	off += MAGIC.length;
-	out[off++] = VERSION;
-	out[off++] = v.slots.length;
-	for (let i = 0; i < v.slots.length; i++) {
-		const slot = v.slots[i]!;
-		const payload = slotPayloads[i]!;
-		out[off++] = slot.kind;
-		out[off++] = (payload.length >> 8) & 0xff;
-		out[off++] = payload.length & 0xff;
-		out.set(payload, off);
-		off += payload.length;
-	}
-	out.set(v.entriesIv, off);
-	off += LEN_IV;
-	out.set(v.entriesCiphertext, off);
-	return out;
-}
-
-/** Parse a VLT1 v2 blob, preserving unknown slot kinds. Bounds checks guard the untrusted byte stream. */
-export function decodeVaultBlob(bytes: Uint8Array): VaultBlob {
-	if (bytes.length < HEADER_FIXED_LEN) {
-		throw new Error(
-			`vault blob too short: ${bytes.length} bytes (need at least ${HEADER_FIXED_LEN})`,
-		);
-	}
-
-	for (let i = 0; i < MAGIC.length; i++) {
-		if (bytes[i] !== MAGIC[i]) {
-			throw new Error("invalid vault magic bytes (not a VLT1 file)");
-		}
-	}
-
-	const version = bytes[MAGIC.length];
-	if (version !== VERSION) {
-		throw new Error(`unsupported vault version: ${version} (expected ${VERSION})`);
-	}
-
-	const slotCount = bytes[MAGIC.length + 1]!;
-	if (slotCount === 0) {
-		throw new Error("vault has no slots");
-	}
-	if (slotCount > MAX_SLOTS) {
-		throw new Error(`vault has ${slotCount} slots (max ${MAX_SLOTS})`);
-	}
-
-	const slots: Slot[] = [];
-	let off = HEADER_FIXED_LEN;
-	for (let i = 0; i < slotCount; i++) {
-		if (off + TLV_PREFIX_LEN > bytes.length) {
-			throw new Error(`slot ${i} truncated (header overruns blob)`);
-		}
-		const kind = bytes[off++]!;
-		const len = ((bytes[off]! << 8) | bytes[off + 1]!) & 0xffff;
-		off += 2;
-		if (off + len > bytes.length) {
-			throw new Error(`slot ${i} truncated (payload overruns blob)`);
-		}
-		const payload = bytes.slice(off, off + len);
-		off += len;
-		slots.push(decodeSlotPayload(kind, payload));
-	}
-
-	if (off + LEN_IV > bytes.length) {
-		throw new Error("vault blob truncated (entries IV overruns blob)");
-	}
-	const entriesIv = bytes.slice(off, off + LEN_IV);
-	off += LEN_IV;
-	const entriesCiphertext = bytes.slice(off);
-
-	return { slots, entriesIv, entriesCiphertext };
 }
 
 /** The vault's password slot, or null if none. */
