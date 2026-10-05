@@ -19,6 +19,11 @@ export const LEN_SLOT_ID = 16;
 export const LEN_WRAP_IV = 12;
 // 32-byte VEK + 16-byte GCM tag.
 export const LEN_WRAPPED_VEK = 48;
+// Sharing layer (ADR-0001): a 32-byte sharing/collection key + 16-byte GCM tag.
+// Same length as the VEK wrap; a distinct name so the sharing key can never be
+// accidentally treated as the vault key.
+export const LEN_SHARING_KEY = 32;
+export const LEN_WRAPPED_KEY = 48;
 // WebAuthn `hmac-secret` requires a 32-byte salt (CTAP2 spec).
 export const LEN_HMAC_SECRET_SALT = 32;
 
@@ -254,10 +259,339 @@ export const VLT1: VaultFormat = {
 	decode: (bytes) => decodeVaultBlobWithFormat(VLT1, bytes),
 };
 
+// ---------------------------------------------------------------------------
+// VLT2: the sharing-enabled format (ADR-0001/0002/0003/0007).
+//
+// Sharing adds three things to the container, as an additive layer over the
+// VLT1 structure: outer records wrapping a random sharing key (SHK) for the
+// owner (under the vault key) and each member (under that member's key); a
+// sharing region encrypted under the SHK, readable by everyone who holds the
+// SHK; and nothing else — the slots and the outer entries blob keep the VLT1
+// roles. A member's device encrypts the outer entries blob under the key its
+// own slots provide (a member key), so the container stays one shape.
+//
+// The region carries only what the sharing layer needs: the minimal index
+// (existence + stamps + tombstones for every entry — no content), collections
+// with labels sealed under their collection key, per-entry wrapper records
+// (the entry's DEK wrapped under a collection key), and member records.
+// ---------------------------------------------------------------------------
+
+export const VLT2_MAGIC = new Uint8Array([0x56, 0x4c, 0x54, 0x32]);
+export const VLT2_VERSION = 0x01;
+
+/** Outer record: the SHK wrapped for the owner (under the vault key). */
+export const SHARING_WRAP_KIND_VEK = 0x01;
+/** Outer record: the SHK wrapped for one member (under that member's key). */
+export const SHARING_WRAP_KIND_MEMBER = 0x02;
+
+/** A copy of the sharing key wrapped for one reader. Lives OUTSIDE the region:
+ * a member needs it to read the region, so it cannot live inside it. */
+const SharingWrapSchema = z.discriminatedUnion("kind", [
+	z.object({
+		kind: z.literal(SHARING_WRAP_KIND_VEK),
+		iv: bytes(LEN_IV, "iv"),
+		wrappedShk: bytes(LEN_WRAPPED_VEK, "wrappedShk"),
+	}),
+	z.object({
+		kind: z.literal(SHARING_WRAP_KIND_MEMBER),
+		memberId: z.string().min(1),
+		iv: bytes(LEN_IV, "iv"),
+		wrappedShk: bytes(LEN_WRAPPED_VEK, "wrappedShk"),
+	}),
+]);
+export type SharingWrap = z.infer<typeof SharingWrapSchema>;
+
+/** Minimal index record: existence, stamp, tombstone. No content, ever. */
+const RegionIndexEntrySchema = z.object({
+	id: z.string().min(1),
+	hlc: HlcSchema,
+	deleted: z.boolean(),
+});
+export type RegionIndexEntry = z.infer<typeof RegionIndexEntrySchema>;
+
+/** A collection: label sealed under the collection key, membership by member id. */
+const RegionCollectionSchema = z.object({
+	id: z.string().min(1),
+	labelIv: z.string(),
+	labelCiphertext: z.string(),
+	memberIds: z.array(z.string().min(1)),
+});
+export type RegionCollection = z.infer<typeof RegionCollectionSchema>;
+
+/** The entry's DEK wrapped under a collection's key. Travels with the sharing
+ * layer, so a member can open the entry without ever seeing the vault key. */
+const RegionWrapperSchema = z.object({
+	entryId: z.string().min(1),
+	collectionId: z.string().min(1),
+	dekIv: z.string(),
+	wrappedDek: z.string(),
+});
+export type RegionWrapper = z.infer<typeof RegionWrapperSchema>;
+
+/** A member: person-level X25519 key (base64), attested by device keys per ADR-0002. */
+const RegionMemberSchema = z.object({
+	id: z.string().min(1),
+	publicKey: z.string().min(1),
+	/** Ed25519 device-key signature binding this member key (base64). Optional
+	 * through the rollout, like roster signatures. */
+	attestation: z.string().min(1).optional(),
+});
+export type RegionMember = z.infer<typeof RegionMemberSchema>;
+
+/** The sharing region: the plaintext JSON inside `regionCiphertext`. Encrypted
+ * under the SHK, so it is ciphertext at rest like everything else. */
+export const SharingRegionSchema = z.object({
+	index: z.array(RegionIndexEntrySchema),
+	collections: z.array(RegionCollectionSchema),
+	wrappers: z.array(RegionWrapperSchema),
+	members: z.array(RegionMemberSchema),
+});
+export type SharingRegion = z.infer<typeof SharingRegionSchema>;
+
+export function emptySharingRegion(): SharingRegion {
+	return { index: [], collections: [], wrappers: [], members: [] };
+}
+
+/** A decoded VLT2 vault: the VLT1 fields plus the sharing layer. */
+const Vlt2BlobSchema = VaultBlobSchema.extend({
+	sharingWraps: z.array(SharingWrapSchema),
+	regionIv: bytes(LEN_IV, "regionIv"),
+	regionCiphertext: u8,
+});
+export type Vlt2Blob = z.infer<typeof Vlt2BlobSchema>;
+
+const sharingWrapCountLen = 1; // uint8, wraps fit in one byte at member scale
+const wrapFixedLen = LEN_IV + LEN_WRAPPED_VEK;
+
+function encodeSharingWrap(wrap: SharingWrap): Uint8Array {
+	const memberIdBytes =
+		wrap.kind === SHARING_WRAP_KIND_MEMBER ? utf8Bytes(wrap.memberId) : new Uint8Array(0);
+	if (memberIdBytes.length > 0xff) throw new Error("member id too long");
+	const payload = new Uint8Array(
+		(wrap.kind === SHARING_WRAP_KIND_MEMBER ? 1 : 0) + memberIdBytes.length + wrapFixedLen,
+	);
+	let off = 0;
+	if (wrap.kind === SHARING_WRAP_KIND_MEMBER) {
+		payload[off++] = memberIdBytes.length;
+		payload.set(memberIdBytes, off);
+		off += memberIdBytes.length;
+	}
+	payload.set(wrap.iv, off);
+	off += LEN_IV;
+	payload.set(wrap.wrappedShk, off);
+	return payload;
+}
+
+function decodeSharingWrap(kind: number, payload: Uint8Array): SharingWrap {
+	if (kind === SHARING_WRAP_KIND_VEK) {
+		if (payload.length !== wrapFixedLen) {
+			throw new Error(`sharing wrap (owner) payload length mismatch: ${payload.length}`);
+		}
+		return SharingWrapSchema.parse({
+			kind,
+			iv: payload.slice(0, LEN_IV),
+			wrappedShk: payload.slice(LEN_IV),
+		});
+	}
+	if (kind === SHARING_WRAP_KIND_MEMBER) {
+		if (payload.length < 1 + wrapFixedLen) {
+			throw new Error(`sharing wrap (member) payload too short: ${payload.length}`);
+		}
+		const memberIdLen = payload[0]!;
+		if (1 + memberIdLen + wrapFixedLen !== payload.length) {
+			throw new Error(`sharing wrap (member) payload length mismatch (memberIdLen=${memberIdLen})`);
+		}
+		const decoder = new TextDecoder();
+		return SharingWrapSchema.parse({
+			kind,
+			memberId: decoder.decode(payload.slice(1, 1 + memberIdLen)),
+			iv: payload.slice(1 + memberIdLen, 1 + memberIdLen + LEN_IV),
+			wrappedShk: payload.slice(1 + memberIdLen + LEN_IV),
+		});
+	}
+	throw new Error(`unknown sharing wrap kind: ${kind}`);
+}
+
+function utf8Bytes(s: string): Uint8Array {
+	return new TextEncoder().encode(s);
+}
+
+/** Serialize a VLT2 vault. The outer entries blob keeps the VLT1 role; the
+ * sharing wraps and the region are additive trailing structures. */
+function encodeVlt2(blob: Vlt2Blob): Uint8Array {
+	const v = Vlt2BlobSchema.parse(blob);
+
+	const slotPayloads = v.slots.map(encodeSlotPayload);
+	let totalSlotsLen = 0;
+	for (const payload of slotPayloads) {
+		if (payload.length > 0xffff) {
+			throw new Error(`slot payload too large (${payload.length} bytes, max 65535)`);
+		}
+		totalSlotsLen += TLV_PREFIX_LEN + payload.length;
+	}
+	if (v.sharingWraps.length > 0xff) throw new Error("too many sharing wraps");
+
+	const wrapPayloads = v.sharingWraps.map(encodeSharingWrap);
+	let totalWrapsLen = 0;
+	for (const payload of wrapPayloads) {
+		if (payload.length > 0xffff) {
+			throw new Error(`sharing wrap payload too large (${payload.length} bytes, max 65535)`);
+		}
+		totalWrapsLen += TLV_PREFIX_LEN + payload.length;
+	}
+
+	const entriesLen = LEN_IV + v.entriesCiphertext.length;
+	if (entriesLen > 0xffffffff) throw new Error("entries blob too large");
+
+	const headerLen = VLT2_MAGIC.length + 2 + sharingWrapCountLen;
+	const out = new Uint8Array(
+		headerLen + totalSlotsLen + totalWrapsLen + 4 + entriesLen + LEN_IV + v.regionCiphertext.length,
+	);
+	let off = 0;
+	out.set(VLT2_MAGIC, off);
+	off += VLT2_MAGIC.length;
+	out[off++] = VLT2_VERSION;
+	out[off++] = v.slots.length;
+	out[off++] = v.sharingWraps.length;
+	for (let i = 0; i < v.slots.length; i++) {
+		const slot = v.slots[i]!;
+		const payload = slotPayloads[i]!;
+		out[off++] = slot.kind;
+		out[off++] = (payload.length >> 8) & 0xff;
+		out[off++] = payload.length & 0xff;
+		out.set(payload, off);
+		off += payload.length;
+	}
+	for (let i = 0; i < v.sharingWraps.length; i++) {
+		const wrap = v.sharingWraps[i]!;
+		const payload = wrapPayloads[i]!;
+		out[off++] = wrap.kind;
+		out[off++] = (payload.length >> 8) & 0xff;
+		out[off++] = payload.length & 0xff;
+		out.set(payload, off);
+		off += payload.length;
+	}
+	const entriesLenBe = new DataView(new ArrayBuffer(4));
+	entriesLenBe.setUint32(0, entriesLen);
+	out.set(new Uint8Array(entriesLenBe.buffer), off);
+	off += 4;
+	out.set(v.entriesIv, off);
+	off += LEN_IV;
+	out.set(v.entriesCiphertext, off);
+	off += v.entriesCiphertext.length;
+	out.set(v.regionIv, off);
+	off += LEN_IV;
+	out.set(v.regionCiphertext, off);
+	return out;
+}
+
+/** Parse a VLT2 vault. Bounds checks guard the untrusted byte stream. */
+function decodeVlt2(bytes: Uint8Array): Vlt2Blob {
+	const headerLen = VLT2_MAGIC.length + 2 + sharingWrapCountLen;
+	if (bytes.length < headerLen) {
+		throw new Error(`vault blob too short: ${bytes.length} bytes (need at least ${headerLen})`);
+	}
+
+	const version = bytes[VLT2_MAGIC.length];
+	if (version !== VLT2_VERSION) {
+		throw new Error(`unsupported vault version: ${version} (expected ${VLT2_VERSION})`);
+	}
+
+	const slotCount = bytes[VLT2_MAGIC.length + 1]!;
+	if (slotCount === 0) {
+		throw new Error("vault has no slots");
+	}
+	if (slotCount > MAX_SLOTS) {
+		throw new Error(`vault has ${slotCount} slots (max ${MAX_SLOTS})`);
+	}
+
+	let off = VLT2_MAGIC.length + 2;
+	const sharingWrapCount = bytes[off++]!;
+	const slots: Slot[] = [];
+	for (let i = 0; i < slotCount; i++) {
+		if (off + TLV_PREFIX_LEN > bytes.length) {
+			throw new Error(`slot ${i} truncated (header overruns blob)`);
+		}
+		const kind = bytes[off++]!;
+		const len = ((bytes[off]! << 8) | bytes[off + 1]!) & 0xffff;
+		off += 2;
+		if (off + len > bytes.length) {
+			throw new Error(`slot ${i} truncated (payload overruns blob)`);
+		}
+		slots.push(decodeSlotPayload(kind, bytes.slice(off, off + len)));
+		off += len;
+	}
+	const sharingWraps: SharingWrap[] = [];
+	for (let i = 0; i < sharingWrapCount; i++) {
+		if (off + TLV_PREFIX_LEN > bytes.length) {
+			throw new Error(`sharing wrap ${i} truncated (header overruns blob)`);
+		}
+		const kind = bytes[off++]!;
+		const len = ((bytes[off]! << 8) | bytes[off + 1]!) & 0xffff;
+		off += 2;
+		if (off + len > bytes.length) {
+			throw new Error(`sharing wrap ${i} truncated (payload overruns blob)`);
+		}
+		sharingWraps.push(decodeSharingWrap(kind, bytes.slice(off, off + len)));
+		off += len;
+	}
+
+	if (off + 4 > bytes.length) {
+		throw new Error("vault blob truncated (entries length overruns blob)");
+	}
+	const entriesLen = new DataView(bytes.buffer, bytes.byteOffset + off, 4).getUint32(0);
+	off += 4;
+	if (entriesLen < LEN_IV || off + entriesLen > bytes.length) {
+		throw new Error(
+			`entries blob length invalid: ${entriesLen} (blob has ${bytes.length - off} bytes left)`,
+		);
+	}
+	const entriesIv = bytes.slice(off, off + LEN_IV);
+	off += LEN_IV;
+	const entriesCiphertext = bytes.slice(off, off + entriesLen - LEN_IV);
+	off += entriesLen - LEN_IV;
+
+	if (off + LEN_IV > bytes.length) {
+		throw new Error("vault blob truncated (region IV overruns blob)");
+	}
+	const regionIv = bytes.slice(off, off + LEN_IV);
+	off += LEN_IV;
+	const regionCiphertext = bytes.slice(off);
+
+	return Vlt2BlobSchema.parse({
+		slots,
+		sharingWraps,
+		entriesIv,
+		entriesCiphertext,
+		regionIv,
+		regionCiphertext,
+	});
+}
+
+/** The registered sharing-enabled version (ADR-0007). */
+export const VLT2: VaultFormat = {
+	magic: VLT2_MAGIC,
+	versionByte: VLT2_VERSION,
+	maxSlots: MAX_SLOTS,
+	encode: (blob) => encodeVlt2(blob as Vlt2Blob),
+	decode: (bytes) => decodeVlt2(bytes),
+};
+
 /** All registered format versions, in dispatch order. Adding a version appends here. */
-const FORMATS: VaultFormat[] = [VLT1];
+const FORMATS: VaultFormat[] = [VLT1, VLT2];
 
 const MIN_DISPATCH_LEN = 4 + 2; // longest magic among versions + version + slotCount
+/** The first three magic bytes identify the VLT family: a build that knows no
+ * matching version can still say "newer app required" instead of "not a vault". */
+const VLT_FAMILY_PREFIX = new Uint8Array([0x56, 0x4c, 0x54]);
+
+function magicMatches(fmt: VaultFormat, bytes: Uint8Array): boolean {
+	if (bytes.length < fmt.magic.length) return false;
+	for (let i = 0; i < fmt.magic.length; i++) {
+		if (bytes[i] !== fmt.magic[i]) return false;
+	}
+	return true;
+}
 
 /** Resolve the format version from a blob's magic bytes.
  * Centralized rejection: unknown magic fails here, once, with one message. */
@@ -268,26 +602,46 @@ export function findFormat(bytes: Uint8Array): VaultFormat {
 		);
 	}
 	for (const fmt of FORMATS) {
-		let match = true;
-		for (let i = 0; i < fmt.magic.length; i++) {
-			if (bytes[i] !== fmt.magic[i]) {
-				match = false;
-				break;
-			}
-		}
-		if (match) return fmt;
+		if (magicMatches(fmt, bytes)) return fmt;
+	}
+	if (
+		magicMatches(
+			{
+				magic: VLT_FAMILY_PREFIX,
+				versionByte: 0,
+				maxSlots: 0,
+				encode: () => new Uint8Array(0),
+				decode: () => {
+					throw new Error("unreachable");
+				},
+			},
+			bytes,
+		)
+	) {
+		throw new Error("sharing-enabled vault requires a newer version of the app");
 	}
 	throw new Error("invalid vault magic bytes (not a VLT file)");
 }
 
-/** Serialize a vault to the current format version's byte layout. */
+/** A decoded vault with its format tag, so sharing-aware callers can narrow. */
+export type DecodedVault = { format: "vlt1"; blob: VaultBlob } | { format: "vlt2"; blob: Vlt2Blob };
+
+/** Serialize a vault to the first version's byte layout (the default for new vaults). */
 export function encodeVaultBlob(blob: VaultBlob): Uint8Array {
 	return VLT1.encode(blob);
 }
 
 /** Parse a vault blob, dispatching on the magic bytes to the right version. */
+export function decodeVault(bytes: Uint8Array): DecodedVault {
+	const fmt = findFormat(bytes);
+	return fmt === VLT2
+		? { format: "vlt2", blob: fmt.decode(bytes) as Vlt2Blob }
+		: { format: "vlt1", blob: fmt.decode(bytes) };
+}
+
+/** Parse a vault blob to the base fields (shared by every version). */
 export function decodeVaultBlob(bytes: Uint8Array): VaultBlob {
-	return findFormat(bytes).decode(bytes);
+	return decodeVault(bytes).blob;
 }
 
 /** Magic+version bytes that bind a verifier to the current format version. */
