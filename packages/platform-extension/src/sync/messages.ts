@@ -70,6 +70,15 @@ export const EnrollJoinMsgSchema = z.object({
 	inviterPub: z.string(),
 	ownEntry: RosterEntrySchema,
 	password: z.string().optional(),
+	/** MEMBER JOIN (v2): the joining device's generated key material; the offscreen
+	 * host processes the member bundle and rebuilds the vault from it. */
+	memberJoin: z
+		.object({
+			memberPubB64: z.string(),
+			memberPrivateKey: z.string(),
+			memberMasterKeyB64: z.string(),
+		})
+		.optional(),
 });
 
 /** offscreen -> background: a peer's entries payload (JSON) to merge locally. */

@@ -21,6 +21,7 @@ import {
 } from "../sync";
 import { base64ToBytes, bytesToBase64 } from "../util/bytes";
 import { defaultDeviceLabel } from "../util/device-label";
+import { generateKey, generateMemberKeypair } from "../vault/sharing-crypto";
 import {
 	findPasswordSlot,
 	findRecoverySlots,
@@ -84,6 +85,9 @@ export interface SyncEnrollmentDeps {
 }
 
 type SyncEnrollment = Pick<UseVault, "inviteDevice" | "joinGroup" | "removeDevice"> & {
+	/** MEMBER JOIN (v2): join a shared vault as a family member with this device's own
+	 * password and key material. See docs/adr/0002 and the member invite module. */
+	joinAsMember: (pairingCode: string, password: string) => Promise<void>;
 	/** Phase-1 migration backfill; internal, not part of the public vault API. */
 	ensureOwnEntrySigned: () => Promise<void>;
 };
@@ -408,6 +412,84 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 		[shell, storage, syncKey, ensureClock, rotateDeviceId, unlock],
 	);
 
+	// Join as a MEMBER (v2): same pairing-code ceremony, but this device generates its
+	// own key material (the member keypair and a member master key) and the inviter's
+	// bundle carries seals to the public key instead of the vault key. The offscreen
+	// host rebuilds the member vault (member slot wrapping the master key under this
+	// device's new password, member secrets, sharing layer, shared entries), and the
+	// post-join steps are identical to a device join.
+	const joinAsMember = useCallback(
+		async (pairingCode: string, password: string): Promise<void> => {
+			const code = decodePairingCode(pairingCode.trim());
+			if (pairingCodeExpired(code)) {
+				throw new Error("That pairing code has expired. Generate a new one and try again.");
+			}
+			await rotateDeviceId();
+			const ownPub = await shell.syncDevicePublicKey();
+			const clock = await ensureClock();
+			const hlc = clock.send();
+			const ownEntry = await signOwnEntry(shell, {
+				id: hlc.node,
+				publicKey: ownPub,
+				label: shell.deviceLabel?.() ?? defaultDeviceLabel(),
+				addedAt: Date.now(),
+				hlc,
+			});
+			// Fresh member key material, generated on this device and never shared.
+			const keypair = await generateMemberKeypair();
+			const memberMasterKeyB64 = await generateKey();
+
+			const joined = new Promise<{ vaultBlobB64: string; roster: RosterPayload }>(
+				(resolve, reject) => {
+					const off = shell.onSyncEvent((ev) => {
+						if (ev.kind === "joined" && ev.vaultBlobB64 && ev.roster) {
+							off();
+							resolve({ vaultBlobB64: ev.vaultBlobB64, roster: ev.roster });
+						} else if (ev.kind === "join-error") {
+							off();
+							reject(new Error(ev.message || "Join failed."));
+						}
+					});
+				},
+			);
+			await shell.startEnrollJoin({
+				relayUrl: code.relay,
+				iceUrl: code.iceUrl,
+				groupKeyB64: code.groupKey,
+				psk: code.psk,
+				inviterPub: code.inviterPub,
+				ownEntry,
+				password,
+				memberJoin: {
+					memberPubB64: keypair.publicKey,
+					memberPrivateKey: keypair.privateKey,
+					memberMasterKeyB64,
+				},
+			});
+			let vaultBlobB64: string;
+			let roster: RosterPayload;
+			try {
+				({ vaultBlobB64, roster } = await joined);
+			} catch (e) {
+				await shell.stopSyncSpike().catch(() => {});
+				throw e;
+			}
+			await storage.writeVaultBlob(base64ToBytes(vaultBlobB64));
+			await storage.setMeta(syncKey("sync.group"), {
+				groupKey: code.groupKey,
+				roster: addDevice(roster, ownEntry),
+			});
+			await storage.setMeta("sync.relay", code.relay);
+			await storage.setMeta("sync.iceUrl", code.iceUrl ?? "");
+			await shell.stopSyncSpike();
+
+			// Unlock with the member's own password: the member slot wraps the member
+			// master key, so the generic unlock path works unchanged.
+			await unlock(password);
+		},
+		[shell, storage, syncKey, ensureClock, rotateDeviceId, unlock],
+	);
+
 	// Revoke a device: a roster tombstone that ongoing sync gossips to peers (so it
 	// drops everywhere), then propagates back. Not a remote wipe — see docs/p2p-sync.md.
 	const removeDevice = useCallback(
@@ -425,5 +507,5 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 		[storage, syncKey, ensureClock],
 	);
 
-	return { inviteDevice, joinGroup, removeDevice, ensureOwnEntrySigned };
+	return { inviteDevice, joinGroup, joinAsMember, removeDevice, ensureOwnEntrySigned };
 }

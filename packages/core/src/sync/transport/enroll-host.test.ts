@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { base64ToBytes, bytesToBase64 } from "../../util/bytes";
-import { decodeVaultBlob, findRecoverySlots } from "../../vault-format";
+import { encodeMemberInviteBundle, type MemberInviteBundle } from "../../vault/member-invite";
+import { generateKey, generateMemberKeypair, sealToMemberKey } from "../../vault/sharing-crypto";
+import {
+	decodeVaultBlob,
+	findRecoverySlots,
+	SHARING_WRAP_KIND_MEMBER,
+	type SharingRegion,
+	SLOT_KIND_MEMBER_PASSWORD,
+} from "../../vault-format";
 import { encodeEnrollmentBundle, INVITE_TTL_MS, type WireRecoverySlot } from "../enrollment";
 import { emptyEntriesPayload } from "../entries-payload";
 import { pairingSas } from "../pairing-sas";
@@ -565,19 +573,71 @@ describe("invite lifecycle — single use + bounded waits", () => {
 		expect(onEnrolled).not.toHaveBeenCalled();
 	});
 
-	it("member join: the joiner hands the bundle to the host callback without adopting a VEK", async () => {
+	it("member join: the joiner rebuilds a member vault and fires onJoined without adopting a VEK", async () => {
 		const unlock = vi.fn();
-		const onBundle = vi.fn();
+		const onJoined = vi.fn();
 		const wasm = mockWasm({ unlock_with_vek: unlock });
-		const memberBundle = JSON.stringify({ memberId: "dad", memberPubKey: "member-pub" });
+		// A real member bundle, built with the real crypto: seals the sharing key
+		// to the joiner's public key so the rebuild can actually open it.
+		const joinerKeypair = await generateMemberKeypair();
+		const material = await makeMemberBundle(joinerKeypair.publicKey);
 		await receiveBundle(
-			joinerOpts(wasm, { memberJoin: { memberPubB64: "member-pub", onBundle } }),
-			joinerPeer(memberBundle),
+			joinerOpts(wasm, {
+				memberJoin: {
+					memberPubB64: joinerKeypair.publicKey,
+					memberPrivateKey: joinerKeypair.privateKey,
+					memberMasterKeyB64: material.memberMasterKeyB64,
+				},
+				onJoined,
+			}),
+			joinerPeer(encodeMemberInviteBundle(material.bundle)),
 			sess,
 		);
-		expect(onBundle).toHaveBeenCalledWith(memberBundle);
-		expect(unlock).not.toHaveBeenCalled(); // no vault key in a member bundle
+		// The member master key is loaded (to wrap the member slot) — but no vault
+		// key ever arrived, so the only key loaded is the one the joiner generated.
+		expect(unlock).toHaveBeenCalledTimes(1);
+		expect(unlock).toHaveBeenCalledWith(material.memberMasterKeyB64);
+		expect(onJoined).toHaveBeenCalledOnce();
+		const result = onJoined.mock.calls[0]?.[0] as { vaultBlobB64: string; roster: unknown };
+		// The rebuilt blob is a VLT2 member vault, unlockable with the member password.
+		const decoded = decodeVaultBlob(base64ToBytes(result.vaultBlobB64));
+		expect(decoded.slots[0]!.kind).toBe(SLOT_KIND_MEMBER_PASSWORD);
 	});
+
+	async function makeMemberBundle(memberPubB64: string): Promise<{
+		memberPrivateKey: string;
+		memberMasterKeyB64: string;
+		bundle: MemberInviteBundle;
+	}> {
+		const shk = await generateKey();
+		const keypair = await generateMemberKeypair();
+		const region: SharingRegion = {
+			index: [],
+			collections: [],
+			wrappers: [],
+			members: [{ id: "dad", publicKey: memberPubB64 }],
+		};
+		const sealed = await sealToMemberKey(memberPubB64, shk);
+		return {
+			memberPrivateKey: keypair.privateKey,
+			memberMasterKeyB64: await generateKey(),
+			bundle: {
+				memberId: "dad",
+				memberPubKey: memberPubB64,
+				sharingWraps: [
+					{
+						kind: SHARING_WRAP_KIND_MEMBER,
+						memberId: "dad",
+						ephemeralPubB64: sealed.ephemeralPub,
+						ivB64: sealed.iv,
+						wrappedShkB64: sealed.ciphertext,
+					},
+				],
+				region,
+				entries: [],
+			},
+		};
+	}
 
 	it("sends nothing and burns the invite when the user rejects", async () => {
 		const stop = vi.fn();

@@ -5,6 +5,13 @@
 import { base64ToBytes, bytesToBase64 } from "../../util/bytes";
 import { withTimeout } from "../../util/with-timeout";
 import { buildVaultBytes, type VaultBuildCrypto, wrapPasswordSlot } from "../../vault/build-vault";
+import {
+	decodeMemberInviteBundle,
+	type MemberInviteBundle,
+	processMemberInvite,
+} from "../../vault/member-invite";
+import { buildMemberVaultBytes } from "../../vault/member-vault";
+import * as sharingCrypto from "../../vault/sharing-crypto";
 import { type RecoverySlot, SLOT_KIND_RECOVERY, verifierPrefix } from "../../vault-format";
 import {
 	decodeEnrollmentBundle,
@@ -141,9 +148,13 @@ export interface EnrollOptions {
 	 * (register the member, seal the sharing and collection keys). Returns the encoded
 	 * JSON to send. The SAS approval has already happened when this runs. */
 	memberInvite?: { buildBundle: (memberPubB64: string) => Promise<string> };
-	/** Joiner: this is a member join — carry this public key in the hello, and
-	 * process the member bundle on arrival (the device-side rebuild is skipped). */
-	memberJoin?: { memberPubB64: string; onBundle: (bundleJson: string) => void };
+	/** Joiner: this is a member join — carry this public key in the hello, and rebuild
+	 * the member vault from the bundle using this key material. */
+	memberJoin?: {
+		memberPubB64: string;
+		memberPrivateKey: string;
+		memberMasterKeyB64: string;
+	};
 	/** Inviter: the joiner's roster entry (JSON), to add to our roster. */
 	onEnrolled?: (entryJson: string) => void;
 	/** Inviter: show the SAS + the joiner's label, resolving with the user's answer. REQUIRED (no
@@ -252,6 +263,14 @@ function wasmSlotCrypto(wasm: CryptoWasm, vekB64: string): VaultBuildCrypto {
 		encryptWithVek: (p) => loadThen(wasm, vekB64, () => wasm.encrypt_with_vek(p)),
 	};
 }
+
+/** Pure-TS sharing crypto for processing a member bundle (the seals are opened
+ * with the joiner's own X25519 key; no vault key is involved). */
+const memberJoinDeps = {
+	openMemberSeal: sharingCrypto.openMemberSeal,
+	decryptWithKey: sharingCrypto.decryptWithKey,
+	encryptWithKey: sharingCrypto.encryptWithKey,
+};
 
 /** The per-peer handler for ONE invite, holding the single-use claim. Exported because that
  * closure is the seam the concurrency tests drive (two peers racing one invite). */
@@ -530,11 +549,15 @@ export async function receiveBundle(
 		return;
 	}
 	// MEMBER JOIN: the first frame is a member bundle (seals + region + entries), not a
-	// device bundle. Hand it to the host callback untouched — the joiner's vault rebuild
-	// happens there, since it owns the member key material this bundle is sealed to.
+	// device bundle. Process it here — open the seals, re-wrap the entry DEKs under the
+	// member master key, wrap that key into a member password slot, and assemble the
+	// VLT2 blob — then fire the same onJoined event a device join fires, so the caller's
+	// post-join steps (write blob, roster, unlock) are identical. No vault key is ever
+	// received: the bundle carries only seals made to the member's public key.
 	if (opts.memberJoin) {
+		let bundle: MemberInviteBundle;
 		try {
-			JSON.parse(first);
+			bundle = decodeMemberInviteBundle(first);
 		} catch {
 			opts.report("⚠ received an unreadable member bundle, aborting");
 			await sendSecure(channel, opts.wasm, sess.sessionId, RECEIPT);
@@ -542,10 +565,21 @@ export async function receiveBundle(
 			opts.onJoinError?.("The transfer was corrupted. Generate a new code and try again.");
 			return;
 		}
+		const processed = await processMemberInvite(memberJoinDeps, {
+			bundle,
+			memberPrivateKey: opts.memberJoin.memberPrivateKey,
+			memberPublicKey: opts.memberJoin.memberPubB64,
+			memberMasterKeyB64: opts.memberJoin.memberMasterKeyB64,
+		});
+		const slotCrypto = wasmSlotCrypto(opts.wasm, opts.memberJoin.memberMasterKeyB64);
+		const bytes = await buildMemberVaultBytes(slotCrypto, opts.password ?? "", processed);
 		// Flush barrier, so the inviter doesn't tear down mid-transfer (see awaitReceipt).
 		await sendSecure(channel, opts.wasm, sess.sessionId, RECEIPT);
 		opts.report("member bundle received ✅, finishing setup");
-		opts.memberJoin.onBundle(first);
+		opts.onJoined?.({
+			vaultBlobB64: bytesToBase64(bytes),
+			roster: bundle.roster ?? { devices: [], revoked: [] },
+		});
 		return;
 	}
 	const bundle = decodeEnrollmentBundle(first);

@@ -1,5 +1,7 @@
 import type { PasskeyCredential } from "../hooks/useVault";
 import type { EntriesPayload, RosterEntry, RosterPayload, WireRecoverySlot } from "../sync";
+import type { WireSharingWrap } from "../vault/member-invite";
+import type { SharingRegion } from "../vault-format";
 import type { SubdomainMatchMode } from "./autofill";
 
 /** Minimal login shape for current-tab matching: id + the fields the hostname policy reads. */
@@ -261,6 +263,17 @@ export interface ShellAdapter {
 		 * joiner ("not in roster"). Idempotent with the UI write (deterministic Ed25519). Omitted
 		 * when this device can't admit (security-key-only). See docs/multiple-vaults.md. */
 		admission?: { password: string; saltB64: string; adminId: string };
+		/** MEMBER INVITE (v2): the sharing state the bundle is built from, in
+		 * transport form. The host's buildBundle callback registers the joiner's
+		 * member key and packs the bundle. See docs/adr/0002. */
+		memberInvite?: {
+			memberId: string;
+			shkB64: string;
+			sharingWraps: WireSharingWrap[];
+			region: SharingRegion;
+			/** The inviter's device roster, shipped so the joiner bootstraps sync. */
+			roster: RosterPayload;
+		};
 	}): Promise<void>;
 	/** Enrollment (joiner): connect to the inviter from a decoded pairing code; the offscreen rebuilds the vault, unlocked by a password or a security-key slot (exactly one). `ownEntry` is handed to the inviter so both rosters end up symmetric. */
 	startEnrollJoin(opts: {
@@ -272,6 +285,14 @@ export interface ShellAdapter {
 		ownEntry: RosterEntry;
 		password?: string;
 		webauthn?: { hmacSecretB64: string; credentialIdB64: string; saltB64: string };
+		/** MEMBER JOIN (v2): the joining device's freshly generated key material.
+		 * The member master key stays host-side only; the private key is stored
+		 * back in the built blob's member secrets, encrypted under the master key. */
+		memberJoin?: {
+			memberPubB64: string;
+			memberPrivateKey: string;
+			memberMasterKeyB64: string;
+		};
 	}): Promise<void>;
 	/** Subscribe to structured enrollment events from the sync host (e.g. the joiner's rebuilt vault). Returns an unsubscribe function. */
 	onSyncEvent(callback: (event: SyncEvent) => void): () => void;

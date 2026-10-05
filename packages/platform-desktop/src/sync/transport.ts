@@ -184,6 +184,15 @@ export async function startEnrollJoin(opts: {
 	inviterPub: string;
 	ownEntry: RosterEntry;
 	password?: string;
+	/** MEMBER JOIN (v2): the joining device's freshly generated key material. The
+	 * enroll host processes the bundle (opens seals, wraps the member master key
+	 * into a member slot, assembles the VLT2 blob) and fires the same joined event
+	 * a device join fires. */
+	memberJoin?: {
+		memberPubB64: string;
+		memberPrivateKey: string;
+		memberMasterKeyB64: string;
+	};
 }): Promise<void> {
 	const { privateKey } = await deviceKeypair();
 	session?.stop();
@@ -196,6 +205,7 @@ export async function startEnrollJoin(opts: {
 		inviterPub: opts.inviterPub,
 		ownEntry: opts.ownEntry,
 		password: opts.password,
+		memberJoin: opts.memberJoin,
 		devicePrivB64: privateKey,
 		wasm: desktopSyncCrypto,
 		report,
