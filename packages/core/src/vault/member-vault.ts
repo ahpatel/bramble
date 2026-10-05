@@ -8,7 +8,15 @@
 
 import { base64ToBytes, bytesToBase64 } from "../util/bytes";
 import type { Vlt2Blob } from "../vault-format";
-import { isMemberVault, SHARING_WRAP_KIND_MEMBER } from "../vault-format";
+import {
+	isMemberVault,
+	SHARING_WRAP_KIND_MEMBER,
+	SLOT_KIND_MEMBER_PASSWORD,
+	type Slot,
+	VLT2,
+	verifierPrefix,
+} from "../vault-format";
+import type { ProcessedMemberJoin } from "./member-invite";
 import type { SharingDeps, SharingState } from "./sharing-mutations";
 
 /** Device-local member secrets: the member id and the X25519 private key
@@ -118,4 +126,45 @@ export function memberPrivateKeyFromSecrets(secrets: MemberSecrets): string {
 /** Guard for callers that need the raw private key bytes. */
 export function memberPrivateKeyBytes(secrets: MemberSecrets): Uint8Array {
 	return base64ToBytes(secrets.memberPrivateKey);
+}
+
+/** Build the joining member's VLT2 vault blob: a member password slot wrapping
+ * the MMK (the caller has loaded the MMK into its crypto context so the wrap
+ * ops target it), plus the processed join's stored pieces. Mirrors
+ * buildVaultBytes for the member side. */
+export async function buildMemberVaultBytes(
+	crypto: Pick<
+		import("../adapters/crypto").CryptoAdapter,
+		"generateSalt" | "generateSlotId" | "wrapVekPassword"
+	>,
+	password: string,
+	processed: ProcessedMemberJoin,
+): Promise<Uint8Array> {
+	const saltB64 = await crypto.generateSalt();
+	const slotIdB64 = await crypto.generateSlotId();
+	const wrapped = await crypto.wrapVekPassword({
+		password,
+		saltB64,
+		slotIdB64,
+		magicVersion: verifierPrefix(),
+	});
+	const slot: Slot = {
+		kind: SLOT_KIND_MEMBER_PASSWORD,
+		slotId: base64ToBytes(slotIdB64),
+		salt: base64ToBytes(saltB64),
+		verifier: base64ToBytes(wrapped.verifier),
+		wrapIv: base64ToBytes(wrapped.wrapIv),
+		wrappedVek: base64ToBytes(wrapped.wrappedVek),
+	};
+	const blob: Vlt2Blob = {
+		slots: [slot],
+		sharingWraps: processed.sharingWraps,
+		entriesIv: base64ToBytes(processed.entriesPayload.iv),
+		entriesCiphertext: base64ToBytes(processed.entriesPayload.ciphertext),
+		memberSecretsIv: base64ToBytes(processed.memberSecrets.iv),
+		memberSecretsCiphertext: base64ToBytes(processed.memberSecrets.ciphertext),
+		regionIv: base64ToBytes(processed.region.iv),
+		regionCiphertext: base64ToBytes(processed.region.ciphertext),
+	};
+	return VLT2.encode(blob);
 }

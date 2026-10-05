@@ -133,6 +133,17 @@ export interface EnrollOptions {
 	/** Joiner: report a recoverable enrollment failure (e.g. the typed password did not
 	 * match the existing device) so the host surfaces it instead of hanging. */
 	onJoinError?: (message: string) => void;
+	/** MEMBER JOIN (v2). Both sides must implement it; the joiner's hello carries its
+	 * member public key ahead of the bundle, and the bundle carries seals instead of
+	 * the vault key. An older inviter rejects the hello as invalid, which is correct:
+	 * a member cannot join an old device. See docs/adr/0002-member-keys. */
+	/** Inviter: build the member bundle for the joiner's just-delivered public key
+	 * (register the member, seal the sharing and collection keys). Returns the encoded
+	 * JSON to send. The SAS approval has already happened when this runs. */
+	memberInvite?: { buildBundle: (memberPubB64: string) => Promise<string> };
+	/** Joiner: this is a member join — carry this public key in the hello, and
+	 * process the member bundle on arrival (the device-side rebuild is skipped). */
+	memberJoin?: { memberPubB64: string; onBundle: (bundleJson: string) => void };
 	/** Inviter: the joiner's roster entry (JSON), to add to our roster. */
 	onEnrolled?: (entryJson: string) => void;
 	/** Inviter: show the SAS + the joiner's label, resolving with the user's answer. REQUIRED (no
@@ -299,7 +310,16 @@ export function makeEnrollHandler(
 			try {
 				// Hello first, so the inviter can bind it to the key we just proved. Byte-identical to
 				// the ack an older inviter expects after the bundle. See docs/p2p-sync.md "Version skew".
-				await sendSecure(channel, opts.wasm, sess.sessionId, JSON.stringify(opts.ownEntry));
+				// A member join wraps the entry in an envelope that also carries the member's public
+				// key — the inviter must have it BEFORE the bundle, since the bundle's keys are sealed
+				// to it. An older inviter fails to parse the envelope and rejects the join.
+				const hello = opts.memberJoin
+					? JSON.stringify({
+							rosterEntry: opts.ownEntry,
+							memberPubB64: opts.memberJoin.memberPubB64,
+						})
+					: JSON.stringify(opts.ownEntry);
+				await sendSecure(channel, opts.wasm, sess.sessionId, hello);
 				opts.onSas?.(await pairingSas(opts.psk, opts.ownEntry.publicKey, sess.remoteStatic));
 				await receiveBundle(opts, peer, sess);
 			} catch (e) {
@@ -339,8 +359,9 @@ export function makeEnrollHandler(
 async function serveJoiner(opts: EnrollOptions, channel: Channel, sess: Session): Promise<void> {
 	if (!opts.devicePubB64) throw new Error("enroll: refusing to invite without this device's key");
 	if (!opts.approve) throw new Error("enroll: refusing to invite without an approval gate");
-	const entry = await recvJoinerHello(opts, channel, sess);
-	if (!entry) return; // reason already reported
+	const hello = await recvJoinerHello(opts, channel, sess);
+	if (!hello) return; // reason already reported
+	const entry = hello.entry;
 	const sas = await pairingSas(opts.psk, opts.devicePubB64, sess.remoteStatic);
 	// The status line stays digits-only: it is a log, and the emoji belong where the user is
 	// actually being asked to compare them.
@@ -355,7 +376,21 @@ async function serveJoiner(opts: EnrollOptions, channel: Channel, sess: Session)
 		return;
 	}
 	opts.report("confirmed ✅, transferring vault…");
-	await sendBundle(opts, channel, sess);
+	if (opts.memberInvite) {
+		// A member invite: the joiner's hello carried its member public key, and the
+		// bundle is built (and sealed) for it here. Without the key there is nothing
+		// to seal to — fail loudly rather than send a bundle the joiner can't open.
+		if (!hello.memberPubB64) {
+			opts.report("⚠ the joining device did not identify itself as a member, not enrolling");
+			await sendSecure(channel, opts.wasm, sess.sessionId, ENROLL_REJECTED);
+			await awaitReceipt(opts, channel, sess, REJECT_ACK_TIMEOUT_MS);
+			return;
+		}
+		const bundle = await opts.memberInvite.buildBundle(hello.memberPubB64);
+		await sendSecure(channel, opts.wasm, sess.sessionId, bundle);
+	} else {
+		await sendBundle(opts, channel, sess);
+	}
 	opts.onEnrolled?.(JSON.stringify(entry));
 	opts.report("device enrolled ✅");
 	// Last, and never gating the roster add above: this only holds the transport open long enough
@@ -388,14 +423,19 @@ async function awaitReceipt(
 	}
 }
 
-/** Read the joiner's roster entry and bind it to the key it proved. Returns null (having reported
+/** Read the joiner's introduction and bind it to the key it proved. Returns null (having reported
  * why) on a bad or absent introduction; there is deliberately no fallback to the old send-first
- * order, since an attacker could stay silent to force it. See docs/p2p-sync.md "Version skew". */
+ * order, since an attacker could stay silent to force it. See docs/p2p-sync.md "Version skew".
+ *
+ * Two hello shapes are accepted: the plain roster entry (every join until now), and the member
+ * envelope `{rosterEntry, memberPubB64}` (a member join). The envelope form is how a member's
+ * public key reaches the inviter before the bundle — the bundle's keys are sealed to it. An older
+ * inviter parses only the plain form, so a member join against an old device fails there. */
 async function recvJoinerHello(
 	opts: EnrollOptions,
 	channel: Channel,
 	sess: Session,
-): Promise<RosterEntry | null> {
+): Promise<{ entry: RosterEntry; memberPubB64?: string } | null> {
 	let json: string;
 	try {
 		json =
@@ -412,8 +452,15 @@ async function recvJoinerHello(
 		return null;
 	}
 	let entry: RosterEntry | null = null;
+	let memberPubB64: string | undefined;
 	try {
-		entry = RosterEntrySchema.parse(JSON.parse(json));
+		const parsed = JSON.parse(json);
+		if ("rosterEntry" in parsed && parsed.rosterEntry) {
+			entry = RosterEntrySchema.parse(parsed.rosterEntry);
+			memberPubB64 = typeof parsed.memberPubB64 === "string" ? parsed.memberPubB64 : undefined;
+		} else {
+			entry = RosterEntrySchema.parse(parsed);
+		}
 	} catch {
 		entry = null;
 	}
@@ -427,7 +474,7 @@ async function recvJoinerHello(
 		);
 		return null;
 	}
-	return entry;
+	return { entry, memberPubB64 };
 }
 
 // Exported for unit tests (the mesh/handshake wrapping is covered elsewhere); these
@@ -480,6 +527,25 @@ export async function receiveBundle(
 		opts.onJoinError?.(
 			"Your other device didn't confirm this pairing. That code is now used up. Generate a new one there and try again.",
 		);
+		return;
+	}
+	// MEMBER JOIN: the first frame is a member bundle (seals + region + entries), not a
+	// device bundle. Hand it to the host callback untouched — the joiner's vault rebuild
+	// happens there, since it owns the member key material this bundle is sealed to.
+	if (opts.memberJoin) {
+		try {
+			JSON.parse(first);
+		} catch {
+			opts.report("⚠ received an unreadable member bundle, aborting");
+			await sendSecure(channel, opts.wasm, sess.sessionId, RECEIPT);
+			peer.close();
+			opts.onJoinError?.("The transfer was corrupted. Generate a new code and try again.");
+			return;
+		}
+		// Flush barrier, so the inviter doesn't tear down mid-transfer (see awaitReceipt).
+		await sendSecure(channel, opts.wasm, sess.sessionId, RECEIPT);
+		opts.report("member bundle received ✅, finishing setup");
+		opts.memberJoin.onBundle(first);
 		return;
 	}
 	const bundle = decodeEnrollmentBundle(first);

@@ -521,6 +521,64 @@ describe("invite lifecycle — single use + bounded waits", () => {
 		expect(peer.sent.length).toBeGreaterThan(0);
 	});
 
+	it("member join: builds and sends the member bundle from the hello's key", async () => {
+		const approve = vi.fn(async () => true);
+		const buildBundle = vi.fn(async (pub: string) =>
+			JSON.stringify({ memberId: "dad", memberPubKey: pub, seals: true }),
+		);
+		const onEnrolled = vi.fn();
+		const handle = makeEnrollHandler(
+			"inviter",
+			hostOpts({ approve, onEnrolled, memberInvite: { buildBundle } }),
+			vi.fn(),
+		);
+		const peer = invitePeer("aaaaaaaa");
+		peer.push(JSON.stringify({ rosterEntry: ownEntry, memberPubB64: "member-pub" }));
+		peer.push(RECEIPT);
+
+		await handle(peer.peer);
+
+		expect(buildBundle).toHaveBeenCalledWith("member-pub");
+		// The member bundle is what went out — not the device bundle with a VEK.
+		expect(peer.sent[0]).toContain("memberId");
+		expect(peer.sent[0]).not.toContain("vek");
+		expect(onEnrolled).toHaveBeenCalledOnce();
+	});
+
+	it("member join: rejects a plain device hello when a member invite is running", async () => {
+		const approve = vi.fn(async () => true);
+		const buildBundle = vi.fn(async () => "{}");
+		const onEnrolled = vi.fn();
+		const handle = makeEnrollHandler(
+			"inviter",
+			hostOpts({ approve, onEnrolled, memberInvite: { buildBundle } }),
+			vi.fn(),
+		);
+		const peer = invitePeer("aaaaaaaa");
+		peer.push(JSON.stringify(ownEntry));
+		peer.push(RECEIPT);
+
+		await handle(peer.peer);
+
+		expect(buildBundle).not.toHaveBeenCalled();
+		expect(peer.sent).toEqual([ENROLL_REJECTED]);
+		expect(onEnrolled).not.toHaveBeenCalled();
+	});
+
+	it("member join: the joiner hands the bundle to the host callback without adopting a VEK", async () => {
+		const unlock = vi.fn();
+		const onBundle = vi.fn();
+		const wasm = mockWasm({ unlock_with_vek: unlock });
+		const memberBundle = JSON.stringify({ memberId: "dad", memberPubKey: "member-pub" });
+		await receiveBundle(
+			joinerOpts(wasm, { memberJoin: { memberPubB64: "member-pub", onBundle } }),
+			joinerPeer(memberBundle),
+			sess,
+		);
+		expect(onBundle).toHaveBeenCalledWith(memberBundle);
+		expect(unlock).not.toHaveBeenCalled(); // no vault key in a member bundle
+	});
+
 	it("sends nothing and burns the invite when the user rejects", async () => {
 		const stop = vi.fn();
 		const onEnrolled = vi.fn();

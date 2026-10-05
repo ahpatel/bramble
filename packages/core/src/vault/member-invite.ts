@@ -64,6 +64,15 @@ export const MemberInviteBundleSchema = z.object({
 	region: SharingRegionSchema,
 	/** Content of every entry shared with the member at invite time. */
 	entries: z.array(InviteEntrySchema),
+	/** The inviter's device roster, so the joiner bootstraps sync membership
+	 * exactly like a device join does (the joiner's own entry is added on top). */
+	roster: z
+		.object({
+			devices: z.array(z.record(z.string(), z.unknown())),
+			revoked: z.array(z.record(z.string(), z.unknown())),
+		})
+		.passthrough()
+		.optional(),
 });
 export type MemberInviteBundle = z.infer<typeof MemberInviteBundleSchema>;
 
