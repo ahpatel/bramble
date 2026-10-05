@@ -421,6 +421,8 @@ export interface VaultActions {
 	 * a member), then run the join in that vault's context and unlock into it. Resolves when the join
 	 * completes. Drives `joining` / `joinError`. See docs/multiple-vaults.md. */
 	startJoin(pairingCode: string, unlock: JoinUnlock, label?: string): Promise<void>;
+	/** MEMBER JOIN (v2): the setup-shell join-as-family-member flow. See docs/adr/0002. */
+	startJoinMember(pairingCode: string, password: string, label?: string): Promise<void>;
 	/** Revoke a device from the sync group (roster tombstone); propagates over ongoing sync. */
 	removeDevice(deviceId: string): Promise<void>;
 }
@@ -1693,16 +1695,22 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
 	// Device enrollment lives in its own hook; it consumes the shared clock, blob
 	// read, unlock, and entries-payload read from here.
-	const { inviteDevice, inviteMember, joinGroup, removeDevice, ensureOwnEntrySigned } =
-		useSyncEnrollment({
-			storage,
-			syncKey,
-			ensureClock,
-			rotateDeviceId,
-			readDecodedBlob,
-			unlock,
-			readEntriesPayload: mutations.readEntriesPayload,
-		});
+	const {
+		inviteDevice,
+		inviteMember,
+		joinGroup,
+		joinAsMember,
+		removeDevice,
+		ensureOwnEntrySigned,
+	} = useSyncEnrollment({
+		storage,
+		syncKey,
+		ensureClock,
+		rotateDeviceId,
+		readDecodedBlob,
+		unlock,
+		readEntriesPayload: mutations.readEntriesPayload,
+	});
 
 	// Phase-1 migration: a device enrolled before roster signing existed carries an unsigned entry
 	// that nothing else ever re-signs, and the phase-2 flip would drop its updates. Back it off one
@@ -1735,6 +1743,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		code: string;
 		method: JoinUnlock;
 		targetId: string;
+		/** "member" joins the group as a family member (own password, seals). */
+		kind?: "member";
 	} | null>(null);
 	const [joinError, setJoinError] = useState<string | null>(null);
 	const joinResolverRef = useRef<{ resolve: () => void; reject: (e: unknown) => void } | null>(
@@ -1783,6 +1793,45 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		[vaults, storage, createRecord, shell, selectVault],
 	);
 
+	/** Join a group as a FAMILY MEMBER (v2): same deferred-vault dance as startJoin,
+	 * but the deferred step calls joinAsMember — the joiner keeps its own password and
+	 * the bundle carries seals, not the vault key. See docs/adr/0002. */
+	const startJoinMember = useCallback(
+		(pairingCode: string, password: string, label?: string): Promise<void> => {
+			if (joinInFlightRef.current) return joinInFlightRef.current;
+			const run = (async () => {
+				setJoinError(null);
+				const code = decodePairingCode(pairingCode.trim());
+				for (const v of vaults) {
+					const g = await storage.getMeta<{ groupKey?: string }>(syncKeyFor("sync.group", v.id));
+					if (g?.groupKey === code.groupKey) {
+						selectVault(v.id);
+						return;
+					}
+				}
+				const newId = await createRecord(label);
+				await shell.setActiveVault?.(newId);
+				return new Promise<void>((resolve, reject) => {
+					joinResolverRef.current = { resolve, reject };
+					setPendingJoin({
+						code: pairingCode,
+						method: { kind: "password", password },
+						targetId: newId,
+						kind: "member",
+					});
+				});
+			})();
+			joinInFlightRef.current = run;
+			void run
+				.catch(() => {})
+				.finally(() => {
+					joinInFlightRef.current = null;
+				});
+			return run;
+		},
+		[vaults, storage, createRecord, shell, selectVault],
+	);
+
 	// Run the deferred join once the new vault is active (joinGroup is now scoped to it). One-shot.
 	useEffect(() => {
 		if (
@@ -1796,7 +1845,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		const { code, method } = pendingJoin;
 		void (async () => {
 			try {
-				await joinGroup(code, method); // writes + unlocks the new active vault
+				if (pendingJoin.kind === "member") {
+					await joinAsMember(code, method.password); // writes + unlocks the new active vault
+				} else {
+					await joinGroup(code, method); // writes + unlocks the new active vault
+				}
 				setHasVault(true);
 				setPendingJoin(null);
 				joinResolverRef.current?.resolve();
@@ -1810,7 +1863,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 				joinResolverRef.current = null;
 			}
 		})();
-	}, [pendingJoin, activeId, registryReady, joinGroup, dropActiveRecord]);
+	}, [pendingJoin, activeId, registryReady, joinGroup, joinAsMember, dropActiveRecord]);
 
 	const hasWebauthnSlot = webauthnSlots.length > 0;
 	const webauthnKeys = useMemo<WebauthnKeyMeta[]>(
@@ -1981,6 +2034,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			inviteMember,
 			joinGroup,
 			startJoin,
+			startJoinMember,
 			removeDevice,
 		}),
 		[
@@ -2019,6 +2073,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			inviteMember,
 			joinGroup,
 			startJoin,
+			startJoinMember,
 			removeDevice,
 			enableSharing,
 			runSharingTransition,

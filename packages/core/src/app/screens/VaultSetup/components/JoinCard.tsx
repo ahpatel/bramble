@@ -4,12 +4,16 @@ import { type FormEvent, useState } from "react";
 import { useCan, usePlatform } from "../../../../context/PlatformContext";
 import type { JoinUnlock } from "../../../../hooks/useVault";
 import { Button } from "../../../components/ui/button";
+import { Checkbox } from "../../../components/ui/checkbox";
 import { PasswordField } from "../../../components/ui/password-field";
 
 interface JoinCardProps {
 	/** Create a new vault by joining the group behind this pairing code. Rejects on a bad code /
 	 * password mismatch (surfaced inline). */
 	onJoin: (pairingCode: string, unlock: JoinUnlock) => Promise<void>;
+	/** MEMBER JOIN (v2): join as a family member with the joiner's own password.
+	 * Absent where member join isn't supported; when present the card offers the choice. */
+	onJoinMember?: (pairingCode: string, password: string) => Promise<void>;
 	busy: boolean;
 	/** A join failure reported by the async join effect (password mismatch, transfer error). */
 	error: string | null;
@@ -18,7 +22,7 @@ interface JoinCardProps {
 
 /** Pairing-code + master-password form: creates a NEW vault on this device by pairing to an
  * existing one and syncing its vault over. See docs/multiple-vaults.md. */
-export function JoinCard({ onJoin, busy, error, mobile }: JoinCardProps) {
+export function JoinCard({ onJoin, onJoinMember, busy, error, mobile }: JoinCardProps) {
 	const { t } = useLingui();
 	const { shell } = usePlatform();
 	// Camera scan of the pairing QR (mobile only; extension pastes).
@@ -28,6 +32,9 @@ export function JoinCard({ onJoin, busy, error, mobile }: JoinCardProps) {
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [submitting, setSubmitting] = useState(false);
 	const [scanning, setScanning] = useState(false);
+	// MEMBER JOIN (v2): when the invite is a family invite, the joiner creates their own
+	// password instead of proving the owner's. See docs/adr/0002.
+	const [asMember, setAsMember] = useState(false);
 	// Scan-first on mobile, paste-only on the extension (no camera).
 	const [showPaste, setShowPaste] = useState(!canScan);
 
@@ -53,12 +60,20 @@ export function JoinCard({ onJoin, busy, error, mobile }: JoinCardProps) {
 			return;
 		}
 		if (!password) {
-			setLocalError(t`Enter the master password shared with your other device.`);
+			setLocalError(
+				asMember
+					? t`Choose a password for this shared vault.`
+					: t`Enter the master password shared with your other device.`,
+			);
 			return;
 		}
 		setSubmitting(true);
 		try {
-			await onJoin(code.trim(), { kind: "password", password });
+			if (asMember && onJoinMember) {
+				await onJoinMember(code.trim(), password);
+			} else {
+				await onJoin(code.trim(), { kind: "password", password });
+			}
 		} catch (err) {
 			setLocalError((err as Error).message);
 		} finally {
@@ -152,15 +167,39 @@ export function JoinCard({ onJoin, busy, error, mobile }: JoinCardProps) {
 						)}
 					</div>
 					<PasswordField
-						label={t`Master password`}
+						label={asMember ? t`Create your password` : t`Master password`}
 						value={password}
 						onChange={(e) => setPassword(e.target.value)}
 					/>
+					{onJoinMember && (
+						<label className="flex items-start gap-2.5 cursor-pointer">
+							<Checkbox
+								checked={asMember}
+								onChange={(v) => setAsMember(v)}
+								ariaLabel="Join as a family member"
+							/>
+							<span className="text-sm">
+								<Trans>I was invited as a family member</Trans>
+								<span className="block text-xs text-muted-foreground">
+									{asMember
+										? t`You'll create your own password for the shared vault — share it with no one.`
+										: t`Use this only if the invite is a family sharing invite. For a device join, leave it off and use that device's master password.`}
+								</span>
+							</span>
+						</label>
+					)}
 					<div className="rounded-md p-3 bg-muted/40 border border-border/50 text-xs text-muted-foreground">
-						<Trans>
-							This creates a new vault on this device and syncs it from your other device. Use the
-							same master password as that device.
-						</Trans>
+						{asMember ? (
+							<Trans>
+								This creates a new vault on this device holding the entries your family shares with
+								you. You choose the password; the other device never sees it.
+							</Trans>
+						) : (
+							<Trans>
+								This creates a new vault on this device and syncs it from your other device. Use the
+								same master password as that device.
+							</Trans>
+						)}
 					</div>
 				</div>
 				<div
