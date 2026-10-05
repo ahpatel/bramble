@@ -67,20 +67,43 @@ export type CeremonyRequest = CeremonyCreateRequest | CeremonyGetRequest;
  * User-facing ceremony: confirm intent, ensure the vault is unlocked, perform user
  * verification when required, and let the user pick (create: which login to attach to,
  * with "create new" as an option; get: which matching passkey). Returns `approved: false`
- * to abort (mapped to NotAllowedError).
+ * to abort (mapped to NotAllowedError), or `approved: false, nativeFallback: true` to
+ * hand the request to the user's OTHER authenticators instead of failing it.
  * - `credentialId` (get): the chosen credential, STANDARD base64.
  * - `placement` (create): "new" to force a fresh login, `{ entryId }` to attach to a
  *   specific login, or omitted to let automatic placement decide.
  */
 export type CeremonyDecision =
-	| { approved: false }
 	| {
 			approved: true;
 			userVerified: boolean;
 			credentialId?: string;
 			placement?: "new" | { entryId: string };
+	  }
+	| {
+			approved: false;
+			/** Give the request to the user's other authenticators: the Firefox shim relays
+			 * to the native navigator.credentials; Chrome has no passthrough, so the delivery
+			 * layer turns the provider off and the site's retry goes native. */
+			nativeFallback?: boolean;
+			/** Context for the DOMException message the site sees (defaults to "user declined"). */
+			detail?: string;
 	  };
 export type CeremonyFn = (req: CeremonyRequest) => Promise<CeremonyDecision>;
+
+/** The card reply sentinel for the "use another authenticator" action. Credential ids
+ * (base64) and login ids never collide with it. */
+export const NATIVE_CHOICE = "native";
+
+/** DOMException message when the request is handed to the user's other authenticators. */
+export const NATIVE_FALLBACK_MESSAGE =
+	"No Bramble passkey can serve this request. Continue with another authenticator.";
+
+/** DOMException message for the early fail: the vault is locked and unlocking it from this
+ * ceremony needs a WebAuthn tap (security key / platform biometric), which pauses the
+ * proxy and would kill the very request the ceremony is serving. docs/passkey-provider.md. */
+export const WEBAUTHN_UNLOCK_CONFLICT_MESSAGE =
+	"This vault unlocks with a security key, which cannot run while Bramble handles this request. Unlock Bramble from its toolbar first, then try again.";
 
 /** A shown card's reply: approved, and (for the create picker) the chosen login id or "new". */
 export interface CardReply {
@@ -99,10 +122,24 @@ export interface CeremonyHost {
 		existingLoginName?: string;
 		candidates?: { id: string; name: string; username: string }[];
 		passkeyChoices?: { credentialId: string; label: string }[];
+		/** get only: the vault holds no passkey that could serve this request. */
+		noMatch?: boolean;
+		/** Render the "use another authenticator" action; says what the reply will do
+		 * ("passthrough" relays natively, "disable" turns the provider off). */
+		nativeFallback?: "passthrough" | "disable";
 	}) => Promise<CardReply>;
 	isLocked: () => boolean;
 	ensureUnlocked: () => Promise<boolean>;
 	loadEntries: () => Promise<Entry[]>;
+	/** How a request the vault cannot serve hands off: "silent" relays to the native
+	 * authenticator with no card (Firefox, where the shim holds the page's own options);
+	 * "card" asks first, because Chrome's all-or-nothing proxy has no passthrough and the
+	 * fallback instead turns the provider off, a state change the user must choose. */
+	nativeFallback?: "silent" | "card";
+	/** While locked: whether unlocking needs a WebAuthn tap (security-key or platform
+	 * slot), which would pause the proxy and kill this very request. The locked branches
+	 * fail early with guidance rather than walking the user into that. */
+	unlockNeedsWebauthn?: () => Promise<boolean>;
 }
 
 /** Label a passkey for the get picker: its account name, else display name, else generic. */
@@ -110,10 +147,55 @@ function passkeyLabel(p: { userName?: string; userDisplayName?: string }): strin
 	return p.userName?.trim() || p.userDisplayName?.trim() || "Passkey";
 }
 
+/** Declined, with the reason the site's DOMException will carry. */
+function declined(detail = "user declined"): CeremonyDecision {
+	return { approved: false, detail };
+}
+
+/** The card opts for the native handoff action, as the host's delivery can afford it. */
+function nativeFallbackOpts(host: CeremonyHost): { nativeFallback?: "passthrough" | "disable" } {
+	if (!host.nativeFallback) return {};
+	return { nativeFallback: host.nativeFallback === "card" ? "disable" : "passthrough" };
+}
+
+/** Whether a card reply picked the "use another authenticator" action. */
+function isNativeReply(reply: CardReply): boolean {
+	return reply.choice === NATIVE_CHOICE;
+}
+
+/** No stored passkey can serve this request. Never a confirm-then-error dead end: "silent"
+ * relays to the native authenticator immediately; "card" asks, because the handoff turns
+ * the provider off (Chrome has no passthrough) and that must be the user's click. */
+async function noMatchDecision(host: CeremonyHost): Promise<CeremonyDecision> {
+	if (host.nativeFallback === "silent") return { approved: false, nativeFallback: true };
+	const reply = await host.showCard({ noMatch: true, ...nativeFallbackOpts(host) });
+	if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
+	return declined("no matching passkey");
+}
+
+/** The locked prologue both ceremonies share: fail early when unlocking from here would
+ *  need a WebAuthn tap (it pauses the proxy and kills this very request), confirm intent
+ *  with the native handoff offered, unlock. Returns a decision to abort with, or undefined
+ *  to proceed unlocked. */
+async function lockedGate(host: CeremonyHost): Promise<CeremonyDecision | undefined> {
+	if (await unlockWouldConflict(host)) return declined(WEBAUTHN_UNLOCK_CONFLICT_MESSAGE);
+	const reply = await host.showCard(nativeFallbackOpts(host));
+	if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
+	if (!reply.approved) return declined();
+	if (!(await host.ensureUnlocked())) return declined();
+	return undefined;
+}
+
+/** The locked branches' early fail: an unlock from here needs a WebAuthn tap, which
+ * pauses the proxy and kills the request the ceremony exists to serve. */
+async function unlockWouldConflict(host: CeremonyHost): Promise<boolean> {
+	return !!host.unlockNeedsWebauthn && (await host.unlockNeedsWebauthn()) === true;
+}
+
 /**
  * get(): confirm + unlock, then pick which stored passkey to sign in with. One match
- * signs in directly; several (multiple accounts on the site) show a picker. Returns the
- * chosen credentialId; `undefined` when none match (handleGet maps that to NotAllowedError).
+ * signs in directly; several (multiple accounts on the site) show a picker. Zero matches
+ * hands the request to the user's other authenticators rather than erroring cold.
  */
 export async function runGetCeremony(
 	req: CeremonyGetRequest,
@@ -121,8 +203,8 @@ export async function runGetCeremony(
 ): Promise<CeremonyDecision> {
 	const startedLocked = host.isLocked();
 	if (startedLocked) {
-		if (!(await host.showCard({})).approved) return { approved: false };
-		if (!(await host.ensureUnlocked())) return { approved: false };
+		const gate = await lockedGate(host);
+		if (gate) return gate;
 	}
 
 	let entries: Entry[] = [];
@@ -131,12 +213,9 @@ export async function runGetCeremony(
 	} catch {}
 	const matches = findPasskeys(entries, req.rpId, req.allowCredentials);
 
-	// No stored passkey for this site: confirm generically if we didn't already (locked
-	// path), then let handleGet map the absent credentialId to NotAllowedError.
-	if (matches.length === 0) {
-		if (!startedLocked && !(await host.showCard({})).approved) return { approved: false };
-		return { approved: true, userVerified: true, credentialId: undefined };
-	}
+	// No stored passkey for this site: hand the request to the user's other
+	// authenticators (relay or offer), never a dead end.
+	if (matches.length === 0) return noMatchDecision(host);
 
 	// The locked path already confirmed via the unlock card, so a single match just proceeds.
 	if (startedLocked && matches.length === 1) {
@@ -150,8 +229,10 @@ export async function runGetCeremony(
 			credentialId: m.passkey.credentialId,
 			label: passkeyLabel(m.passkey),
 		})),
+		...nativeFallbackOpts(host),
 	});
-	if (!reply.approved) return { approved: false };
+	if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
+	if (!reply.approved) return declined();
 	return {
 		approved: true,
 		userVerified: true,
@@ -163,7 +244,9 @@ export async function runGetCeremony(
  * create(): confirm + unlock, then resolve which login the passkey attaches to. When
  * locked we confirm generically first (the vault can't be read yet); once unlocked we
  * attach to the unambiguous account, create a new login when the domain has none, or
- * show a picker (candidates + "create new") when several accounts are ambiguous.
+ * show a picker (candidates + "create new") when several accounts are ambiguous. Every
+ * card also offers the "use another authenticator" action, so a user who came to enroll
+ * a device-native credential (Touch ID, a YubiKey) is never forced through Bramble.
  */
 export async function runCreateCeremony(
 	req: CeremonyCreateRequest,
@@ -171,8 +254,8 @@ export async function runCreateCeremony(
 ): Promise<CeremonyDecision> {
 	const startedLocked = host.isLocked();
 	if (startedLocked) {
-		if (!(await host.showCard({})).approved) return { approved: false };
-		if (!(await host.ensureUnlocked())) return { approved: false };
+		const gate = await lockedGate(host);
+		if (gate) return gate;
 	}
 
 	let entries: Entry[] = [];
@@ -183,23 +266,34 @@ export async function runCreateCeremony(
 	const target = passkeyAttachTarget(entries, req.rpId, req.userName);
 	if (target) {
 		// Confident account. The locked path already confirmed; otherwise confirm "Add to X".
-		if (!startedLocked && !(await host.showCard({ existingLoginName: target.name })).approved) {
-			return { approved: false };
+		if (!startedLocked) {
+			const reply = await host.showCard({
+				existingLoginName: target.name,
+				...nativeFallbackOpts(host),
+			});
+			if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
+			if (!reply.approved) return declined();
 		}
 		return { approved: true, userVerified: true, placement: { entryId: target.id } };
 	}
 
 	const candidates = loginsCoveringRpId(entries, req.rpId);
 	if (candidates.length === 0) {
-		if (!startedLocked && !(await host.showCard({})).approved) return { approved: false };
+		if (!startedLocked) {
+			const reply = await host.showCard(nativeFallbackOpts(host));
+			if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
+			if (!reply.approved) return declined();
+		}
 		return { approved: true, userVerified: true, placement: "new" };
 	}
 
 	// Several accounts on this domain and no clear match: let the user pick one or create new.
 	const reply = await host.showCard({
 		candidates: candidates.map((c) => ({ id: c.id, name: c.name, username: c.username })),
+		...nativeFallbackOpts(host),
 	});
-	if (!reply.approved) return { approved: false };
+	if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
+	if (!reply.approved) return declined();
 	return {
 		approved: true,
 		userVerified: true,
@@ -256,6 +350,18 @@ function resolveCreatePlan(
 	return planPasskeyPlacement(entries, rpId, rpName, credential);
 }
 
+/** Create-response details plus our handoff marker: Chrome's completeCreateRequest wants
+ *  only the standard shape (the delivery layer strips the marker), while the Firefox
+ *  transport reads it to relay to the native authenticator. */
+export type CreateCompletion = chrome.webAuthenticationProxy.CreateResponseDetails & {
+	nativeFallback?: boolean;
+};
+
+/** Get-response details plus the handoff marker, as CreateCompletion. */
+export type GetCompletion = chrome.webAuthenticationProxy.GetResponseDetails & {
+	nativeFallback?: boolean;
+};
+
 /**
  * Orchestrate navigator.credentials.create(). `origin` is the calling page's origin,
  * resolved by the caller from the active tab (the proxy request carries no origin).
@@ -265,7 +371,7 @@ export async function handleCreate(
 	requestId: number,
 	requestDetailsJson: string,
 	origin: string,
-): Promise<chrome.webAuthenticationProxy.CreateResponseDetails> {
+): Promise<CreateCompletion> {
 	try {
 		const opts = parseCreationOptions(requestDetailsJson);
 		const { rpId } = resolveRpId(origin, opts.rpId);
@@ -280,7 +386,10 @@ export async function handleCreate(
 			userName: opts.userName,
 			origin,
 		});
-		if (!decision.approved) throw new WebAuthnError("NotAllowedError", "user declined");
+		if (!decision.approved) {
+			if (decision.nativeFallback) return nativeFallbackCompletion(requestId);
+			throw new WebAuthnError("NotAllowedError", decision.detail ?? "user declined");
+		}
 
 		const entries = await deps.loadEntries();
 		// excludeCredentials lists what the RP already holds FOR THE ACCOUNT BEING ENROLLED, so
@@ -346,7 +455,7 @@ export async function handleGet(
 	requestId: number,
 	requestDetailsJson: string,
 	origin: string,
-): Promise<chrome.webAuthenticationProxy.GetResponseDetails> {
+): Promise<GetCompletion> {
 	try {
 		const opts = parseRequestOptions(requestDetailsJson);
 		const { rpId } = resolveRpId(origin, opts.rpId);
@@ -360,7 +469,10 @@ export async function handleGet(
 			origin,
 			allowCredentials: allowStd.length ? allowStd : undefined,
 		});
-		if (!decision.approved) throw new WebAuthnError("NotAllowedError", "user declined");
+		if (!decision.approved) {
+			if (decision.nativeFallback) return nativeFallbackCompletion(requestId);
+			throw new WebAuthnError("NotAllowedError", decision.detail ?? "user declined");
+		}
 		const allow = decision.credentialId
 			? [decision.credentialId]
 			: allowStd.length
@@ -395,6 +507,18 @@ export async function handleGet(
 	} catch (e) {
 		return { requestId, error: toDomException(e) };
 	}
+}
+
+/** The completion for a request handed to the user's other authenticators: the site's
+ *  promise still rejects (the delivery layer can't fulfil it; Chrome has no passthrough,
+ *  Firefox relays natively from the shim, where this error is never delivered), but with
+ *  a message that says why rather than a bare "no matching passkey". */
+function nativeFallbackCompletion(requestId: number): CreateCompletion & GetCompletion {
+	return {
+		requestId,
+		error: { name: "NotAllowedError", message: NATIVE_FALLBACK_MESSAGE },
+		nativeFallback: true,
+	};
 }
 
 function toDomException(e: unknown): chrome.webAuthenticationProxy.DOMExceptionDetails {

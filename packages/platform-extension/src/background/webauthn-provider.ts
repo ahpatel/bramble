@@ -13,6 +13,7 @@
 
 import type { PasskeyPromptResponse, SavePasskeyPrompt } from "@core/adapters/autofill";
 import { bytesToBase64 } from "@core/util/bytes";
+import { findUnlockPasswordSlot } from "@core/vault-format";
 import { api } from "../platform-api";
 import {
 	loadDecryptedEntries,
@@ -20,9 +21,10 @@ import {
 	passkeyMakeCredential,
 	savePlacement,
 } from "./passkey-store";
-import { getPasskeyProviderEnabled } from "./prefs";
+import { getPasskeyProviderEnabled, setPasskeyProviderEnabled } from "./prefs";
 import { on } from "./router";
-import { vaultLocked } from "./session";
+import { getActiveVaultId, vaultLocked } from "./session";
+import { readAndDecodeVault } from "./vault-io";
 import {
 	type CeremonyFn,
 	type CeremonyHost,
@@ -132,8 +134,16 @@ async function ensureUnlocked(): Promise<boolean> {
  * Build the corner-card ceremony bound to a tab. Chrome's proxy has no sender tab and
  * passes nothing (falls back to the active tab); Firefox's content transport passes the
  * exact `sender.tab.id`, so the card lands in the requesting tab even if focus moved.
+ *
+ * `nativeFallback` is how a request the vault cannot serve hands off: Chrome's
+ * webAuthenticationProxy is all-or-nothing with no passthrough, so the handoff must turn
+ * the provider off (a state change the user chooses via the card); Firefox's shim
+ * holds the page's own options and can relay silently. See docs/passkey-provider.md.
  */
-function cornerCeremonyForTab(explicitTabId?: number): CeremonyFn {
+function cornerCeremonyForTab(
+	explicitTabId?: number,
+	nativeFallback: "silent" | "card" = "card",
+): CeremonyFn {
 	return async (req) => {
 		const tabId = explicitTabId ?? (await activeTabId());
 		if (tabId === undefined) return { approved: false };
@@ -145,9 +155,55 @@ function cornerCeremonyForTab(explicitTabId?: number): CeremonyFn {
 			ensureUnlocked,
 			loadEntries: loadDecryptedEntries,
 			showCard: (opts) => showCard(tabId, cardPayload(req, opts)),
+			nativeFallback,
+			unlockNeedsWebauthn,
 		};
-		return req.kind === "create" ? runCreateCeremony(req, host) : runGetCeremony(req, host);
+		ceremonyDepth++;
+		try {
+			// `await` is load-bearing: a bare `return runGetCeremony(...)` exits the try block
+			// without resolving the promise, so the finally would decrement the depth
+			// immediately and PASSKEY_CEREMONY_QUERY would report no ceremony for its
+			// entire duration.
+			return await (req.kind === "create"
+				? runCreateCeremony(req, host)
+				: runGetCeremony(req, host));
+		} finally {
+			ceremonyDepth--;
+		}
 	};
+}
+
+/** Page passkey ceremonies (get/create) currently awaiting the user or an unlock. The
+ * popup's unlock screen asks, so it can steer away from a security-key / biometric unlock
+ * while one runs: Bramble's own WebAuthn ceremony would pause the proxy and kill the
+ * request this ceremony exists to serve (docs/passkey-provider.md, the pause hole). */
+let ceremonyDepth = 0;
+
+on("PASSKEY_CEREMONY_QUERY", async () => ({
+	ok: true,
+	data: { active: ceremonyDepth > 0 },
+}));
+
+/** Whether unlocking from a provider ceremony needs a WebAuthn tap (a security-key or
+ * platform slot and no password slot), which would pause the proxy and kill the very
+ * request the ceremony is serving. The vault header (slots) is readable while locked, so
+ * this is answerable BEFORE opening the unlock popup. Unknown (no readable active vault)
+ * reads as false: never fail a request on a guess.
+ *
+ * Every vault also has a recovery slot, but the recovery code is an emergency credential
+ * (the unlock screen tells users to generate a new one after using it), not a routine
+ * unlock method; a vault whose password slot is gone counts as WebAuthn-only here. The
+ * user keeps the recovery route: unlock from the toolbar (which the early-fail message
+ * points to) and retry, outside any ceremony. */
+async function unlockNeedsWebauthn(): Promise<boolean> {
+	try {
+		const vaultId = getActiveVaultId();
+		if (vaultId === null) return false;
+		const blob = await readAndDecodeVault(vaultId);
+		return findUnlockPasswordSlot(blob) === null;
+	} catch {
+		return false;
+	}
 }
 
 async function sha256Base64(bytes: Uint8Array): Promise<string> {
@@ -157,12 +213,15 @@ async function sha256Base64(bytes: Uint8Array): Promise<string> {
 }
 
 /** Deps for the pure handlers, with the ceremony bound to a known tab (Firefox) or the active tab. */
-export function depsForTab(tabId?: number): PasskeyProxyDeps {
+export function depsForTab(
+	tabId?: number,
+	opts?: { nativeFallback?: "silent" | "card" },
+): PasskeyProxyDeps {
 	return {
 		crypto: { passkeyMakeCredential, passkeyGetAssertion },
 		loadEntries: loadDecryptedEntries,
 		savePlacement,
-		ceremony: cornerCeremonyForTab(tabId),
+		ceremony: cornerCeremonyForTab(tabId, opts?.nativeFallback),
 		sha256: sha256Base64,
 		now: () => Date.now(),
 		// Confirm the save in any open extension page (the popup is open during Unlock & Save).
@@ -172,8 +231,10 @@ export function depsForTab(tabId?: number): PasskeyProxyDeps {
 	};
 }
 
-/** The Chrome-proxy deps (ceremony resolves the active tab; the proxy carries no tab). */
-export const productionDeps: PasskeyProxyDeps = depsForTab();
+/** The Chrome-proxy deps (ceremony resolves the active tab; the proxy carries no tab).
+ * The handoff style is "card": there is no passthrough, so the card's action turns the
+ * provider off and the site's retry goes to the native authenticator. */
+export const productionDeps: PasskeyProxyDeps = depsForTab(undefined, { nativeFallback: "card" });
 
 // ---- enabled flag (shared by both deliveries) ----
 
@@ -194,6 +255,28 @@ let flagSetExplicitly = false;
 export async function loadProviderEnabled(): Promise<void> {
 	const stored = await getPasskeyProviderEnabled();
 	if (!flagSetExplicitly) providerEnabled = stored;
+}
+
+/**
+ * Turn the provider off as the result of a user's "use another authenticator" click on a
+ * card: persist the pref off (exactly the Settings toggle's write, so the next UI read
+ * agrees) and detach the proxy so the site's retry reaches the platform authenticator.
+ * Called by the Chrome delivery layer AFTER completing the request with the handoff
+ * message; the order is load-bearing: detaching mid-flight aborts the page's promise
+ * with a bare AbortError (measured, docs/passkey-provider.md), which would eat the very
+ * message the user just clicked for.
+ */
+export async function disableProviderForNativeFallback(): Promise<void> {
+	providerEnabled = false;
+	flagSetExplicitly = true;
+	await setPasskeyProviderEnabled(false);
+	try {
+		await applyHook(false);
+	} catch (e) {
+		// The pref is the durable state; a failed detach self-heals on the next toggle
+		// (detach is idempotent), and the flag already reads off so requests pass through.
+		console.error("[passkey] native-fallback detach failed", e);
+	}
 }
 
 // The delivery-specific side effect of toggling (Chrome: attach/detach; Firefox: none).

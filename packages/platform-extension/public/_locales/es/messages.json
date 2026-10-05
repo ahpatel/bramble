@@ -165,5 +165,20 @@
 	},
 	"cardUsedHere": {
 		"message": "Usada aquí"
+	},
+	"passkeyNoneTitle": {
+		"message": "No hay clave de acceso de Bramble para este sitio"
+	},
+	"passkeyNoneNotePassthrough": {
+		"message": "Bramble no tiene ninguna clave de acceso guardada para este sitio. Continúa con otro método de inicio de sesión y la solicitud se pasará a los demás autenticadores de tu dispositivo."
+	},
+	"passkeyNoneNoteDisable": {
+		"message": "Bramble no tiene ninguna clave de acceso guardada para este sitio. Continúa con otro método de inicio de sesión y se desactivará «Usar Bramble para claves de acceso» para que tus demás autenticadores puedan atender la solicitud. Vuelve a intentarlo después."
+	},
+	"passkeyUseOther": {
+		"message": "Usar otro autenticador"
+	},
+	"passkeyUseOtherInstead": {
+		"message": "Usar otro autenticador en su lugar"
 	}
 }

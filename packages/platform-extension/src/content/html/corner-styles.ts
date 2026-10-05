@@ -271,6 +271,24 @@ export const cornerStyles = html`
 				background: rgba(255, 255, 255, 0.06);
 				border-color: rgba(255, 255, 255, 0.24);
 			}
+			/* The low-key "use another authenticator instead" escape hatch on passkey cards. */
+			.tp-native-alt {
+				display: block;
+				width: 100%;
+				margin-top: 12px;
+				background: transparent;
+				border: none;
+				color: rgba(235, 235, 245, 0.6);
+				font: inherit;
+				font-size: 12px;
+				cursor: pointer;
+				padding: 4px 0;
+				text-decoration: underline;
+				text-underline-offset: 3px;
+			}
+			.tp-native-alt:hover {
+				color: rgba(235, 235, 245, 0.85);
+			}
 			button.tp-btn-primary {
 				background: #fafafa;
 				color: #18181b;

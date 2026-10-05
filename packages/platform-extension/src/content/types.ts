@@ -117,6 +117,11 @@ export type CornerPromptPayload =
 			rpId: string;
 			rpName?: string;
 			userName?: string;
+			/** get: the vault holds no passkey that could serve this request. */
+			noMatch?: boolean;
+			/** Render the "use another authenticator" action; says what the reply does
+			 * ("passthrough" relays natively, "disable" turns the provider off). */
+			nativeFallback?: "passthrough" | "disable";
 			existingLoginName?: string;
 			candidates?: { id: string; name: string; username: string }[];
 			passkeyChoices?: { credentialId: string; label: string }[];

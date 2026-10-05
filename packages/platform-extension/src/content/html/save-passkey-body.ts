@@ -45,6 +45,8 @@ export function savePasskeyBody({
 	passkeyChoices,
 	primaryLabel,
 	locked,
+	noMatch,
+	nativeFallback,
 }: {
 	rpId: string;
 	rpName?: string;
@@ -55,27 +57,38 @@ export function savePasskeyBody({
 	passkeyChoices?: { credentialId: string; label: string }[];
 	primaryLabel: string;
 	locked?: boolean;
+	noMatch?: boolean;
+	nativeFallback?: "passthrough" | "disable";
 }) {
 	// Avoid "x (x)" when the RP's display name equals its id.
 	const site = rpName && rpName !== rpId ? `${rpName} (${rpId})` : rpId;
 	const isCreatePicker = intent === "create" && !!candidates && candidates.length > 0;
 	const isGetList = intent === "get" && !!passkeyChoices && passkeyChoices.length > 0;
 	const hasList = isGetList || isCreatePicker;
-	const title = isGetList
-		? passkeyChoices.length > 1
-			? t("passkeySignInWhich")
-			: t("passkeyUseTitle")
-		: isCreatePicker
-			? t("passkeyAddToTitle")
-			: intent === "get"
-				? t("passkeyUseTitle")
-				: existingLoginName
-					? t("passkeyAddTitle")
-					: t("passkeySaveTitle");
+	const title = noMatch
+		? t("passkeyNoneTitle")
+		: isGetList
+			? passkeyChoices.length > 1
+				? t("passkeySignInWhich")
+				: t("passkeyUseTitle")
+			: isCreatePicker
+				? t("passkeyAddToTitle")
+				: intent === "get"
+					? t("passkeyUseTitle")
+					: existingLoginName
+						? t("passkeyAddTitle")
+						: t("passkeySaveTitle");
 
 	// Nested html escapes interpolated values; array interpolations join markup verbatim.
 	let middle: string[] = [];
-	if (locked) {
+	if (noMatch) {
+		// Say what the primary action does: relays natively (Firefox) or turns the provider
+		// off so the retry reaches the platform authenticator (Chrome has no passthrough).
+		const note = t(
+			nativeFallback === "passthrough" ? "passkeyNoneNotePassthrough" : "passkeyNoneNoteDisable",
+		);
+		middle = [html`<div class="tp-note">${note}</div>`];
+	} else if (locked) {
 		// Locked: the vault can't be read yet, so say what unlocking is for before the popup.
 		const note = intent === "get" ? t("passkeyUnlockUseNote") : t("passkeyUnlockSaveNote");
 		middle = [html`<div class="tp-note">${note}</div>`];
@@ -104,14 +117,33 @@ export function savePasskeyBody({
 
 	// A pickable list acts on row click, so it needs no confirm buttons (dismiss via the ×).
 	// A single confirm (locked prompt, or a save with no ambiguity) keeps the button row.
-	const actions = hasList
-		? []
-		: [
+	// The no-match card inverts the row: the primary action is the handoff to the user's
+	// OTHER authenticators (Bramble has nothing for this site), with "Not now" alongside.
+	const actions = noMatch
+		? [
 				html`<div class="tp-actions">
+			<button class="tp-btn tp-btn-primary" data-tp-action="passkey-native">${t("passkeyUseOther")}</button>
+			<button class="tp-btn" data-tp-action="passkey-dismiss">${t("notNow")}</button>
+		</div>`,
+			]
+		: hasList
+			? []
+			: [
+					html`<div class="tp-actions">
 			<button class="tp-btn tp-btn-primary" data-tp-action="passkey-approve">${primaryLabel}</button>
 			<button class="tp-btn" data-tp-action="passkey-dismiss">${t("notNow")}</button>
 		</div>`,
-			];
+				];
+
+	// On every other variant the handoff is the escape hatch, not the primary: a user who
+	// came to enroll Touch ID or a YubiKey (e.g. Cloudflare Access's "Add an MFA device")
+	// can bail to the native prompt without Bramble minting a credential they didn't want.
+	const nativeAlt =
+		!noMatch && nativeFallback
+			? [
+					html`<button type="button" class="tp-native-alt" data-tp-action="passkey-native">${t("passkeyUseOtherInstead")}</button>`,
+				]
+			: [];
 
 	return html`
 		<div class="tp-head">
@@ -126,5 +158,6 @@ export function savePasskeyBody({
 		</div>
 		${middle}
 		${actions}
+		${nativeAlt}
 	`;
 }

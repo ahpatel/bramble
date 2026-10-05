@@ -187,6 +187,13 @@ function handleCornerCardClick(e: Event): void {
 		removeCornerPrompt();
 		return;
 	}
+	if (action === "passkey-native") {
+		// "Use another authenticator": hands the request to the user's other authenticators
+		// (Firefox relays natively; Chrome turns the provider off so the retry goes native).
+		sendPasskeyResponse(false, "native");
+		removeCornerPrompt();
+		return;
+	}
 	if (action === "passkey-approve") {
 		sendPasskeyResponse(true);
 		removeCornerPrompt();
@@ -244,6 +251,8 @@ export function handleCornerPromptShow(payload: CornerPromptPayload): void {
 			passkeyChoices: payload.passkeyChoices,
 			primaryLabel: label,
 			locked: payload.locked,
+			noMatch: payload.noMatch,
+			nativeFallback: payload.nativeFallback,
 		});
 	}
 	// The card's box styling lives on the inner .tp-card (not :host) so a host

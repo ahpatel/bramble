@@ -165,5 +165,20 @@
 	},
 	"cardUsedHere": {
 		"message": "Hier verwendet"
+	},
+	"passkeyNoneTitle": {
+		"message": "Kein Bramble-Passkey für diese Website"
+	},
+	"passkeyNoneNotePassthrough": {
+		"message": "Bramble hat keinen Passkey für diese Website gespeichert. Fahre mit einer anderen Anmeldemethode fort; die Anfrage wird an die anderen Authenticatoren deines Geräts übergeben."
+	},
+	"passkeyNoneNoteDisable": {
+		"message": "Bramble hat keinen Passkey für diese Website gespeichert. Fahre mit einer anderen Anmeldemethode fort; „Bramble für Passkeys verwenden“ wird deaktiviert, damit deine anderen Authenticatoren die Anfrage übernehmen können. Versuche es danach erneut."
+	},
+	"passkeyUseOther": {
+		"message": "Anderen Authenticator verwenden"
+	},
+	"passkeyUseOtherInstead": {
+		"message": "Stattdessen einen anderen Authenticator verwenden"
 	}
 }

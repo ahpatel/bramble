@@ -188,6 +188,14 @@ msgstr "A named set of entries, shared with the people you pick."
 msgid "A one-time backup code that unlocks your vault if you're locked out."
 msgstr "A one-time backup code that unlocks your vault if you're locked out."
 
+#: packages/core/src/app/screens/Auth/Auth.tsx
+#~ msgid "A passkey request from a page is waiting on this unlock. Use your master password here — a security key or biometric tap would interrupt it."
+#~ msgstr "A passkey request from a page is waiting on this unlock. Use your master password here — a security key or biometric tap would interrupt it."
+
+#: packages/core/src/app/screens/Auth/Auth.tsx
+msgid "A passkey request from a page is waiting on this unlock. Use your master password here instead; a security key or biometric tap would interrupt it."
+msgstr "A passkey request from a page is waiting on this unlock. Use your master password here instead; a security key or biometric tap would interrupt it."
+
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "A QR code was found, but it isn't an authenticator setup code. Open the site's 2FA page, or paste the setup key."
 msgstr "A QR code was found, but it isn't an authenticator setup code. Open the site's 2FA page, or paste the setup key."
@@ -3954,6 +3962,10 @@ msgstr "Weekly"
 #: packages/core/src/app/screens/Auth/Auth.tsx
 msgid "Welcome to {appName}"
 msgstr "Welcome to {appName}"
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "What should this person be called?"
+msgstr "What should this person be called?"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Wipe copied passwords after"
