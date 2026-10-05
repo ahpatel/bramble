@@ -30,13 +30,26 @@ export const LEN_HMAC_SECRET_SALT = 32;
 export const SLOT_KIND_PASSWORD = 0x01;
 export const SLOT_KIND_WEBAUTHN = 0x02;
 export const SLOT_KIND_RECOVERY = 0x03;
+/** VLT2 member-device slots (ticket: member-key unlock path). Payloads are
+ * byte-identical to their 0x01/0x02 counterparts; the kind records that the
+ * wrapped key is a member master key, not the vault key. A member device's
+ * vault carries only member slots; an owner's only owner slots — slots never
+ * travel between devices. */
+export const SLOT_KIND_MEMBER_PASSWORD = 0x04;
+export const SLOT_KIND_MEMBER_WEBAUTHN = 0x05;
 
 const TLV_PREFIX_LEN = 1 + 2; // kind + len
 const PASSWORD_PAYLOAD_LEN = LEN_SLOT_ID + LEN_SALT + LEN_VERIFIER + LEN_WRAP_IV + LEN_WRAPPED_VEK;
 const WEBAUTHN_FIXED_LEN =
 	LEN_SLOT_ID + 2 + LEN_HMAC_SECRET_SALT + LEN_VERIFIER + LEN_WRAP_IV + LEN_WRAPPED_VEK;
 
-const KNOWN_KINDS = [SLOT_KIND_PASSWORD, SLOT_KIND_WEBAUTHN, SLOT_KIND_RECOVERY];
+const KNOWN_KINDS = [
+	SLOT_KIND_PASSWORD,
+	SLOT_KIND_WEBAUTHN,
+	SLOT_KIND_RECOVERY,
+	SLOT_KIND_MEMBER_PASSWORD,
+	SLOT_KIND_MEMBER_WEBAUTHN,
+];
 
 /** Any Uint8Array, kept loose (Uint8Array<ArrayBufferLike>) to match the in-memory struct types. */
 const u8 = z.custom<Uint8Array>((v) => v instanceof Uint8Array, "expected Uint8Array");
@@ -90,10 +103,24 @@ const OpaqueSlotSchema = z.object({
 });
 export type OpaqueSlot = z.infer<typeof OpaqueSlotSchema>;
 
+/** A member-device password slot: same payload shape, but the wrapped key is
+ * the member master key. Parsed as a password slot variant. */
+const MemberPasswordSlotSchema = PasswordSlotSchema.extend({
+	kind: z.literal(SLOT_KIND_MEMBER_PASSWORD),
+});
+export type MemberPasswordSlot = z.infer<typeof MemberPasswordSlotSchema>;
+
+const MemberWebauthnSlotSchema = WebauthnSlotSchema.extend({
+	kind: z.literal(SLOT_KIND_MEMBER_WEBAUTHN),
+});
+export type MemberWebauthnSlot = z.infer<typeof MemberWebauthnSlotSchema>;
+
 const SlotSchema = z.union([
 	PasswordSlotSchema,
 	WebauthnSlotSchema,
 	RecoverySlotSchema,
+	MemberPasswordSlotSchema,
+	MemberWebauthnSlotSchema,
 	OpaqueSlotSchema,
 ]);
 export type Slot = z.infer<typeof SlotSchema>;
@@ -383,6 +410,10 @@ const Vlt2BlobSchema = VaultBlobSchema.extend({
 	sharingWraps: z.array(SharingWrapSchema),
 	regionIv: bytes(LEN_IV, "regionIv"),
 	regionCiphertext: u8,
+	/** Member-device-only secrets (the member's X25519 private key), encrypted
+	 * under the key this device's slots provide. Absent on owner devices. */
+	memberSecretsIv: bytes(LEN_IV, "memberSecretsIv").optional(),
+	memberSecretsCiphertext: u8.optional(),
 });
 export type Vlt2Blob = z.infer<typeof Vlt2BlobSchema>;
 
@@ -474,8 +505,23 @@ function encodeVlt2(blob: Vlt2Blob): Uint8Array {
 	if (entriesLen > 0xffffffff) throw new Error("entries blob too large");
 
 	const headerLen = VLT2_MAGIC.length + 2 + sharingWrapCountLen;
+	const memberSecrets =
+		v.memberSecretsIv && v.memberSecretsCiphertext
+			? { flag: 1, iv: v.memberSecretsIv, ct: v.memberSecretsCiphertext }
+			: null;
+	// The flag byte is always present (0 = no member secrets) so the trailing
+	// region's first byte is never ambiguous with it.
+	const memberSecretsLen = memberSecrets ? 4 + LEN_IV + memberSecrets.ct.length : 0;
 	const out = new Uint8Array(
-		headerLen + totalSlotsLen + totalWrapsLen + 4 + entriesLen + LEN_IV + v.regionCiphertext.length,
+		headerLen +
+			totalSlotsLen +
+			totalWrapsLen +
+			4 +
+			entriesLen +
+			1 +
+			memberSecretsLen +
+			LEN_IV +
+			v.regionCiphertext.length,
 	);
 	let off = 0;
 	out.set(VLT2_MAGIC, off);
@@ -509,6 +555,17 @@ function encodeVlt2(blob: Vlt2Blob): Uint8Array {
 	off += LEN_IV;
 	out.set(v.entriesCiphertext, off);
 	off += v.entriesCiphertext.length;
+	out[off++] = memberSecrets ? 1 : 0;
+	if (memberSecrets) {
+		const msLenBe = new DataView(new ArrayBuffer(4));
+		msLenBe.setUint32(0, LEN_IV + memberSecrets.ct.length);
+		out.set(new Uint8Array(msLenBe.buffer), off);
+		off += 4;
+		out.set(memberSecrets.iv, off);
+		off += LEN_IV;
+		out.set(memberSecrets.ct, off);
+		off += memberSecrets.ct.length;
+	}
 	out.set(v.regionIv, off);
 	off += LEN_IV;
 	out.set(v.regionCiphertext, off);
@@ -581,6 +638,30 @@ function decodeVlt2(bytes: Uint8Array): Vlt2Blob {
 	const entriesCiphertext = bytes.slice(off, off + entriesLen - LEN_IV);
 	off += entriesLen - LEN_IV;
 
+	// Member secrets: 1-byte flag (always present); when set, u32 length + iv + ciphertext.
+	let memberSecretsIv: Uint8Array | undefined;
+	let memberSecretsCiphertext: Uint8Array | undefined;
+	{
+		if (off + 1 > bytes.length) {
+			throw new Error("vault blob truncated (member secrets flag overruns blob)");
+		}
+		const flag = bytes[off++]!;
+		if (flag === 1) {
+			if (off + 4 > bytes.length) {
+				throw new Error("vault blob truncated (member secrets length overruns blob)");
+			}
+			const msLen = new DataView(bytes.buffer, bytes.byteOffset + off, 4).getUint32(0);
+			off += 4;
+			if (msLen < LEN_IV || off + msLen > bytes.length) {
+				throw new Error(`member secrets length invalid: ${msLen}`);
+			}
+			memberSecretsIv = bytes.slice(off, off + LEN_IV);
+			off += LEN_IV;
+			memberSecretsCiphertext = bytes.slice(off, off + msLen - LEN_IV);
+			off += msLen - LEN_IV;
+		}
+	}
+
 	if (off + LEN_IV > bytes.length) {
 		throw new Error("vault blob truncated (region IV overruns blob)");
 	}
@@ -593,6 +674,8 @@ function decodeVlt2(bytes: Uint8Array): Vlt2Blob {
 		sharingWraps,
 		entriesIv,
 		entriesCiphertext,
+		memberSecretsIv,
+		memberSecretsCiphertext,
 		regionIv,
 		regionCiphertext,
 	});
@@ -679,7 +762,18 @@ export function verifierPrefix(): Uint8Array {
 	return verifierPrefixFor(VLT1);
 }
 
-function encodePasswordPayload(slot: PasswordSlot | RecoverySlot): Uint8Array {
+/** The five fixed-length fields shared by every password-shaped slot
+ * (password, recovery, member-password). */
+type PasswordShapedSlot = Pick<
+	PasswordSlot,
+	"slotId" | "salt" | "verifier" | "wrapIv" | "wrappedVek"
+>;
+type WebauthnShapedSlot = Pick<
+	WebauthnSlot,
+	"slotId" | "credentialId" | "salt" | "verifier" | "wrapIv" | "wrappedVek"
+>;
+
+function encodePasswordPayload(slot: PasswordShapedSlot): Uint8Array {
 	const out = new Uint8Array(PASSWORD_PAYLOAD_LEN);
 	let off = 0;
 	out.set(slot.slotId, off);
@@ -694,7 +788,7 @@ function encodePasswordPayload(slot: PasswordSlot | RecoverySlot): Uint8Array {
 	return out;
 }
 
-function encodeWebauthnPayload(slot: WebauthnSlot): Uint8Array {
+function encodeWebauthnPayload(slot: WebauthnShapedSlot): Uint8Array {
 	const out = new Uint8Array(WEBAUTHN_FIXED_LEN + slot.credentialId.length);
 	let off = 0;
 	out.set(slot.slotId, off);
@@ -719,6 +813,12 @@ function encodeSlotPayload(slot: Slot): Uint8Array {
 	if (slot.kind === SLOT_KIND_PASSWORD) return encodePasswordPayload(slot as PasswordSlot);
 	if (slot.kind === SLOT_KIND_WEBAUTHN) return encodeWebauthnPayload(slot as WebauthnSlot);
 	if (slot.kind === SLOT_KIND_RECOVERY) return encodePasswordPayload(slot as RecoverySlot);
+	if (slot.kind === SLOT_KIND_MEMBER_PASSWORD) {
+		return encodePasswordPayload(slot as MemberPasswordSlot);
+	}
+	if (slot.kind === SLOT_KIND_MEMBER_WEBAUTHN) {
+		return encodeWebauthnPayload(slot as MemberWebauthnSlot);
+	}
 	return (slot as OpaqueSlot).payload;
 }
 
@@ -766,6 +866,13 @@ function decodeSlotPayload(kind: number, payload: Uint8Array): Slot {
 	if (kind === SLOT_KIND_RECOVERY) {
 		return RecoverySlotSchema.parse({ kind, ...slicePasswordFields(payload) });
 	}
+	if (kind === SLOT_KIND_MEMBER_PASSWORD) {
+		return MemberPasswordSlotSchema.parse({ ...slicePasswordFields(payload), kind });
+	}
+	if (kind === SLOT_KIND_MEMBER_WEBAUTHN) {
+		const decoded = decodeWebauthnPayload(payload);
+		return MemberWebauthnSlotSchema.parse({ ...decoded, kind: SLOT_KIND_MEMBER_WEBAUTHN });
+	}
 	return { kind, payload };
 }
 
@@ -775,6 +882,26 @@ export function findPasswordSlot(blob: VaultBlob): PasswordSlot | null {
 		if (slot.kind === SLOT_KIND_PASSWORD) return slot as PasswordSlot;
 	}
 	return null;
+}
+
+/** A member device's password slot, or null if none (owner slots never appear
+ * on a member device and vice versa — slots never travel). */
+export function findMemberPasswordSlot(blob: VaultBlob): MemberPasswordSlot | null {
+	for (const slot of blob.slots) {
+		if (slot.kind === SLOT_KIND_MEMBER_PASSWORD) return slot as MemberPasswordSlot;
+	}
+	return null;
+}
+
+/** The password slot this device would unlock with: the owner's slot if
+ * present, else the member slot. */
+export function findUnlockPasswordSlot(blob: VaultBlob): PasswordSlot | MemberPasswordSlot | null {
+	return findPasswordSlot(blob) ?? findMemberPasswordSlot(blob);
+}
+
+/** True if this blob's password slot is a member slot (a member device's vault). */
+export function isMemberVault(blob: VaultBlob): boolean {
+	return findMemberPasswordSlot(blob) !== null && findPasswordSlot(blob) === null;
 }
 
 /** All security-key slots on the vault. */
