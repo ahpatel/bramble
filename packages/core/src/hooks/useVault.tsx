@@ -220,7 +220,13 @@ import {
 	generateRecoveryCode as makeRecoveryCode,
 	normalizeRecoveryCode,
 } from "../vault/recovery-code";
-import { createSharingDeps, type SharingDeps, type SharingState } from "../vault/sharing-mutations";
+import {
+	createSharingDeps,
+	grantEntry,
+	type SharingDeps,
+	type SharingState,
+	unshareEntry,
+} from "../vault/sharing-mutations";
 import {
 	addWebauthnSlot,
 	describeWebauthnKeys,
@@ -302,6 +308,10 @@ export interface VaultActions {
 	runSharingTransition(
 		transition: (deps: SharingDeps, state: SharingState) => Promise<SharingState>,
 	): Promise<void>;
+	/** Share entries into a collection (resolves their DEKs from the vault key). */
+	shareEntries(ids: string[], collectionId: string): Promise<void>;
+	/** Remove entries from a collection without deleting them. */
+	unshareEntries(ids: string[], collectionId: string): Promise<void>;
 	lock(): Promise<void>;
 	/** Creates a new vault (parallel to any existing ones) and returns its initial plaintext recovery code (shown once). */
 	createVault(password: string, label?: string): Promise<string>;
@@ -876,6 +886,53 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			const bytes = await persistOwnerSharingState(sharingDeps, next, blob);
 			await storage.writeVaultBlob(bytes);
 			setSharing(next);
+		},
+		[sharingDeps, readDecodedBlob, storage],
+	);
+
+	/** Share entries into a collection: resolve each entry's DEK from its
+	 * on-disk envelope (wrapped under the vault key) and grant. Rejects if
+	 * sharing isn't enabled or an entry is already in the collection. */
+	const shareEntries = useCallback(
+		async (ids: string[], collectionId: string): Promise<void> => {
+			const current = sharingRef.current;
+			if (!current) throw new Error("Sharing is not enabled on this vault.");
+			const { blob } = await readDecodedBlob();
+			if (blob.entriesCiphertext.length === 0) throw new Error("No entries to share.");
+			const json = await crypto.decryptWithVek(
+				bytesToBase64(blob.entriesIv),
+				bytesToBase64(blob.entriesCiphertext),
+			);
+			const payload = decodeEntriesPayload(json);
+			const byId = new Map(payload.entries.map((e) => [e.id, e]));
+			let state = current;
+			for (const id of ids) {
+				const envelope = byId.get(id);
+				if (!envelope) throw new Error(`Entry not found: ${id}`);
+				const dekB64 = await crypto.decryptWithVek(envelope.dekIv, envelope.wrappedDek);
+				state = await grantEntry(sharingDeps, state, { entryId: id, collectionId, dekB64 });
+			}
+			const bytes = await persistOwnerSharingState(sharingDeps, state, blob);
+			await storage.writeVaultBlob(bytes);
+			setSharing(state);
+		},
+		[sharingDeps, readDecodedBlob, crypto, storage],
+	);
+
+	/** Remove entries from a collection (the wrapper records only; the entries
+	 * themselves are untouched). */
+	const unshareEntries = useCallback(
+		async (ids: string[], collectionId: string): Promise<void> => {
+			const current = sharingRef.current;
+			if (!current) throw new Error("Sharing is not enabled on this vault.");
+			let state = current;
+			for (const id of ids) {
+				state = await unshareEntry(sharingDeps, state, { entryId: id, collectionId });
+			}
+			const { blob } = await readDecodedBlob();
+			const bytes = await persistOwnerSharingState(sharingDeps, state, blob);
+			await storage.writeVaultBlob(bytes);
+			setSharing(state);
 		},
 		[sharingDeps, readDecodedBlob, storage],
 	);
@@ -1777,6 +1834,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			lock,
 			enableSharing,
 			runSharingTransition,
+			shareEntries,
+			unshareEntries,
 			createVault,
 			deleteVault,
 			exportVault,
@@ -1849,6 +1908,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			removeDevice,
 			enableSharing,
 			runSharingTransition,
+			shareEntries,
+			unshareEntries,
 		],
 	);
 

@@ -3,6 +3,7 @@ import type { Entry } from "../../hooks/useVault";
 import { archiveAction, restoreAction } from "./archive";
 import { deleteAction } from "./delete";
 import { exportAction } from "./export";
+import { shareAction, unshareAction } from "./share";
 import { addTagAction, removeTagAction } from "./tags";
 import type { BulkAction } from "./types";
 
@@ -12,6 +13,8 @@ import type { BulkAction } from "./types";
  */
 const bulkActions: BulkAction[] = [
 	exportAction,
+	shareAction,
+	unshareAction,
 	addTagAction,
 	removeTagAction,
 	archiveAction,

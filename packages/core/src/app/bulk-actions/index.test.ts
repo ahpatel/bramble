@@ -47,6 +47,8 @@ describe("availableBulkActions", () => {
 	// platform that can write a file.
 	it("keeps the vault-only actions everywhere, since they need nothing from the platform", () => {
 		expect(availableBulkActions(platform({}, {})).map((a) => a.id)).toEqual([
+			"share",
+			"unshare",
 			"add-tag",
 			"remove-tag",
 			"archive",
