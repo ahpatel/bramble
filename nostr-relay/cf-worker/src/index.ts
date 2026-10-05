@@ -5,6 +5,10 @@
 // (kind 20000-29999) to current subscribers and stores nothing. The vault never
 // trusts it; it only relays encrypted, group-key-addressed signaling blobs.
 //
+// It also serves the MAILBOX (see the routes below): opaque per-recipient
+// envelopes stored until picked up — ciphertext only, TTL'd, unverified here
+// (the recipient checks the sender's roster signature). See ADR-0008.
+//
 // Why a Durable Object: Workers are stateless, so the set of connected sockets
 // can't live in a module global. One global DO ("relay") owns every socket and
 // does the fan-out, mirroring the node Set. Sockets are accepted as hibernatable
@@ -30,6 +34,14 @@ const PONG = "pong";
 // fan-out inner loop and the serialized attachment).
 const MAX_MSG_BYTES = 64 * 1024;
 const MAX_SUBS_PER_CONN = 8;
+
+// The mailbox (ADR-0008): a store-and-forward postbox for peers that aren't
+// online. The DO stores opaque per-recipient envelopes — it cannot read them
+// (ciphertext) and does not verify them (the recipient checks the sender's
+// roster signature on pull). Limits mirror @core/sync/mailbox.
+const MAX_MAILBOX_ENVELOPE_BYTES = 256 * 1024;
+const MAX_MAILBOX_PER_RECIPIENT = 64;
+const MAILBOX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 // POST /ice-servers mints short-lived Cloudflare TURN creds so peers across
 // networks/VPNs can relay. See docs/p2p-sync.md.
@@ -103,14 +115,93 @@ export class Relay extends DurableObject {
 	}
 
 	async fetch(req: Request): Promise<Response> {
-		// Non-WebSocket hits (health probe) get the banner, same as the node relay.
-		if (req.headers.get("Upgrade") !== "websocket")
+		// Non-WebSocket hits (health probe or mailbox API) get handled here.
+		if (req.headers.get("Upgrade") !== "websocket") {
+			const { pathname } = new URL(req.url);
+			const mailbox = /^\/mailbox\/([^/]+)\/([^/]+)$/.exec(pathname);
+			if (mailbox) {
+				const [, room, recipient] = mailbox;
+				switch (req.method) {
+					case "POST":
+						return this.mailboxPush(decodeURIComponent(room), decodeURIComponent(recipient), req);
+					case "GET":
+						return this.mailboxPull(decodeURIComponent(room), decodeURIComponent(recipient));
+					default:
+						return new Response("method not allowed", { status: 405 });
+				}
+			}
 			return new Response("bramble signaling relay", { status: 200 });
+		}
 
 		const [client, server] = Object.values(new WebSocketPair());
 		this.ctx.acceptWebSocket(server); // hibernatable
 		server.serializeAttachment({} satisfies Subs);
 		return new Response(null, { status: 101, webSocket: client });
+	}
+
+	// --- mailbox (ADR-0008): opaque per-recipient envelopes, pop on pull ---
+
+	#ensureSchema(): void {
+		this.ctx.storage.sql.exec(
+			`CREATE TABLE IF NOT EXISTS mailbox (
+				seq INTEGER PRIMARY KEY AUTOINCREMENT,
+				room TEXT NOT NULL,
+				recipient TEXT NOT NULL,
+				envelope TEXT NOT NULL,
+				created_at INTEGER NOT NULL
+			)`,
+		);
+	}
+
+	#purgeExpired(now: number): void {
+		this.#ensureSchema();
+		this.ctx.storage.sql.exec("DELETE FROM mailbox WHERE created_at < ?", now - MAILBOX_TTL_MS);
+	}
+
+	async mailboxPush(room: string, recipient: string, req: Request): Promise<Response> {
+		this.#purgeExpired(Date.now());
+		const body = await req.text();
+		if (body.length > MAX_MAILBOX_ENVELOPE_BYTES) {
+			return new Response("envelope too large", { status: 413 });
+		}
+		const count = this.ctx.storage.sql
+			.exec("SELECT COUNT(*) AS n FROM mailbox WHERE room = ? AND recipient = ?", room, recipient)
+			.toArray();
+		if ((count[0]?.n as number) >= MAX_MAILBOX_PER_RECIPIENT) {
+			return new Response("mailbox full", { status: 507 });
+		}
+		this.ctx.storage.sql.exec(
+			"INSERT INTO mailbox (room, recipient, envelope, created_at) VALUES (?, ?, ?, ?)",
+			room,
+			recipient,
+			body,
+			Date.now(),
+		);
+		return new Response(null, { status: 204 });
+	}
+
+	async mailboxPull(room: string, recipient: string): Promise<Response> {
+		this.#purgeExpired(Date.now());
+		const rows = this.ctx.storage.sql
+			.exec(
+				"SELECT seq, envelope FROM mailbox WHERE room = ? AND recipient = ? ORDER BY seq",
+				room,
+				recipient,
+			)
+			.toArray();
+		const envelopes = rows.map((r) => r.envelope as string);
+		// Pop on pull: sync rebroadcasts continuously while peers are online, so a
+		// delivery lost between this response and the client re-arrives via a live
+		// push. Keeping it would need acks; not worth the state.
+		this.ctx.storage.sql.exec(
+			"DELETE FROM mailbox WHERE room = ? AND recipient = ?",
+			room,
+			recipient,
+		);
+		return new Response(JSON.stringify(envelopes), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
 	}
 
 	async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
@@ -170,15 +261,22 @@ export default {
 	// Signaling WS → the global DO; POST /ice-servers handled here in the Worker.
 	async fetch(req: Request, env: RelayEnv): Promise<Response> {
 		const { pathname } = new URL(req.url);
-		if (pathname === "/ice-servers") {
-			switch (req.method) {
-				case "OPTIONS":
-					return new Response(null, { status: 204, headers: CORS });
-				case "POST":
-					return handleIceServers(env);
-				default:
-					return new Response("method not allowed", { status: 405, headers: CORS });
+		if (req.headers.get("Upgrade") !== "websocket") {
+			// Mailbox routes go to the DO; the health probe stays here.
+			if (pathname.startsWith("/mailbox/")) {
+				return env.RELAY.getByName("relay").fetch(req);
 			}
+			if (pathname === "/ice-servers") {
+				switch (req.method) {
+					case "OPTIONS":
+						return new Response(null, { status: 204, headers: CORS });
+					case "POST":
+						return handleIceServers(env);
+					default:
+						return new Response("method not allowed", { status: 405, headers: CORS });
+				}
+			}
+			return new Response("bramble signaling relay", { status: 200 });
 		}
 		return env.RELAY.getByName("relay").fetch(req);
 	},
