@@ -149,6 +149,7 @@ export async function startEnrollInvite(opts: {
 	 * event for the UI to persist. */
 	memberInvite?: {
 		memberId: string;
+		memberLabel: string;
 		shkB64: string;
 		sharingWraps: WireSharingWrap[];
 		region: SharingRegion;
@@ -182,7 +183,7 @@ export async function startEnrollInvite(opts: {
 			? {
 					buildBundle: async (memberPubB64: string) => {
 						const invite = opts.memberInvite!;
-						const { memberId, shkB64, sharingWraps, region, roster } = invite;
+						const { memberId, memberLabel, shkB64, sharingWraps, region, roster } = invite;
 						// Register the joining member on the snapshot: this seals the
 						// sharing key to their public key. Pure TS, no vault key involved.
 						const state = await addMember(
@@ -194,7 +195,7 @@ export async function startEnrollInvite(opts: {
 								collectionKeys: {},
 								performer: { role: "owner" },
 							},
-							{ memberId, publicKey: memberPubB64 },
+							{ memberId, publicKey: memberPubB64, label: memberLabel },
 						);
 						const bundle = buildMemberInvite(state, {
 							memberId,

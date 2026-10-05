@@ -389,6 +389,9 @@ export type RegionWrapper = z.infer<typeof RegionWrapperSchema>;
 const RegionMemberSchema = z.object({
 	id: z.string().min(1),
 	publicKey: z.string().min(1),
+	/** The member's display name, chosen by the owner at invite time. Optional so
+	 * regions written before labels existed still parse (fallback: short id). */
+	label: z.string().min(1).optional(),
 	/** Ed25519 device-key signature binding this member key (base64). Optional
 	 * through the rollout, like roster signatures. */
 	attestation: z.string().min(1).optional(),

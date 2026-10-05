@@ -11,11 +11,19 @@ import { usePlatform } from "../../../../context/PlatformContext";
 import { usePendingEnrollApproval } from "../../../../hooks/usePendingEnrollApproval";
 import { useVault } from "../../../../hooks/useVault";
 import { decryptWithKey } from "../../../../vault/sharing-crypto";
-import { createCollection, renameCollection } from "../../../../vault/sharing-mutations";
+import {
+	createCollection,
+	removeMember,
+	renameCollection,
+} from "../../../../vault/sharing-mutations";
 import { Button } from "../../../components/ui/button";
 import { TextField } from "../../../components/ui/text-field";
 import { useToast } from "../../../components/ui/toast";
 import { Row, RowGroup, Section } from "./primitives";
+
+/** The removal copy is load-bearing (ADR-0004): never imply a remote wipe. */
+const REMOVE_COPY =
+	"Remove this member? They will no longer receive updates. They keep copies of anything already synced — rotate the affected passwords after removing them.";
 
 /** Decrypts a collection label for display; the owner always holds the key. */
 function CollectionLabel({
@@ -80,10 +88,13 @@ export function SharingSection() {
 	const invite = () =>
 		act(async () => {
 			if (!sharing) return;
+			const label = window.prompt(t`What should this person be called?`);
+			if (!label?.trim()) return;
 			// The relay comes from the sync settings (the hook resolves the stored one);
 			// the invite reuses whatever relay this device already syncs through.
 			const code = await inviteMember("", undefined, {
 				sharing,
+				memberLabel: label.trim(),
 				persistWraps: async (wrapsJson: string) => {
 					// The host registered the member; adopt its wraps and persist.
 					const { sharingWrapFromWire } = await import("../../../../vault/member-invite");
@@ -212,6 +223,31 @@ export function SharingSection() {
 				</Row>
 			</RowGroup>
 			<RowGroup label={t`People`}>
+				{sharing.region.members.map((member) => (
+					<Row
+						key={member.id}
+						icon={<Users className="w-4 h-4 text-primary" />}
+						title={member.label ?? member.id.slice(0, 8)}
+						subtitle={t`${sharing.region.collections.filter((c) => c.memberIds.includes(member.id)).length} collection(s)`}
+					>
+						<Button
+							variant="ghost"
+							size="sm"
+							disabled={busy}
+							aria-label={t`Remove member`}
+							onClick={() => {
+								// The honest copy (ADR-0004): removal stops future access;
+								// it is not a remote wipe. The passwords must rotate.
+								if (!window.confirm(REMOVE_COPY)) return;
+								void act(async () => {
+									await runSharingTransition((deps, state) => removeMember(deps, state, member.id));
+								});
+							}}
+						>
+							<Trans>Remove</Trans>
+						</Button>
+					</Row>
+				))}
 				<Row
 					icon={<Users className="w-4 h-4 text-primary" />}
 					title={t`Invite someone`}

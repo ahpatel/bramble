@@ -259,7 +259,7 @@ export async function promoteEntry(
 export async function addMember(
 	deps: SharingDeps,
 	state: SharingState,
-	input: { memberId: string; publicKey: string },
+	input: { memberId: string; publicKey: string; label?: string },
 ): Promise<SharingState> {
 	requireOwner(state);
 	if (state.region.members.some((m) => m.id === input.memberId)) {
@@ -280,7 +280,14 @@ export async function addMember(
 		],
 		region: {
 			...state.region,
-			members: [...state.region.members, { id: input.memberId, publicKey: input.publicKey }],
+			members: [
+				...state.region.members,
+				{
+					id: input.memberId,
+					publicKey: input.publicKey,
+					...(input.label ? { label: input.label } : {}),
+				},
+			],
 		},
 	};
 }

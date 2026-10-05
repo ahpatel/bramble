@@ -268,6 +268,7 @@ export interface ShellAdapter {
 		 * member key and packs the bundle. See docs/adr/0002. */
 		memberInvite?: {
 			memberId: string;
+			memberLabel: string;
 			shkB64: string;
 			sharingWraps: WireSharingWrap[];
 			region: SharingRegion;

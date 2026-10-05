@@ -400,6 +400,7 @@ export interface VaultActions {
 		iceUrl: string | undefined,
 		shareWith: {
 			sharing: SharingState;
+			memberLabel: string;
 			persistWraps: (wrapsJson: string) => Promise<void>;
 		},
 	): Promise<string>;

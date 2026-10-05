@@ -520,7 +520,11 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 		async (
 			_relayUrl: string,
 			iceUrl: string | undefined,
-			shareWith: { sharing: SharingState; persistWraps: (wrapsJson: string) => Promise<void> },
+			shareWith: {
+				sharing: SharingState;
+				memberLabel: string;
+				persistWraps: (wrapsJson: string) => Promise<void>;
+			},
 		): Promise<string> => {
 			const relayUrl = (await storage.getMeta<string>("sync.relay")) ?? "";
 			if (!relayUrl) {
@@ -560,6 +564,7 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 				entries: { entries: [], tombstones: [] },
 				memberInvite: {
 					memberId,
+					memberLabel: shareWith.memberLabel,
 					shkB64: shareWith.sharing.shkB64,
 					sharingWraps: shareWith.sharing.sharingWraps.map(sharingWrapToWire),
 					region: shareWith.sharing.region,

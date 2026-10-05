@@ -62,6 +62,7 @@ export const EnrollInviteMsgSchema = z.object({
 	memberInvite: z
 		.object({
 			memberId: z.string(),
+			memberLabel: z.string(),
 			shkB64: z.string(),
 			sharingWraps: z.array(
 				z.discriminatedUnion("kind", [
