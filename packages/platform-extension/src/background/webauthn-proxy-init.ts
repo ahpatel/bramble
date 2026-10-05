@@ -7,9 +7,19 @@
 // shared with the Firefox content-script transport. See docs/passkey-provider.md.
 
 import { api } from "../platform-api";
-import { on, whenReady } from "./router";
-import { isProviderEnabled, productionDeps, setProviderApplyHook } from "./webauthn-provider";
-import { handleCreate, handleGet } from "./webauthn-proxy";
+import { whenReady } from "./router";
+import {
+	disableProviderForNativeFallback,
+	isProviderEnabled,
+	productionDeps,
+	setProviderApplyHook,
+} from "./webauthn-provider";
+import {
+	type CreateCompletion,
+	type GetCompletion,
+	handleCreate,
+	handleGet,
+} from "./webauthn-proxy";
 
 // The proxy events carry no origin/tab, but WebAuthn requires a focused top-level
 // document, so the active tab in the last-focused window is the requester. This is the
@@ -26,15 +36,57 @@ async function activeTabOrigin(): Promise<string | null> {
 }
 
 // Pause the proxy while Bramble runs its OWN WebAuthn (security-key PRF) ceremony, so
-// attach()'s browser-wide interception doesn't hijack our unlock. The popup/options send
-// PAUSE before navigator.credentials and RESUME after (see webauthn-ceremony pauser).
-// Depth-counted, but nothing nests today: createPrfCredential's create() and its fallback
-// get() are SEQUENTIAL, each with its own pause cycle (webauthn-ceremony.ts), so the depth
-// never exceeds 1. Firefox never fires this (security keys disabled there,
-// and the override doesn't touch the extension's own moz-extension origin). See
-// docs/passkey-provider.md.
+// attach()'s browser-wide interception doesn't hijack our unlock. The extension view that
+// runs the ceremony (popup/options, see webauthn-ceremony's pauser in shell.ts) holds a
+// runtime PORT open for the ceremony's duration; connect = pause, disconnect = resume.
+//
+// A port rather than PASSKEY_PROXY_PAUSE/RESUME messages because the browser GUARANTEES a
+// port's disconnect delivery: a popup destroyed mid-ceremony (click away during the key
+// tap) used to strand the resume, leaving pauseDepth stuck above zero forever: the
+// "proxy silently detaches / never re-attaches" hole, see docs/passkey-provider.md. A
+// service-worker death mid-ceremony is also survivable: the popup's port drops, it
+// reconnects, and the revived worker pauses again on the new connection.
+//
+// Depth-counted (each port = one pause unit) for the same reentrancy reasons as before;
+// nothing nests today, but a port-per-ceremony makes nesting correct by construction.
 let pauseDepth = 0;
 let pausedWhileAttached = false;
+
+/** The pause port's name. Must match the pauser in shell.ts (extension-view side). */
+export const PASSKEY_PAUSE_PORT = "tp-passkey-pause";
+
+async function pauseForCeremony(): Promise<void> {
+	if (pauseDepth === 0 && attached) {
+		pausedWhileAttached = true;
+		await failInFlightRequests();
+		await detachWebauthnProxy();
+	}
+	pauseDepth++;
+}
+
+async function resumeAfterCeremony(): Promise<void> {
+	if (pauseDepth > 0) pauseDepth--;
+	if (pauseDepth === 0 && pausedWhileAttached) {
+		pausedWhileAttached = false;
+		// Re-check the pref: the user can toggle the provider off mid-ceremony, and the toggle's
+		// own detach is a no-op while we are already paused-detached.
+		if (isProviderEnabled()) await initWebauthnProxy();
+	}
+}
+
+api.runtime.onConnect.addListener((port) => {
+	if (port.name !== PASSKEY_PAUSE_PORT) return;
+	void (async () => {
+		await pauseForCeremony();
+		// The pauser awaits this ack before its own navigator.credentials call, so the pause
+		// has landed (in-flight requests failed with a reason, proxy detached) before any
+		// WebAuthn event the call can produce.
+		port.postMessage({ held: true });
+	})().catch(() => {});
+	port.onDisconnect.addListener(() => {
+		void resumeAfterCeremony();
+	});
+});
 
 // Requests Chrome has handed us and we have not answered yet. Detaching kills them: measured,
 // the page gets a bare `AbortError` and onRequestCanceled never fires, so we would not otherwise
@@ -61,27 +113,6 @@ async function failInFlightRequests(): Promise<void> {
 		await done.catch(() => {});
 	}
 }
-
-on("PASSKEY_PROXY_PAUSE", async () => {
-	if (pauseDepth === 0 && attached) {
-		pausedWhileAttached = true;
-		await failInFlightRequests();
-		await detachWebauthnProxy();
-	}
-	pauseDepth++;
-	return { ok: true, data: null };
-});
-
-on("PASSKEY_PROXY_RESUME", async () => {
-	if (pauseDepth > 0) pauseDepth--;
-	if (pauseDepth === 0 && pausedWhileAttached) {
-		pausedWhileAttached = false;
-		// Re-check the pref: the user can toggle the provider off mid-ceremony, and the toggle's
-		// own detach is a no-op while we are already paused-detached.
-		if (isProviderEnabled()) await initWebauthnProxy();
-	}
-	return { ok: true, data: null };
-});
 
 let listenersRegistered = false;
 let attached = false;
@@ -116,19 +147,7 @@ function registerListeners(): void {
 					};
 			// Gone means a pause already failed it; completing again throws "Invalid sender".
 			if (!inFlight.delete(req.requestId)) return;
-			try {
-				await api.webAuthenticationProxy.completeCreateRequest(details);
-			} catch (e) {
-				// A malformed responseJson rejects here; error the request so the page's
-				// create() fails fast instead of hanging forever ("nothing happens").
-				console.error("[passkey] completeCreateRequest failed", e);
-				await api.webAuthenticationProxy
-					.completeCreateRequest({
-						requestId: req.requestId,
-						error: { name: "UnknownError", message: String(e).slice(0, 200) },
-					})
-					.catch(() => {});
-			}
+			await completeViaProxy("create", details);
 		})();
 	});
 	api.webAuthenticationProxy.onGetRequest.addListener((req) => {
@@ -143,19 +162,48 @@ function registerListeners(): void {
 						error: { name: "NotAllowedError", message: "no resolvable tab origin" },
 					};
 			if (!inFlight.delete(req.requestId)) return; // as in onCreateRequest
-			try {
-				await api.webAuthenticationProxy.completeGetRequest(details);
-			} catch (e) {
-				console.error("[passkey] completeGetRequest failed", e);
-				await api.webAuthenticationProxy
-					.completeGetRequest({
-						requestId: req.requestId,
-						error: { name: "UnknownError", message: String(e).slice(0, 200) },
-					})
-					.catch(() => {});
-			}
+			await completeViaProxy("get", details);
 		})();
 	});
+}
+
+/**
+ * Complete a request through the proxy. When the ceremony handed the request to the
+ * user's other authenticators (`nativeFallback`, set by the "use another authenticator"
+ * card action), turn the provider off AFTER completing. The order is load-bearing:
+ * detaching an in-flight request aborts it with a bare AbortError (measured,
+ * docs/passkey-provider.md), which would eat the handoff message the user just acted on.
+ * The marker is stripped before the call: complete* validates the W3C response shape,
+ * and the marker is ours, not Chrome's.
+ */
+async function completeViaProxy(
+	kind: "create" | "get",
+	details: (CreateCompletion | GetCompletion) & { nativeFallback?: boolean },
+): Promise<void> {
+	const handoff = details.nativeFallback === true;
+	delete details.nativeFallback;
+	const proxy = api.webAuthenticationProxy;
+	try {
+		await (kind === "create"
+			? proxy.completeCreateRequest(details)
+			: proxy.completeGetRequest(details));
+	} catch (e) {
+		// A malformed responseJson rejects here; error the request so the page's
+		// create()/get() fails fast instead of hanging forever ("nothing happens").
+		console.error(`[passkey] complete${kind === "create" ? "Create" : "Get"}Request failed`, e);
+		const retry = {
+			requestId: details.requestId,
+			error: { name: "UnknownError", message: String(e).slice(0, 200) },
+		};
+		await (kind === "create"
+			? proxy.completeCreateRequest(retry)
+			: proxy.completeGetRequest(retry)
+		).catch(() => {});
+	}
+	// Chrome's proxy has no passthrough, so the handoff lands as a provider-off: the
+	// site's retry then reaches the platform authenticator (Touch ID, iCloud Keychain,
+	// a YubiKey), which is the Cloudflare Access step-up case from the filing.
+	if (handoff) await disableProviderForNativeFallback();
 }
 
 // Registered at module scope rather than from the attach path, and this is load-bearing: the

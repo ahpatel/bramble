@@ -380,9 +380,9 @@ MAIN-world override deliberately skips the extension's own `moz-extension` origi
 ### The pause window is a hole in the provider, and it is structural
 
 Confirmed on a real browser (Brave, 2026-08-29) with a screenshot: a passkey sign-in on a **locked**
-vault opens our unlock popup; the user unlocks with a **security key**; the pauser detaches; the
-page's in-flight request dies with `AbortError`, and every WebAuthn call for the rest of that
-window (PIN entry can take 30 seconds) goes to the platform authenticator instead. The observed
+vault opens our unlock popup; the user unlocks with a **security key**; the pauser detaches
+the proxy; the page's in-flight request dies with `AbortError`, and every WebAuthn call for the rest
+of that window (PIN entry can take 30 seconds) goes to the platform authenticator instead. The observed
 result was **Chromium's own WebAuthn sheet** taking the request over, listing the OS-level
 providers it knows about (iCloud Keychain, phone or tablet) and not Bramble, while Bramble sat in
 its popup asking for a security-key PIN.
@@ -396,18 +396,75 @@ The three requirements genuinely conflict:
 
 There is no passthrough in this API, so nothing can satisfy all three. Whatever we do, a
 security-key unlock triggered by a provider ceremony cannot complete that same ceremony. The
-options are to avoid the combination (steer the ceremony's unlock away from the security key when
-another method exists), or to fail the page's request cleanly and early so the site shows a real
-error instead of the user watching it silently reroute. Both, ideally.
+mitigations, all implemented:
+
+- **F2: the pause is a runtime port, not PAUSE/RESUME messages.** The ceremony-holding view
+  (popup/options) opens a `tp-passkey-pause` port; connect = pause, disconnect = resume, and the
+  browser GUARANTEES disconnect delivery. The old messages died with a destroyed popup and
+  stranded `pauseDepth` above zero forever (the `HOLE` tests in `webauthn-proxy-init.test.ts`,
+  since flipped); a service-worker death mid-pause now re-pauses on the popup's reconnect instead
+  of re-attaching over our own ceremony. The pause acks over the port, so the caller's
+  `navigator.credentials` runs only once the pause has landed.
+- **Steer the ceremony's unlock away from WebAuthn when another method exists.** While a page
+  ceremony is in flight, the unlock popup hides the biometric/security-key paths and the
+  biometric auto-prompt when the vault has a password slot, with a note saying why
+  (`shell.passkeyCeremonyHoldsWebauthnUnlock` → `PASSKEY_CEREMONY_QUERY`; see `Auth.tsx`). The
+  user unlocks with the master password and the page's request survives.
+- **Fail the request early when the vault is WebAuthn-only.** If the vault is locked and its
+  header has no password slot, any unlock from the ceremony needs a WebAuthn tap, which would
+  kill the very request being served, so the ceremony completes the request immediately with
+  `WEBAUTHN_UNLOCK_CONFLICT_MESSAGE` ("unlock Bramble from its toolbar first, then retry")
+  instead of walking the user into the abort (`unlockNeedsWebauthn` in `webauthn-provider.ts`).
 
 Note this hole is not unique to Bramble: any provider on this API that authenticates its own unlock
-with WebAuthn has it. It is the price of all-or-nothing interception.
+with WebAuthn has it. It is the price of all-or-nothing interception; with the mitigations above,
+that price is a retriable request with a real message rather than a silent reroute.
 
 **Not covered, still manual:** whether Chrome destroys the toolbar popup when its own WebAuthn
 dialog takes focus. Device testing (2026-08-29) found the toolbar popup **survives** the dialog and
 in fact cannot be dismissed during the ceremony, and Vivaldi's dialog forces cancel-or-proceed, so
 the stranded-RESUME path looks hard to reach in practice. Left pinned as a HOLE test rather than
-driving a rewrite.
+driving a rewrite. (The F2 port makes the remaining strand unreachable regardless: a destroyed
+popup disconnects its port, and the disconnect IS the resume.)
+
+## The no-match handoff: never dead-end a request the vault cannot serve (tracker #18)
+
+All-or-nothing interception has a second edge beyond the pause hole: while attached, Bramble is
+the browser's ONLY WebAuthn authenticator, so a request the vault cannot serve used to fail the
+whole browser. The Cloudflare Access case is the filing's own example: the step-up `get()` with a step-up `get()` with `allowCredentials` naming already-registered devices (Touch ID, a YubiKey) returned `NotAllowedError: "no matching passkey"`
+and the user's existing MFA became unreachable. The fix is delivery-specific, because the two
+transports have different powers:
+
+- **Firefox (`webauthn-content-transport.ts` → `webauthn-inpage.ts`):** the shim holds the page's
+  OWN options object, so the handoff is a **true passthrough**: the background returns
+  `{fallback: true}` and the shim relays to the native `navigator.credentials` (origin binding
+  preserved, clientDataJSON correct). A get() with no matching Bramble passkey behaves exactly as
+  if Bramble weren't installed: no card, no state change. This is also offered as the "Use another
+  authenticator" action on create cards (the escape hatch for a user who came to enroll Touch ID
+  or a hardware key, e.g. Cloudflare Access's "Add an MFA device").
+- **Chrome (`webauthn-proxy-init.ts`):** the proxy API has NO passthrough, so the handoff is the
+  user's explicit choice. The no-match card's primary action is "Use another authenticator", and
+  accepting it **turns the provider off** (persisted pref + detach, exactly the Settings toggle's
+  write) so the site's retry reaches the platform authenticator. The order inside the delivery
+  layer is load-bearing and unit-tested: complete the request with the handoff message FIRST,
+  then detach, because detaching mid-flight aborts the page's promise with a bare `AbortError`, which
+  would eat the message the user just clicked for. No timed auto re-attach: a timer re-attaching
+  over a live native ceremony is exactly the desync class this feature spent its bug budget on.
+
+The decision travels as `CeremonyDecision {approved: false, nativeFallback: true}` from the pure
+ceremony (`webauthn-proxy.ts`) up through `handleGet`/`handleCreate`, which return the usual
+error completion **plus the `nativeFallback` marker**; the Chrome listener strips the marker
+before calling Chrome (it validates the W3C shape) and then disables; the Firefox transport maps
+it to `{fallback: true}`. The ceremonies also carry a `detail` on declines, so a site's DOMException
+says what actually happened ("no matching passkey", the unlock-conflict guidance, plain "user
+declined") instead of everything being "user declined".
+
+Regression coverage: `webauthn-proxy.test.ts` (the decision paths),
+`webauthn-content-transport.test.ts` (the mapping), `webauthn-proxy-init.test.ts` (the
+complete-before-disable order), and `e2e/extension/passkey-provider.spec.ts`, a synthetic
+fixture page in the Cloudflare Access shape (step-up get with unknown `allowCredentials` →
+create) driven through the real proxy, including proof that native WebAuthn is reachable again
+after the handoff (via a CDP virtual authenticator).
 
 ## Cross-cutting decisions
 
@@ -493,7 +550,7 @@ local "which provider made this passkey" UIs. Worth doing for attribution, not l
    save-password) for create + get, the create-time vault write (`savePlacement`), the
    **Settings → General toggle** ("Use Bramble for passkeys", gated on `shell.supportsPasskeyProvider`,
    applies live + persists), and **pause-during-own-unlock** (the proxy detaches around Bramble's own
-   security-key PRF ceremony, reentrant, via PASSKEY_PROXY_PAUSE/RESUME). **Origin resolved:**
+   security-key PRF ceremony, reentrant, via the `tp-passkey-pause` runtime port (connect = pause, disconnect = resume). **Origin resolved:**
    `requestDetailsJson` carries no origin (W3C options shape) and the events carry no tab, so the
    origin comes from the **active tab** (`chrome.tabs.query({active, lastFocusedWindow})`), which is
    authoritative since WebAuthn requires a focused top-level context. **Multi-account create** is

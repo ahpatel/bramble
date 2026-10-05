@@ -334,8 +334,13 @@ differs from Chrome.
   authenticator so a page's WebAuthn never hangs or breaks.
 - **Disabled / passthrough.** The override is always injected, so when the provider is off (or the
   origin is one we won't serve, e.g. a cross-origin child frame) the background replies `passthrough`
-  and the shim calls the captured native method. Firefox therefore has **no all-or-nothing
-  interception** and **no pause-around-own-unlock** dance that the Chrome proxy needs.
+  and the shim calls the captured native method. The same relay powers the **no-match handoff**
+  (tracker #18): when the vault cannot serve a request (e.g. a step-up get whose `allowCredentials`
+  name devices registered elsewhere), the background replies `fallback` and the shim relays the
+  page's own options to the native authenticator, so a provider-enabled Firefox still reaches
+  the user's other registered devices, with no card and no state change. Firefox therefore has
+  **no all-or-nothing interception** and **no pause-around-own-unlock** dance that the Chrome
+  proxy needs.
   Injecting them only when the pref is on (`scripting.registerContentScripts`) was considered while
   fixing issue #59 and deliberately not done: the two scripts are 0.6KB and 3.8KB, so the per-frame
   saving is noise next to what that issue was about, and getting `document_start` + `world: "MAIN"`

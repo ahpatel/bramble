@@ -155,6 +155,15 @@ export interface SavePasskeyPrompt extends CornerPromptCommon {
 	rpId: string;
 	rpName?: string;
 	userName?: string;
+	/** get only: the vault holds no passkey that could serve this request (checked
+	 * post-unlock). Drives the "no Bramble passkey here, use another authenticator"
+	 * card instead of a confirm-then-error dead end. See docs/passkey-provider.md. */
+	noMatch?: boolean;
+	/** Offer the "use another authenticator" action (sentinel choice "native" on reply):
+	 * Firefox relays the request to the native authenticator; Chrome has no passthrough
+	 * (the proxy is all-or-nothing), so the provider turns itself off and the site's
+	 * retry goes native. Carries which, so the card can say what will happen. */
+	nativeFallback?: "passthrough" | "disable";
 	/** create only: name of the existing login this passkey will attach to, when one
 	 * covers the rpId unambiguously (resolved only when the vault is already unlocked).
 	 * Drives "Add a passkey to your existing X login" vs "Save a new passkey" copy. */
@@ -174,7 +183,8 @@ export type CornerPromptPayload = SaveLoginPrompt | UpdateLoginPrompt | SavePass
 export interface PasskeyPromptResponse {
 	promptId: string;
 	approved: boolean;
-	/** create picker: the chosen login id, or "new" to create a fresh login. */
+	/** create picker: the chosen login id, or "new" to create a fresh login. The
+	 * sentinel "native" (any card) is the "use another authenticator" action, not a pick. */
 	choice?: string;
 }
 
