@@ -22,6 +22,11 @@ export async function readAndDecodeVault(vaultId?: string): Promise<VaultBlob> {
 	return decodeVaultBlob(await extensionStorage.readVaultBlob(vaultId));
 }
 
+/** The raw blob bytes, for sharing-aware code that needs a format-tagged decode. */
+export async function readVaultBytes(vaultId?: string): Promise<Uint8Array> {
+	return extensionStorage.readVaultBlob(vaultId);
+}
+
 /** Persist a vault's blob (`vaultId` targets the active vault; omitted = primary). chrome.storage.local
  * is always writable headless, so the write always goes straight through. */
 export async function writeVault(blob: Uint8Array, vaultId?: string): Promise<void> {

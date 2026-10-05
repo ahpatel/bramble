@@ -18,8 +18,13 @@ import {
 	SYNC_LAST_SYNCED_KEY,
 	type VaultSyncPort,
 } from "@core/sync";
+import {
+	buildSyncSharingView,
+	localizeDepsFromCrypto,
+	type SyncViewCrypto,
+} from "@core/sync/localize";
 import { syncKeyFor } from "@core/sync/sync-keys";
-import { encodeVaultBlob, type VaultBlob } from "@core/vault-format";
+import { decodeVault, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
 import { api } from "../platform-api";
 import { extensionStorage } from "../storage";
 import {
@@ -55,6 +60,7 @@ import {
 	broadcastVaultChanged,
 	bytesToBase64,
 	readAndDecodeVault,
+	readVaultBytes,
 	writeVault,
 } from "./vault-io";
 import * as vekStore from "./vek-store";
@@ -342,6 +348,27 @@ async function readLocalState(
 // writeMerged, so the slots captured there are current.
 function makeVaultSyncPort(ctx: SyncVaultCtx): VaultSyncPort {
 	let slots: VaultBlob["slots"] = [];
+	const localizeCrypto: SyncViewCrypto = {
+		decryptWithVek: async (iv, ciphertext) => {
+			const dec = await sendToOffscreen({
+				type: "CRYPTO_DECRYPT_OUTER",
+				vaultId: ctx.vaultId,
+				payload: { iv, ciphertext },
+			});
+			if (!dec.ok || typeof dec.data !== "string")
+				throw new Error(dec.error ?? "outer decrypt failed");
+			return dec.data;
+		},
+		encryptWithVek: async (plaintext) => {
+			const enc = await sendToOffscreen({
+				type: "CRYPTO_ENCRYPT_OUTER",
+				vaultId: ctx.vaultId,
+				payload: { plaintext },
+			});
+			if (!enc.ok || !enc.data) throw new Error(enc.error ?? "outer encrypt failed");
+			return enc.data as { iv: string; ciphertext: string };
+		},
+	};
 	return {
 		async readLocal() {
 			const { blob, payload } = await readLocalState(ctx);
@@ -349,6 +376,13 @@ function makeVaultSyncPort(ctx: SyncVaultCtx): VaultSyncPort {
 			return payload;
 		},
 		witnessRemote: (stamps) => witnessStamps(stamps),
+		sharingView: async () => {
+			const bytes = await readVaultBytes(ctx.vaultId);
+			const decoded = decodeVault(bytes);
+			if (decoded.format !== "vlt2") return null;
+			return buildSyncSharingView(localizeCrypto, decoded.blob);
+		},
+		localizeDeps: localizeDepsFromCrypto(localizeCrypto),
 		async writeMerged(merged) {
 			const enc = await sendToOffscreen({
 				type: "CRYPTO_ENCRYPT_OUTER",
