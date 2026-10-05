@@ -12,6 +12,7 @@ import { usePendingEnrollApproval } from "../../../../hooks/usePendingEnrollAppr
 import { useVault } from "../../../../hooks/useVault";
 import { decryptWithKey } from "../../../../vault/sharing-crypto";
 import {
+	addMemberToCollection,
 	createCollection,
 	removeMember,
 	renameCollection,
@@ -53,6 +54,53 @@ function CollectionLabel({
 		};
 	}, [collectionKey, labelIv, labelCiphertext, fallback]);
 	return <span>{label ?? fallback}</span>;
+}
+
+/** Inline picker of collections a member is not yet in. Renders nothing when
+ * every collection already includes them. */
+function MemberCollectionPicker({
+	memberId,
+	onAdd,
+}: {
+	memberId: string;
+	onAdd: (collectionId: string) => void;
+}) {
+	const { sharing } = useVault();
+	const [open, setOpen] = useState(false);
+	const collections = (sharing?.region.collections ?? []).filter(
+		(c) => !c.memberIds.includes(memberId),
+	);
+	if (collections.length === 0) return null;
+	return (
+		<>
+			{open ? (
+				<div className="flex flex-wrap justify-end gap-1.5">
+					{collections.map((c) => (
+						<Button
+							key={c.id}
+							variant="secondary"
+							size="sm"
+							onClick={() => {
+								setOpen(false);
+								onAdd(c.id);
+							}}
+						>
+							<CollectionLabel
+								collectionKey={sharing?.collectionKeys[c.id]}
+								labelIv={c.labelIv}
+								labelCiphertext={c.labelCiphertext}
+								fallback={c.id}
+							/>
+						</Button>
+					))}
+				</div>
+			) : (
+				<Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
+					<Trans>Add to collection</Trans>
+				</Button>
+			)}
+		</>
+	);
 }
 
 export function SharingSection() {
@@ -230,22 +278,39 @@ export function SharingSection() {
 						title={member.label ?? member.id.slice(0, 8)}
 						subtitle={t`${sharing.region.collections.filter((c) => c.memberIds.includes(member.id)).length} collection(s)`}
 					>
-						<Button
-							variant="ghost"
-							size="sm"
-							disabled={busy}
-							aria-label={t`Remove member`}
-							onClick={() => {
-								// The honest copy (ADR-0004): removal stops future access;
-								// it is not a remote wipe. The passwords must rotate.
-								if (!window.confirm(REMOVE_COPY)) return;
-								void act(async () => {
-									await runSharingTransition((deps, state) => removeMember(deps, state, member.id));
-								});
-							}}
-						>
-							<Trans>Remove</Trans>
-						</Button>
+						<div className="flex items-center gap-1.5">
+							<MemberCollectionPicker
+								memberId={member.id}
+								onAdd={(cid) => {
+									void act(async () => {
+										await runSharingTransition((deps, state) =>
+											addMemberToCollection(deps, state, {
+												collectionId: cid,
+												memberId: member.id,
+											}),
+										);
+									});
+								}}
+							/>
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={busy}
+								aria-label={t`Remove member`}
+								onClick={() => {
+									// The honest copy (ADR-0004): removal stops future access;
+									// it is not a remote wipe. The passwords must rotate.
+									if (!window.confirm(REMOVE_COPY)) return;
+									void act(async () => {
+										await runSharingTransition((deps, state) =>
+											removeMember(deps, state, member.id),
+										);
+									});
+								}}
+							>
+								<Trans>Remove</Trans>
+							</Button>
+						</div>
 					</Row>
 				))}
 				<Row
