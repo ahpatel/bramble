@@ -100,6 +100,7 @@ What it cannot do yet, and says so rather than failing quietly: Touch ID unlock,
 - **Import from the others.** Bring entries over from 1Password, Bitwarden, Proton Pass, LastPass, KeePass (KDBX4 key files included), Apple Passwords, or Google Password Manager.
 - **Multi-key vaults.** LUKS-style key slots, so your master password, a security key, biometrics, or your recovery code can each unlock the same vault.
 - **Multiple vaults.** Keep more than one vault side by side and pick which to unlock when you open Bramble. Handy for sharing a device, or walling off separate sets of logins behind their own master passwords.
+- **Family sharing.** Share specific entries with specific people inside one vault — each of you keeps your own master password, and everything stays end-to-end encrypted with no account and no server. You group entries into collections, invite in person, and revoke with one click. Removal stops future access (it's not a remote wipe — rotate the affected passwords), and a member's export contains exactly the entries they can open. See [docs/family-sharing.md](docs/family-sharing.md).
 
 ## Why this beats the cloud managers
 
