@@ -212,6 +212,7 @@ import {
 } from "../vault/build-vault";
 import { createEntryMutations, type VaultEntries } from "../vault/entry-mutations";
 import { entryDataSchema, normalizeEntryData } from "../vault/entry-normalize";
+import { buildMemberSharingState } from "../vault/member-vault";
 import {
 	enableSharing as enableSharingLayer,
 	loadOwnerSharingState,
@@ -251,7 +252,7 @@ import {
 	type WebauthnKeyKind,
 } from "../vault/webauthn-ceremony";
 import type { SharingRegion } from "../vault-format";
-import { VLT2 } from "../vault-format";
+import { isMemberVault, VLT2 } from "../vault-format";
 import { type SyncedSettingsAccess, SyncedSettingsContext } from "./synced-settings";
 import { PER_VAULT_PREF_KEYS, PREF_ALIAS_PROVIDER } from "./usePrefs";
 import { useSyncEnrollment } from "./useSyncEnrollment";
@@ -711,11 +712,21 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		// rather than failing the unlock. See docs/adr/0007.
 		try {
 			const decoded = await readTaggedBlob();
-			if (decoded.format === "vlt2") {
-				const ownerState = await loadOwnerSharingState(sharingDeps, decoded.blob);
-				setSharing(ownerState);
-			} else {
+			if (decoded.format !== "vlt2") {
 				setSharing(null);
+			} else if (isMemberVault(decoded.blob)) {
+				// Member device: the loaded key is the member master key; it decrypts
+				// the member secrets, which open the sharing key seal and the
+				// collection key seals.
+				const mmk = await crypto.exportVek();
+				setSharing(
+					await buildMemberSharingState(sharingDeps, {
+						blob: decoded.blob,
+						memberMasterKeyB64: mmk,
+					}),
+				);
+			} else {
+				setSharing(await loadOwnerSharingState(sharingDeps, decoded.blob));
 			}
 		} catch (e) {
 			console.warn("[vault] sharing layer failed to load:", e);
