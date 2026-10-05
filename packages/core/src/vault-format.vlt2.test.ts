@@ -53,6 +53,16 @@ function makeRegion(overrides: Partial<SharingRegion> = {}): SharingRegion {
 				labelIv: fillBytes(12, 0x90).toString(),
 				labelCiphertext: fillBytes(24, 0xa0).toString(),
 				memberIds: ["member-dad"],
+				keyWraps: [
+					{ target: "owner", iv: "iv-o", ciphertext: "ct-o" },
+					{
+						target: "member",
+						memberId: "member-dad",
+						ephemeralPub: "ep",
+						iv: "iv-m",
+						ciphertext: "ct-m",
+					},
+				],
 			},
 		],
 		wrappers: [
@@ -80,6 +90,7 @@ function makeVlt2Blob(): Vlt2Blob {
 			{
 				kind: SHARING_WRAP_KIND_MEMBER,
 				memberId: "member-dad",
+				ephemeralPub: fillBytes(32, 0x85),
 				iv: fillBytes(LEN_IV, 0x80),
 				wrappedShk: fillBytes(LEN_WRAPPED_KEY, 0x90),
 			},
@@ -156,11 +167,11 @@ describe("VLT2 round-trips", () => {
 	it("rejects an entries length that overruns the blob", () => {
 		const bytes = VLT2.encode(makeVlt2Blob());
 		// Layout: magic(4) + version(1) + slotCount(1) + wrapCount(1)
-		//        + slot TLV(3+124) + owner wrap TLV(3+60) + member wrap TLV(3+70)
+		//        + slot TLV(3+124) + owner wrap TLV(3+60) + member wrap TLV(3+103)
 		//        => entriesLen (u32-BE) at this offset.
 		const slotPayload = LEN_SLOT_ID + LEN_SALT + LEN_VERIFIER + LEN_WRAP_IV + LEN_WRAPPED_KEY;
 		const ownerWrapPayload = LEN_IV + LEN_WRAPPED_KEY;
-		const memberWrapPayload = 1 + "member-dad".length + ownerWrapPayload;
+		const memberWrapPayload = 1 + "member-dad".length + 32 + ownerWrapPayload;
 		const entriesLenOffset =
 			4 + 2 + 1 + (3 + slotPayload) + (3 + ownerWrapPayload) + (3 + memberWrapPayload);
 		const dv = new DataView(bytes.buffer, bytes.byteOffset + entriesLenOffset, 4);
@@ -196,9 +207,43 @@ describe("sharing region schema", () => {
 	it("allows a collection with empty membership (prepared before members join)", () => {
 		expect(() =>
 			makeRegion({
-				collections: [{ id: "c", labelIv: "iv", labelCiphertext: "ct", memberIds: [] }],
+				collections: [
+					{ id: "c", labelIv: "iv", labelCiphertext: "ct", memberIds: [], keyWraps: [] },
+				],
 			}),
 		).not.toThrow();
+	});
+
+	it("rejects a key wrap with an unknown target", () => {
+		expect(() =>
+			makeRegion({
+				collections: [
+					{
+						id: "c",
+						labelIv: "iv",
+						labelCiphertext: "ct",
+						memberIds: [],
+						keyWraps: [{ target: "everyone" } as never],
+					},
+				],
+			}),
+		).toThrow();
+	});
+
+	it("rejects a member key wrap missing its ephemeral public key", () => {
+		expect(() =>
+			makeRegion({
+				collections: [
+					{
+						id: "c",
+						labelIv: "iv",
+						labelCiphertext: "ct",
+						memberIds: ["m"],
+						keyWraps: [{ target: "member", memberId: "m", iv: "i", ciphertext: "c" } as never],
+					},
+				],
+			}),
+		).toThrow();
 	});
 
 	it("LEN_SHARING_KEY matches the wrapped key length", () => {

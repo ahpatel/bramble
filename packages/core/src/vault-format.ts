@@ -284,6 +284,11 @@ export const SHARING_WRAP_KIND_VEK = 0x01;
 /** Outer record: the SHK wrapped for one member (under that member's key). */
 export const SHARING_WRAP_KIND_MEMBER = 0x02;
 
+/** X25519 public key of the ephemeral sealing key (base64 length in bytes).
+ * Seals bind the derived AES key to BOTH public keys via HKDF, so a seal
+ * cannot be replayed against a different key pair (ADR-0002). */
+const EPH_PUB_LEN = 32;
+
 /** A copy of the sharing key wrapped for one reader. Lives OUTSIDE the region:
  * a member needs it to read the region, so it cannot live inside it. */
 const SharingWrapSchema = z.discriminatedUnion("kind", [
@@ -295,6 +300,7 @@ const SharingWrapSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal(SHARING_WRAP_KIND_MEMBER),
 		memberId: z.string().min(1),
+		ephemeralPub: bytes(EPH_PUB_LEN, "ephemeralPub"),
 		iv: bytes(LEN_IV, "iv"),
 		wrappedShk: bytes(LEN_WRAPPED_VEK, "wrappedShk"),
 	}),
@@ -309,12 +315,32 @@ const RegionIndexEntrySchema = z.object({
 });
 export type RegionIndexEntry = z.infer<typeof RegionIndexEntrySchema>;
 
-/** A collection: label sealed under the collection key, membership by member id. */
+/** A collection key sealed for a reader: the owner (under the vault key) or a
+ * member (X25519 seal to their member key). Lives with its collection. */
+export const RegionKeyWrapSchema = z.discriminatedUnion("target", [
+	z.object({
+		target: z.literal("owner"),
+		iv: z.string(),
+		ciphertext: z.string(),
+	}),
+	z.object({
+		target: z.literal("member"),
+		memberId: z.string().min(1),
+		ephemeralPub: z.string().min(1),
+		iv: z.string(),
+		ciphertext: z.string(),
+	}),
+]);
+export type RegionKeyWrap = z.infer<typeof RegionKeyWrapSchema>;
+
+/** A collection: label sealed under the collection key, membership by member id,
+ * and the collection key wrapped for every reader (owner + members). */
 const RegionCollectionSchema = z.object({
 	id: z.string().min(1),
 	labelIv: z.string(),
 	labelCiphertext: z.string(),
 	memberIds: z.array(z.string().min(1)),
+	keyWraps: z.array(RegionKeyWrapSchema),
 });
 export type RegionCollection = z.infer<typeof RegionCollectionSchema>;
 
@@ -367,14 +393,17 @@ function encodeSharingWrap(wrap: SharingWrap): Uint8Array {
 	const memberIdBytes =
 		wrap.kind === SHARING_WRAP_KIND_MEMBER ? utf8Bytes(wrap.memberId) : new Uint8Array(0);
 	if (memberIdBytes.length > 0xff) throw new Error("member id too long");
+	const ephLen = wrap.kind === SHARING_WRAP_KIND_MEMBER ? EPH_PUB_LEN : 0;
 	const payload = new Uint8Array(
-		(wrap.kind === SHARING_WRAP_KIND_MEMBER ? 1 : 0) + memberIdBytes.length + wrapFixedLen,
+		(wrap.kind === SHARING_WRAP_KIND_MEMBER ? 1 : 0) + memberIdBytes.length + ephLen + wrapFixedLen,
 	);
 	let off = 0;
 	if (wrap.kind === SHARING_WRAP_KIND_MEMBER) {
 		payload[off++] = memberIdBytes.length;
 		payload.set(memberIdBytes, off);
 		off += memberIdBytes.length;
+		payload.set(wrap.ephemeralPub, off);
+		off += EPH_PUB_LEN;
 	}
 	payload.set(wrap.iv, off);
 	off += LEN_IV;
@@ -394,19 +423,20 @@ function decodeSharingWrap(kind: number, payload: Uint8Array): SharingWrap {
 		});
 	}
 	if (kind === SHARING_WRAP_KIND_MEMBER) {
-		if (payload.length < 1 + wrapFixedLen) {
+		if (payload.length < 1 + EPH_PUB_LEN + wrapFixedLen) {
 			throw new Error(`sharing wrap (member) payload too short: ${payload.length}`);
 		}
 		const memberIdLen = payload[0]!;
-		if (1 + memberIdLen + wrapFixedLen !== payload.length) {
+		if (1 + memberIdLen + EPH_PUB_LEN + wrapFixedLen !== payload.length) {
 			throw new Error(`sharing wrap (member) payload length mismatch (memberIdLen=${memberIdLen})`);
 		}
 		const decoder = new TextDecoder();
 		return SharingWrapSchema.parse({
 			kind,
 			memberId: decoder.decode(payload.slice(1, 1 + memberIdLen)),
-			iv: payload.slice(1 + memberIdLen, 1 + memberIdLen + LEN_IV),
-			wrappedShk: payload.slice(1 + memberIdLen + LEN_IV),
+			ephemeralPub: payload.slice(1 + memberIdLen, 1 + memberIdLen + EPH_PUB_LEN),
+			iv: payload.slice(1 + memberIdLen + EPH_PUB_LEN, 1 + memberIdLen + EPH_PUB_LEN + LEN_IV),
+			wrappedShk: payload.slice(1 + memberIdLen + EPH_PUB_LEN + LEN_IV),
 		});
 	}
 	throw new Error(`unknown sharing wrap kind: ${kind}`);
