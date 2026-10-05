@@ -69,7 +69,20 @@ vi.mock("../adapters/storage", () => ({
 		removeMeta: async (k: string) => {
 			h.meta.delete(k);
 		},
-		readVaultBlob: async () => new Uint8Array([9]),
+		readVaultBlob: async () => {
+			// A minimal valid VLT1 blob: writeEntriesBlob decodes the raw bytes now
+			// (format preservation), so junk bytes would fail the write.
+			const out = new Uint8Array(6 + 3 + 124 + 12 + 4);
+			out.set([0x56, 0x4c, 0x54, 0x31], 0); // magic "VLT1"
+			out[4] = 2; // version
+			out[5] = 1; // slot count
+			out[6] = 1; // kind password
+			const len = 124;
+			out[7] = (len >> 8) & 0xff;
+			out[8] = len & 0xff;
+			out.fill(3, 6 + 3 + 124, 6 + 3 + 124 + 12); // entries iv
+			return out;
+		},
 		writeVaultBlob: async (_blob: Uint8Array, vaultId?: string) => {
 			h.blobWrites.push({ vaultId });
 		},
@@ -98,6 +111,11 @@ vi.mock("./keys", () => ({
 	// Published on unlock so a paired browser can ask which device this is. Best effort, and
 	// nothing here depends on it.
 	publishSyncIdentity: async () => {},
+	// Mailbox signing/verification (never exercised by these tests; the mailbox
+	// tick catches its own failures).
+	signRoster: async (message: string) => `sig-${message.length}`,
+	verifyRoster: async () => true,
+	syncSigningPublicKey: async () => "P",
 }));
 vi.mock("../sync-crypto", () => ({ desktopSyncCrypto: {} }));
 

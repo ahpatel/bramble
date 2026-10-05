@@ -36,10 +36,19 @@ import {
 	localizeDepsFromCrypto,
 	type SyncViewCrypto,
 } from "@core/sync/localize";
+import {
+	buildMailboxEnvelope,
+	type MailboxSigner,
+	type MailboxVerifier,
+	pullFromMailbox,
+	pushToMailbox,
+} from "@core/sync/mailbox";
+import { deriveRoomId } from "@core/sync/nostr";
 import { addDevice } from "@core/sync/roster";
 import { syncKeyFor } from "@core/sync/sync-keys";
 import type { MeshSession } from "@core/sync/transport/peer-session";
 import { startRosterSync } from "@core/sync/transport/roster-sync";
+import { base64ToBytes } from "@core/util/bytes";
 import { parseRegistry, VAULT_REGISTRY_KEY } from "@core/vault/vault-registry";
 import { desktopCrypto } from "../adapters/crypto";
 import { desktopStorage } from "../adapters/storage";
@@ -57,7 +66,13 @@ const syncViewCrypto: SyncViewCrypto = {
 import { notifyExternalChange, onVaultStateChange } from "../adapters/vault-session";
 import { desktopSyncCrypto } from "../sync-crypto";
 import { emit, report } from "./bus";
-import { deviceKeypair, publishSyncIdentity } from "./keys";
+import {
+	deviceKeypair,
+	publishSyncIdentity,
+	signRoster,
+	syncSigningPublicKey,
+	verifyRoster,
+} from "./keys";
 import { linkPeerSource } from "./link-peers";
 
 const DEFAULT_RELAY = "wss://bramble-relay.flythenimbus.workers.dev";
@@ -168,6 +183,8 @@ let sessionGen = 0;
 let applyInFlight: Promise<unknown> = Promise.resolve();
 /** Peers rebroadcast every few seconds; stamp "last synced" at most every 30s. */
 let lastSyncStampAt = 0;
+/** The mailbox slow-tick timer, cleared with the sessions (stopRosterSync). */
+let mailboxTimer: ReturnType<typeof setInterval> | null = null;
 
 async function startRoster(): Promise<void> {
 	const vaultId = await activeVaultId();
@@ -258,6 +275,81 @@ async function startRoster(): Promise<void> {
 		},
 	} satisfies Parameters<typeof startRosterSync>[0];
 
+	// Mailbox (ADR-0008): store-and-forward for peers that aren't online. Push our
+	// payload to every rostered peer's queue on a slow tick, pull our own queue and
+	// merge whatever arrives. Signatures make the untrusted postbox safe: the
+	// recipient verifies the sender's roster key, exactly as a live frame.
+	// BEST-EFFORT: any setup or tick failure degrades to live-sync-only — the
+	// mailbox must never block or break the sessions below it.
+	try {
+		const roomId = await deriveRoomId(base64ToBytes(group.groupKey));
+		const ownDeviceId = await ensureDeviceId(
+			(k) => desktopStorage.getMeta<string>(syncKeyFor(k, vaultId)),
+			(k, v) => desktopStorage.setMeta<string>(syncKeyFor(k, vaultId), v),
+		);
+		const mailboxSigner: MailboxSigner = {
+			sign: (message) => signRoster(message),
+			publicKey: () => syncSigningPublicKey(),
+		};
+		const mailboxVerifier: MailboxVerifier = {
+			signingKeyFor: async (deviceId) => {
+				const g = await desktopStorage.getMeta<GroupConfig>(groupMetaKey);
+				return g?.roster.devices.find((d) => d.id === deviceId)?.sigKey ?? null;
+			},
+			verify: (publicKeyB64, message, sigB64) => verifyRoster(publicKeyB64, message, sigB64),
+		};
+		// Actual peer list is resolved per tick (roster may change mid-session).
+		const mailboxTargets = async (): Promise<string[]> => {
+			const g = await desktopStorage.getMeta<GroupConfig>(groupMetaKey);
+			return (g?.roster.devices ?? []).filter((d) => d.id !== ownDeviceId).map((d) => d.id);
+		};
+		const mailboxTick = async (push: boolean): Promise<void> => {
+			try {
+				if (push) {
+					const payload = encodeEntriesPayload(await blobStore.readEntriesPayload());
+					for (const peer of await mailboxTargets()) {
+						const envelope = await buildMailboxEnvelope({
+							from: ownDeviceId,
+							to: peer,
+							room: roomId,
+							payload: JSON.parse(payload) as Parameters<typeof buildMailboxEnvelope>[0]["payload"],
+							signer: mailboxSigner,
+						});
+						await pushToMailbox(relay, roomId, peer, envelope);
+					}
+				}
+				const incoming = await pullFromMailbox(relay, roomId, ownDeviceId, mailboxVerifier);
+				for (const payload of incoming) {
+					const port = createVaultSyncPort({
+						store: blobStore,
+						witnessRemote: async (stamps) => {
+							const clock = await getClock(vaultId);
+							for (const hlc of stamps) clock.witness(hlc);
+						},
+						sharingView: async () => {
+							const bytes = await desktopStorage.readVaultBlob(vaultId);
+							const decoded = decodeVault(bytes);
+							if (decoded.format !== "vlt2") return null;
+							return buildSyncSharingView(syncViewCrypto, decoded.blob);
+						},
+						localizeDeps: localizeDepsFromCrypto(syncViewCrypto),
+						onChanged: notifyExternalChange,
+					});
+					await applyRemotePayload(port, payload);
+				}
+			} catch (e) {
+				// The mailbox is an addition to live sync, never a requirement: a relay
+				// without the routes (older self-host) just means no store-and-forward.
+				report(`sync: mailbox unavailable (${(e as Error).message})`);
+			}
+		};
+		// Pull immediately (catch up while we were away), then push+pull on a slow tick.
+		void mailboxTick(false);
+		if (mailboxTimer) clearInterval(mailboxTimer);
+		mailboxTimer = setInterval(() => void mailboxTick(true), 30_000);
+	} catch (e) {
+		report(`sync: mailbox unavailable (${(e as Error).message})`);
+	}
 	rosterSessions = [
 		await startRosterSync(common),
 		// Browsers paired to this app, over the pipe they already have. Started second so a relay
@@ -277,6 +369,10 @@ async function maybeStartRosterSync(): Promise<void> {
 
 export function stopRosterSync(): void {
 	for (const session of rosterSessions) session.stop();
+	if (mailboxTimer) {
+		clearInterval(mailboxTimer);
+		mailboxTimer = null;
+	}
 	rosterSessions = [];
 	sessionVaultId = null;
 	// Invalidate any merge still queued: it captured the old gen and must not write.

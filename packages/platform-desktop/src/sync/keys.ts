@@ -91,6 +91,16 @@ export async function signRoster(canonical: string): Promise<string> {
 	return desktopSyncCrypto.roster_sign(secretKey, canonical);
 }
 
+/** Verify a roster-style signature against a signing key (the mailbox uses the
+ * same Ed25519 keys). */
+export async function verifyRoster(
+	publicKeyB64: string,
+	message: string,
+	signatureB64: string,
+): Promise<boolean> {
+	return desktopSyncCrypto.roster_verify(publicKeyB64, message, signatureB64);
+}
+
 /**
  * This device's admission verify key, derived from the master password and this device's
  * password-slot salt. Published in the roster so peers can check which NEW devices this one
