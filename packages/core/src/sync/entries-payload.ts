@@ -32,12 +32,28 @@ export const SyncedSettingSchema = z.object({
 export const SyncedSettingsSchema = z.record(z.string(), SyncedSettingSchema);
 export type SyncedSettings = z.infer<typeof SyncedSettingsSchema>;
 
-/** The decrypted entries payload: live entries, the deletion graveyard, and any vault-scoped
- * settings. `settings` is optional so a payload written before it existed still parses. */
+/** A sealed conflict loser (ADR-0006): when two devices edit the same entry, the
+ * losing envelope is kept here verbatim — never decrypted during the merge — so
+ * the UI can surface "this entry changed on two devices" and the user can
+ * recover the other copy. Optional so payloads written before it existed parse. */
+export const ConflictRecordSchema = z.object({
+	entryId: z.string(),
+	/** The loser's sealed envelope, carried as bytes. */
+	envelope: EncryptedEntrySchema,
+	/** The stamp of the winning version at the time the conflict was recorded,
+	 * so the UI can tell which side the user is looking at. */
+	winnerHlc: HlcSchema,
+});
+export type ConflictRecord = z.infer<typeof ConflictRecordSchema>;
+
+/** The decrypted entries payload: live entries, the deletion graveyard, any vault-scoped
+ * settings, and any sealed conflict losers. `settings` and `conflicts` are optional so
+ * payloads written before they existed still parse. */
 export const EntriesPayloadSchema = z.object({
 	entries: z.array(EncryptedEntrySchema),
 	tombstones: z.array(TombstoneSchema),
 	settings: SyncedSettingsSchema.optional(),
+	conflicts: z.array(ConflictRecordSchema).optional(),
 });
 export type EntriesPayload = z.infer<typeof EntriesPayloadSchema>;
 
