@@ -26,7 +26,7 @@ import { Row, RowGroup, Section } from "./primitives";
  */
 export function DataSection() {
 	const { shell, exchange } = usePlatform();
-	const { exportVault, exportToApp } = useVault();
+	const { exportVault, exportToApp, sharing } = useVault();
 	const { t } = useLingui();
 	const { show } = useToast();
 	const [kdbxOpen, setKdbxOpen] = useState(false);
@@ -71,7 +71,11 @@ export function DataSection() {
 					<Row
 						icon={<Download className="w-4 h-4 text-primary" />}
 						title={t`Export a backup`}
-						subtitle={t`Save an encrypted .bramble copy of your vault. It still needs your master password to open.`}
+						subtitle={
+							sharing?.performer.role === "member"
+								? t`Save an encrypted .bramble copy of the entries you can open. It still needs your master password to open.`
+								: t`Save an encrypted .bramble copy of your vault. It still needs your master password to open.`
+						}
 					>
 						{/* Both groups render a button reading "Export"; the aria-label distinguishes them
 						    for screen readers, which would otherwise announce the pair identically. */}
