@@ -28,10 +28,19 @@ import {
 	localizeDepsFromCrypto,
 	type SyncViewCrypto,
 } from "@core/sync/localize";
+import {
+	buildMailboxEnvelope,
+	type MailboxSigner,
+	type MailboxVerifier,
+	pullFromMailbox,
+	pushToMailbox,
+} from "@core/sync/mailbox";
+import { deriveRoomId } from "@core/sync/nostr";
 import { syncKeyFor } from "@core/sync/sync-keys";
 import { startEnroll } from "@core/sync/transport/enroll-host";
 import type { MeshSession } from "@core/sync/transport/peer-session";
 import { startRosterSync } from "@core/sync/transport/roster-sync";
+import { base64ToBytes } from "@core/util/bytes";
 import { parseRegistry, VAULT_REGISTRY_KEY } from "@core/vault/vault-registry";
 import { decodeVault } from "@core/vault-format";
 import { mobileCrypto } from "../adapters/crypto";
@@ -398,6 +407,8 @@ let sessionGen = 0;
 let applyInFlight: Promise<unknown> = Promise.resolve();
 // Throttle the "last synced" stamp: peers rebroadcast every few seconds, so update at most ~30s.
 let lastSyncStampAt = 0;
+/** Mailbox slow-tick timers, cleared with the session (stopRosterSync). */
+let mailboxTimers: ReturnType<typeof setInterval>[] = [];
 
 async function startRoster(): Promise<void> {
 	const vaultId = await activeVaultId();
@@ -415,6 +426,80 @@ async function startRoster(): Promise<void> {
 	const blobStore = makeBlobStore(vaultId);
 	const gen = sessionGen;
 	sessionVaultId = vaultId;
+	// Mailbox (ADR-0008): store-and-forward for offline peers, best-effort.
+	// Mobile syncs only while open, so the mailbox is how the family hears about
+	// a change made here after the app is backgrounded.
+	try {
+		const roomId = await deriveRoomId(base64ToBytes(group.groupKey));
+		const ownDeviceId = await ensureDeviceId(
+			(k) => mobileStorage.getMeta<string>(syncKeyFor(k, vaultId)),
+			(k, v) => mobileStorage.setMeta<string>(syncKeyFor(k, vaultId), v),
+		);
+		const signer: MailboxSigner = {
+			sign: async (message) => wasm.roster_sign((await signingKeypair()).secretKey, message),
+			publicKey: async () => (await signingKeypair()).publicKey,
+		};
+		const verifier: MailboxVerifier = {
+			signingKeyFor: async (deviceId) => {
+				const g = await mobileStorage.getMeta<GroupConfig>(groupMetaKey);
+				return g?.roster.devices.find((d) => d.id === deviceId)?.sigKey ?? null;
+			},
+			verify: (publicKeyB64, message, sigB64) => wasm.roster_verify(publicKeyB64, message, sigB64),
+		};
+		const mailboxApply = async (payload: EntriesPayload) => {
+			const port = createVaultSyncPort({
+				store: blobStore,
+				witnessRemote: async (stamps) => {
+					const clock = await getClock(vaultId);
+					for (const hlc of stamps) clock.witness(hlc);
+				},
+				sharingView: async () => {
+					const bytes = await mobileStorage.readVaultBlob(vaultId);
+					const decoded = decodeVault(bytes);
+					if (decoded.format !== "vlt2") return null;
+					return buildSyncSharingView(syncViewCrypto, decoded.blob);
+				},
+				localizeDeps: localizeDepsFromCrypto(syncViewCrypto),
+				onChanged: notifyExternalChange,
+			});
+			await applyRemotePayload(port, payload);
+		};
+		const mailboxTickOnce = async (push: boolean) => {
+			try {
+				if (push) {
+					const payload = await blobStore.readEntriesPayload();
+					for (const peer of group.roster.devices.filter((d) => d.id !== ownDeviceId)) {
+						await pushToMailbox(
+							relay,
+							roomId,
+							peer.id,
+							await buildMailboxEnvelope({
+								from: ownDeviceId,
+								to: peer.id,
+								room: roomId,
+								payload,
+								signer,
+							}),
+						);
+					}
+				}
+				const relayUrl = relay;
+				for (const payload of await pullFromMailbox(relayUrl, roomId, ownDeviceId, verifier)) {
+					await mailboxApply(payload);
+				}
+			} catch (e) {
+				report(`sync: mailbox unavailable (${(e as Error).message})`);
+			}
+		};
+		void mailboxTickOnce(false);
+		mailboxTimers.push(
+			setInterval(() => void mailboxTickOnce(true), 30_000) as unknown as ReturnType<
+				typeof setInterval
+			>,
+		);
+	} catch (e) {
+		report(`sync: mailbox unavailable (${(e as Error).message})`);
+	}
 	rosterSession = await startRosterSync({
 		relayUrl: relay,
 		iceUrl,
@@ -500,6 +585,8 @@ function stopRosterSync(): void {
 	rosterSession?.stop();
 	rosterSession = null;
 	sessionVaultId = null;
+	for (const t of mailboxTimers) clearInterval(t);
+	mailboxTimers = [];
 	// Invalidate any merge still queued: it captured the old gen and must not write.
 	sessionGen++;
 }
