@@ -111,6 +111,7 @@ export function SharingSection() {
 	const [name, setName] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [inviteCode, setInviteCode] = useState<string | null>(null);
+	const [memberName, setMemberName] = useState("");
 
 	const act = async (fn: () => Promise<void>) => {
 		setBusy(true);
@@ -135,14 +136,12 @@ export function SharingSection() {
 
 	const invite = () =>
 		act(async () => {
-			if (!sharing) return;
-			const label = window.prompt(t`What should this person be called?`);
-			if (!label?.trim()) return;
+			if (!sharing || !memberName.trim()) return;
 			// The relay comes from the sync settings (the hook resolves the stored one);
 			// the invite reuses whatever relay this device already syncs through.
 			const code = await inviteMember("", undefined, {
 				sharing,
-				memberLabel: label.trim(),
+				memberLabel: memberName.trim(),
 				persistWraps: async (wrapsJson: string) => {
 					// The host registered the member; adopt its wraps and persist.
 					const { sharingWrapFromWire } = await import("../../../../vault/member-invite");
@@ -154,6 +153,7 @@ export function SharingSection() {
 				},
 			});
 			setInviteCode(code);
+			setMemberName("");
 		});
 
 	// Locked or not sharing-enabled: a single row that turns sharing on.
@@ -318,9 +318,21 @@ export function SharingSection() {
 					title={t`Invite someone`}
 					subtitle={t`In person: they scan the code, you both confirm the words, and they choose their own password.`}
 				>
-					<Button variant="secondary" size="sm" disabled={busy} onClick={() => void act(invite)}>
-						<Trans>Invite</Trans>
-					</Button>
+					<div className="flex items-center gap-1.5">
+						<TextField
+							label={t`Their name`}
+							value={memberName}
+							onChange={(e) => setMemberName(e.target.value)}
+						/>
+						<Button
+							variant="secondary"
+							size="sm"
+							disabled={busy || !memberName.trim()}
+							onClick={() => void act(invite)}
+						>
+							<Trans>Invite</Trans>
+						</Button>
+					</div>
 				</Row>
 			</RowGroup>
 			{inviteCode && <InvitePanel code={inviteCode} onClose={() => setInviteCode(null)} />}
@@ -338,7 +350,9 @@ function InvitePanel({ code, onClose }: { code: string; onClose: () => void }) {
 			<div className="flex justify-center p-2 bg-white rounded-lg w-fit mx-auto">
 				<QRCodeSVG value={code} size={144} />
 			</div>
-			<p className="text-xs text-muted-foreground break-all font-mono">{code}</p>
+			<p className="text-xs text-muted-foreground break-all font-mono" data-testid="invite-code">
+				{code}
+			</p>
 			{approval ? (
 				<div className="space-y-2">
 					<p className="text-sm">
