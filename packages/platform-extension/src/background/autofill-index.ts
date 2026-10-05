@@ -454,7 +454,13 @@ async function hydrateIndexForOwner(
 		const parsed = CryptoDecryptIndexResultSchema.safeParse(batchResp.data);
 		if (!parsed.success || parsed.data.length !== encryptedEntries.length) return false;
 		const plaintexts = new Map(parsed.data.map((result) => [result.id, result.plaintext]));
-		if (!encryptedEntries.every((enc) => plaintexts.has(enc.id))) return false;
+		// Per-entry failures are tolerated when the key is right for the rest: a
+		// sharing-enabled vault can hold locally-locked envelopes (e.g. the owner
+		// carrying member-private bytes for pass-through), which can never decrypt
+		// here and must simply not appear in autofill. A wholesale failure (every
+		// entry failed with entries present) is still the wrong-key signal.
+		const failed = encryptedEntries.filter((enc) => plaintexts.get(enc.id) === null).length;
+		if (failed > 0 && failed === encryptedEntries.length) return false;
 		for (const enc of encryptedEntries) {
 			const plaintext = plaintexts.get(enc.id);
 			if (typeof plaintext !== "string") continue;

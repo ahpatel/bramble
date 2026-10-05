@@ -328,3 +328,71 @@ describe("keyed best-effort index hydration", () => {
 		expect(resp.data?.logins ?? []).toEqual([]);
 	});
 });
+
+/** The same disk, plus a locally-locked envelope: a member-private entry
+ * passing through the owner's vault, whose DEK is wrapped under someone
+ * else's key. Its decrypt fails per-entry. */
+function lockedOffscreen(msg: Record<string, any>): OffscreenResponse {
+	if (msg.type === "CRYPTO_DECRYPT_OUTER") {
+		return {
+			ok: true,
+			data: JSON.stringify({
+				entries: [
+					{
+						id: "login1",
+						ciphertext: "c",
+						iv: "i",
+						wrappedDek: "w",
+						dekIv: "d",
+						hlc: { wall: 1, counter: 0, node: "seed" },
+					},
+					{
+						id: "locked-1",
+						ciphertext: "locked-ct",
+						iv: "locked-iv",
+						wrappedDek: "locked-wd",
+						dekIv: "locked-di",
+						hlc: { wall: 2, counter: 0, node: "seed" },
+					},
+				],
+				tombstones: [],
+			}),
+		};
+	}
+	if (msg.type === "CRYPTO_DECRYPT_INDEX") {
+		return {
+			ok: true,
+			data: [
+				{
+					id: "login1",
+					plaintext: JSON.stringify({
+						type: "login",
+						name: "Example",
+						urls: ["https://example.com"],
+						username: "alice",
+						password: "pw1",
+					}),
+				},
+				{ id: "locked-1", plaintext: null },
+			],
+		};
+	}
+	return diskOffscreen(msg);
+}
+
+describe("locally-locked entries (sharing)", () => {
+	it("hydrates the index when some entries cannot decrypt; locked ones never autofill", async () => {
+		const bg = await loadBackground({
+			sessionSeed: { [TEST_VEK_KEY]: "SEED" },
+			offscreen: lockedOffscreen,
+		});
+		const { resp } = await bg.send(
+			{ type: "AUTOFILL_QUERY", hasLogin: true },
+			pageSender("example.com", 4),
+		);
+		await bg.flush();
+		const ids = (resp.data.logins as { id: string }[]).map((l) => l.id);
+		expect(ids).toContain("login1");
+		expect(ids).not.toContain("locked-1");
+	});
+});
