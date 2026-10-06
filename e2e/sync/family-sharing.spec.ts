@@ -1,7 +1,7 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { launchExtensionContext } from "../extension/fixtures";
-import { popupUrl } from "../extension/helpers";
-import { createVault, expect, gotoSync, PW, RELAY_URL, test } from "./fixtures";
+import { optionsUrl, popupUrl } from "../extension/helpers";
+import { createVault, expect, gotoSync, RELAY_URL, test } from "./fixtures";
 
 // The family-sharing loop on a real relay: the owner enables sharing, invites a
 // member in person (QR code → paste), adds them to a collection, and shares an
@@ -17,7 +17,7 @@ async function useLocalRelay(page: Page): Promise<void> {
 	await page.getByLabel(/Nostr relay URL/i).fill(RELAY_URL);
 	// The ICE endpoint derives from the relay; blank it so nothing reaches for the hosted one.
 	await page.getByLabel(/Turn \/ ICE servers URL/i).fill("");
-	await page.getByRole("button", { name: /Save/i }).click();
+	// Settings persist on blur — no save button on this panel.
 }
 
 /** Open Settings → General (where the Family sharing section lives). */
@@ -34,16 +34,17 @@ async function gotoGeneral(page: Page): Promise<void> {
 async function enableSharingAndCreateCollection(page: Page, collection: string): Promise<void> {
 	await gotoGeneral(page);
 	await page.getByRole("button", { name: /Enable sharing/i }).click();
-	await expect(page.getByRole("button", { name: /Create/i }).first()).toBeVisible({
-		timeout: 30_000,
-	});
-	await page.getByRole("button", { name: /New collection/i }).click();
+	// The enabled branch shows a "New collection" row whose button opens the form.
+	await expect(page.getByText(/New collection/i)).toBeVisible({ timeout: 30_000 });
+	await page.getByRole("button", { name: "Create", exact: true }).first().click();
 	await page.getByLabel(/Collection name/i).fill(collection);
-	await page.getByRole("button", { name: "Create", exact: true }).last().click();
-	await expect(page.getByText(collection).first()).toBeVisible();
+	// The form's submit is the FIRST Create button (the row's sits after the list).
+	await page.getByRole("button", { name: "Create", exact: true }).first().click();
+	await expect(page.getByText(collection).first()).toBeVisible({ timeout: 30_000 });
 }
 
-/** Run the member-invite flow and return the pairing code from the panel. */
+/** Run the member-invite flow. Returns the pairing code; the panel STAYS OPEN —
+ * the joiner needs the host alive, and the SAS approval happens there. */
 async function inviteMember(page: Page, name: string): Promise<string> {
 	const nameField = page.getByLabel(/Their name/i);
 	await nameField.fill(name);
@@ -53,42 +54,61 @@ async function inviteMember(page: Page, name: string): Promise<string> {
 	await expect(codeEl).toBeVisible({ timeout: 30_000 });
 	const code = (await codeEl.textContent()) ?? "";
 	expect(code).toContain("bramble-pair-1.");
-	// Dismiss the panel so the session state settles before the member joins.
-	await page.getByRole("button", { name: /Done/i }).click();
 	return code;
 }
 
-/** Add the invited member to a collection through their row in the People list. */
-async function addMemberToCollection(page: Page, name: string, collection: string): Promise<void> {
-	const row = page
-		.locator("div", { has: page.getByRole("button", { name: /Remove member/i }) })
-		.filter({
-			hasText: name,
-		});
-	await row.getByRole("button", { name: /Add to collection/i }).click();
-	await row.getByRole("button", { name: collection }).click();
+/** Add the (single) member to a collection via the inline picker in their row. */
+async function addMemberToCollection(page: Page, collection: string): Promise<void> {
+	const picker = page.getByRole("button", { name: /Add to collection/i });
+	await expect(picker).toBeVisible({ timeout: 60_000 });
+	await picker.click();
+	await page.getByRole("button", { name: collection }).click();
 	await expect(page.getByText(/1 collection\(s\)/i)).toBeVisible({ timeout: 30_000 });
 }
 
-/** Share an entry into a collection via the bulk-action dialog. */
+/** Share an entry into a collection: selection mode from the list header, tick
+ * the row, run the Share bulk action, pick the collection, confirm. */
 async function shareEntry(page: Page, entryName: string, collection: string): Promise<void> {
-	const card = page.locator("div", { hasText: entryName }).first();
-	await card.getByRole("checkbox").click();
-	await page.getByRole("button", { name: /^Share/i }).click();
+	// The owner may still be in Settings (the grant happened there); back to the list.
+	const goBack = page.getByRole("button", { name: "Go back" });
+	if (await goBack.isVisible().catch(() => false)) await goBack.click();
+	await page.getByRole("button", { name: "Select items" }).click();
+	// The real input is sr-only; clicking the wrapping label toggles it.
+	await page.locator(`label:has(input[type="checkbox"][aria-label="Select ${entryName}"])`).click();
+	await page.getByRole("button", { name: "Actions" }).click();
+	// Case-sensitive so "Unshare…" never matches.
+	await page.getByRole("menuitem", { name: /Share/ }).click();
 	await page.getByRole("button", { name: collection }).click();
-	await page.getByRole("button", { name: /Share 1 entry/i }).click();
-	await expect(page.getByText(/shared/i)).toBeVisible({ timeout: 30_000 });
+	await page.getByRole("button", { name: /Share 1 entry/ }).click();
+	// The dialog closes when the action finishes.
+	await expect(page.getByRole("button", { name: /Share 1 entry/ })).toBeHidden({
+		timeout: 60_000,
+	});
 }
 
-/** The member's join flow: the setup shell, member mode, own password. */
-async function joinAsMember(page: Page, code: string, password: string): Promise<void> {
+/** The member's join flow UP TO the SAS gate: the setup shell, member mode, own
+ * password, then "Join vault". Returns the member's SAS display so the caller can
+ * compare it against the owner's before approving. */
+async function startMemberJoin(page: Page, code: string, password: string): Promise<Locator> {
 	await page.getByRole("button", { name: /Join a device/i }).click();
 	await page.getByText(/I was invited as a family member/i).click();
 	await page.getByPlaceholder(/Paste the code from your other device/i).fill(code);
 	await page.getByLabel(/Create your password/i).fill(password);
 	await page.getByRole("button", { name: /Join vault/i }).click();
-	// Joined: the vault opens (empty — nothing shared yet).
-	await page.getByRole("button", { name: /Add New/i }).waitFor({ timeout: 90_000 });
+	// The joining screen shows the derived SAS once the handshake reaches the host.
+	const sas = page.locator(".font-mono.tabular-nums");
+	await expect(sas).toBeVisible({ timeout: 90_000 });
+	return sas;
+}
+
+/** The owner's half of the SAS gate: the invite panel shows the approval prompt
+ * with the same digits; compare, then approve. */
+async function approveMember(page: Page, memberSas: Locator): Promise<void> {
+	const prompt = page.getByText(/Confirm this code matches/i);
+	await expect(prompt).toBeVisible({ timeout: 90_000 });
+	const ownerSas = page.locator("span.font-mono.font-semibold");
+	expect(await ownerSas.textContent()).toBe(await memberSas.textContent());
+	await page.getByRole("button", { name: /^Approve$/ }).click();
 }
 
 test("family sharing: invite, scope, share, and revoke on a real relay", async ({ ext }) => {
@@ -123,30 +143,47 @@ test("family sharing: invite, scope, share, and revoke on a real relay", async (
 	) as { relay: string };
 	expect(decoded.relay).toContain("localhost:7400");
 
-	// --- the member: a second real extension profile, fresh vault, own password ---
+	// --- the member: a second real extension profile, fresh "device" ---
 	const memberContext = await launchExtensionContext();
 	const memberPage = await memberContext.context.newPage();
-	await memberPage.goto(popupUrl(memberContext.extensionId));
 	try {
-		await createVault(memberPage, "Member-Own-Pw-1!");
-		await joinAsMember(memberPage, code, "Member-Own-Pw-1!");
-		await gotoGeneral(memberPage);
+		// First run, zero vaults: the setup shell opens directly in the options tab.
+		await memberPage.goto(optionsUrl(memberContext.extensionId));
+		const memberSas = await startMemberJoin(memberPage, code, "Member-Own-Pw-1!");
+
+		// --- the SAS gate: nothing moves until the owner confirms the digits match ---
+		await approveMember(ext.page, memberSas);
+
+		// Transfer done: the options page shows the done screen; the popup opens
+		// into the joined (still empty) vault.
+		const popup = await memberContext.context.newPage();
+		await expect(memberPage.getByText(/Open it from/i)).toBeVisible({ timeout: 120_000 });
+		await popup.goto(popupUrl(memberContext.extensionId));
+		await expect(popup.getByRole("button", { name: "Lock vault", exact: true })).toBeVisible({
+			timeout: 30_000,
+		});
 
 		// --- owner: add the member to the collection, share an entry into it ---
-		await addMemberToCollection(ext.page, "Dad", "Dads banking");
+		await addMemberToCollection(ext.page, "Dads banking");
 		await shareEntry(ext.page, SHARED, "Dads banking");
 
 		// --- the member sees exactly the shared entry, nothing else ---
-		await expect(memberPage.getByText(SHARED)).toBeVisible({ timeout: 120_000 });
-		await expect(memberPage.getByText(PRIVATE)).toBeHidden();
+		await expect(popup.getByText(SHARED)).toBeVisible({ timeout: 120_000 });
+		await expect(popup.getByText(PRIVATE)).toBeHidden();
 
-		// --- owner removes the member: rotation, and the honest copy shows ---
+		// --- owner removes the member: the honest copy is the confirm dialog itself ---
 		await gotoGeneral(ext.page);
+		let removeDialogText = "";
+		ext.page.once("dialog", (dialog) => {
+			removeDialogText = dialog.message();
+			void dialog.accept();
+		});
 		await ext.page.getByRole("button", { name: /Remove member/i }).click();
-		await expect(ext.page.getByText(/rotate the affected passwords/i)).toBeVisible();
-		// Accepting the dialog removes them from the list.
-		await ext.page.on("dialog", (dialog) => dialog.accept());
-		await expect(ext.page.getByText(/0 collection/i)).toBeVisible({ timeout: 30_000 });
+		expect(removeDialogText).toContain("rotate the affected passwords");
+		// Removal takes effect: the member row (and its Remove button) is gone.
+		await expect(ext.page.getByRole("button", { name: /Remove member/i })).toBeHidden({
+			timeout: 60_000,
+		});
 	} finally {
 		await memberContext.context.close();
 	}

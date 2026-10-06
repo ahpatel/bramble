@@ -35,6 +35,17 @@ vi.mock("@core/vault-format", async (importOriginal) => {
 			entriesIv: new Uint8Array(12),
 			entriesCiphertext: new Uint8Array([1]),
 		}),
+		// writeVaultEntries reads the on-disk bytes with a format-tagged decode to
+		// preserve the sharing layer; the fake store's 3 bytes aren't a real blob,
+		// so hand the helper a VLT1-shaped decode.
+		decodeVault: () => ({
+			format: "vlt1",
+			blob: {
+				slots: [{ kind: 99, payload: new Uint8Array() }],
+				entriesIv: new Uint8Array(12),
+				entriesCiphertext: new Uint8Array([1]),
+			},
+		}),
 		encodeVaultBlob: () => new Uint8Array([9, 9, 9]),
 	};
 });

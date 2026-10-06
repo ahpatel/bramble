@@ -44,10 +44,12 @@ import {
 	CryptoSaveKdbxSchema,
 	CryptoSealPortableVaultSchema,
 	CryptoUnlockWithVekSchema,
+	CryptoUnwrapDekSchema,
 	CryptoUnwrapPasswordSlotSchema,
 	CryptoUnwrapWebauthnSlotSchema,
 	CryptoVerifyPasswordSlotSchema,
 	CryptoVerifyWebauthnSlotSchema,
+	CryptoWrapDekSchema,
 	CryptoWrapPasswordSlotSchema,
 	CryptoWrapWebauthnSlotSchema,
 } from "./crypto/messages";
@@ -333,6 +335,8 @@ type SyncVek = {
 	decrypt_entry(ciphertext: string, iv: string, wrappedDek: string, dekIv: string): string;
 	encrypt_with_vek(plaintext: string): VekEncrypted;
 	decrypt_with_vek(iv: string, ciphertext: string): string;
+	unwrap_dek(wrapped_dek: string, dek_iv: string): string;
+	wrap_dek(dek_b64: string): { iv: string; ciphertext: string };
 };
 
 /** Load the injected vek (when present) into the scratch slot, then run `op`, as one
@@ -344,6 +348,19 @@ function withVek<T>(w: SyncVek, vekB64: string | undefined, op: (w: SyncVek) => 
 }
 
 async function dispatchCrypto(a: CryptoAdapter, type: string, payload: unknown): Promise<unknown> {
+	try {
+		return await dispatchCryptoInner(a, type, payload);
+	} catch (e) {
+		console.warn(`[offscreen] crypto ${type} failed:`, String(e).slice(0, 200));
+		throw e;
+	}
+}
+
+async function dispatchCryptoInner(
+	a: CryptoAdapter,
+	type: string,
+	payload: unknown,
+): Promise<unknown> {
 	// VEK-scoped ops (USE-VEK + the unwraps) call the wasm module DIRECTLY, not through the
 	// shared adapter (whose methods each await getWasm internally, which would let another op's
 	// load slip between load and op — the original race reborn). getWasm is awaited up front;
@@ -409,6 +426,16 @@ async function dispatchCrypto(a: CryptoAdapter, type: string, payload: unknown):
 			const p = CryptoDecryptOuterSchema.parse(payload);
 			const w = (await getWasm()) as unknown as SyncVek;
 			return withVek(w, p.vekB64, (w) => w.decrypt_with_vek(p.iv, p.ciphertext));
+		}
+		case "CRYPTO_UNWRAP_DEK": {
+			const p = CryptoUnwrapDekSchema.parse(payload);
+			const w = (await getWasm()) as unknown as SyncVek;
+			return withVek(w, p.vekB64, (w) => w.unwrap_dek(p.wrappedDek, p.dekIv));
+		}
+		case "CRYPTO_WRAP_DEK": {
+			const p = CryptoWrapDekSchema.parse(payload);
+			const w = (await getWasm()) as unknown as SyncVek;
+			return withVek(w, p.vekB64, (w) => w.wrap_dek(p.dekB64));
 		}
 		// SET-VEK unwraps: unwrap leaves the recovered vek in the slot and returns only a
 		// boolean, so unwrap + export_vek MUST be one synchronous section or the exported vek
@@ -789,6 +816,7 @@ export async function handleHostMessage(type: string, payload: unknown): Promise
 				// snapshot and packs the sealed bundle; the updated wraps ride the
 				// enrolled event back to the UI for persistence.
 				let pendingMemberWraps: WireSharingWrap[] | null = null;
+				let pendingMemberRegion: unknown = null;
 				const memberInvite = (() => {
 					if (role !== "inviter") return undefined;
 					const invite = (opts as EnrollInviteMsg).memberInvite;
@@ -813,6 +841,9 @@ export async function handleHostMessage(type: string, payload: unknown): Promise
 								entries: [],
 							});
 							pendingMemberWraps = state.sharingWraps.map(sharingWrapToWire);
+							// The region (with the member) rides back too: persisting only
+							// the wraps left the owner's region showing zero members.
+							pendingMemberRegion = state.region;
 							return encodeMemberInviteBundle({ ...bundle, roster: invite.roster });
 						},
 					};
@@ -857,6 +888,8 @@ export async function handleHostMessage(type: string, payload: unknown): Promise
 								kind: "enrolled",
 								entryJson,
 								sharingWrapsJson: JSON.stringify(pendingMemberWraps),
+								sharingRegionJson:
+									pendingMemberRegion === null ? undefined : JSON.stringify(pendingMemberRegion),
 							});
 							return;
 						}

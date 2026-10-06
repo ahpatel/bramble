@@ -17,9 +17,11 @@ import {
 	decodeVaultBlob,
 	type EncryptedEntry,
 	encodeVaultBlob,
+	findMemberPasswordSlot,
 	findPasswordSlot,
 	findRecoverySlots,
 	findWebauthnSlots,
+	type MemberPasswordSlot,
 	type PasswordSlot,
 	type RecoverySlot,
 	SLOT_KIND_WEBAUTHN,
@@ -853,11 +855,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		async (password: string, vaultId?: string) => {
 			setError(null);
 			// Read failures collapse to one generic message; raw decoder errors leak
-			// format internals and aren't actionable for end users.
-			let slot: PasswordSlot | null;
+			// format internals and aren't actionable for end users. A member slot has
+			// the same fields; only the kind literal differs, so the union is fine.
+			let slot: PasswordSlot | MemberPasswordSlot | null;
 			try {
 				const { blob } = await readDecodedBlob();
-				slot = findPasswordSlot(blob);
+				// A member device's slot is a member slot wrapping the member master
+				// key; the unwrap path is identical. Slots never travel, so only one
+				// kind is ever present.
+				slot = findPasswordSlot(blob) ?? findMemberPasswordSlot(blob);
 			} catch (e) {
 				console.error("[vault] failed to read vault blob:", e);
 				throw new Error(t`Couldn't open this vault. The file may be missing or unreadable.`);
@@ -967,7 +973,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			for (const id of ids) {
 				const envelope = byId.get(id);
 				if (!envelope) throw new Error(`Entry not found: ${id}`);
-				const dekB64 = await crypto.decryptWithVek(envelope.dekIv, envelope.wrappedDek);
+				// Binary-safe unwrap: decryptWithVek returns a UTF-8 string and the
+				// DEK is random bytes (the wasm path fails with a utf8 error there).
+				const dekB64 = await crypto.decryptEntryDek(envelope.dekIv, envelope.wrappedDek);
 				state = await grantEntry(sharingDeps, state, { entryId: id, collectionId, dekB64 });
 			}
 			const bytes = await persistOwnerSharingState(sharingDeps, state, blob);

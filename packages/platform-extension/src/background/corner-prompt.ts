@@ -7,7 +7,7 @@ import type {
 	SaveLoginPrompt,
 	UpdateLoginPrompt,
 } from "@core/adapters/autofill";
-import { type EncryptedEntry, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
+import type { EncryptedEntry } from "@core/vault-format";
 import { type DedupeOutcome, hostnameMatches, registrableDomain } from "../dedupe";
 import { api } from "../platform-api";
 import { CORNER_HANDOFF_KEY } from "../session-keys";
@@ -27,7 +27,7 @@ import {
 	broadcastVaultChanged,
 	readAndDecodeVault,
 	reencryptOuterWithEntryChange,
-	writeVault,
+	writeVaultEntries,
 } from "./vault-io";
 
 // Session stash for an in-flight capture, keyed one per eTLD+1.
@@ -150,12 +150,9 @@ async function commitCornerSave(
 		async (entries) => [...entries, newEnc],
 		vaultId,
 	);
-	const newBlob: VaultBlob = {
-		slots: blob.slots,
-		entriesIv: outer.entriesIv,
-		entriesCiphertext: outer.entriesCiphertext,
-	};
-	await writeVault(encodeVaultBlob(newBlob), vaultId);
+
+	// Format-preserving write: a VLT2 vault keeps its sharing layer.
+	await writeVaultEntries(outer.entriesIv, outer.entriesCiphertext, vaultId);
 
 	const username = editedUsername ?? capture.username;
 	await addLoginEntry({
@@ -225,12 +222,9 @@ async function commitCornerUpdate(capture: PendingCapture, chosenEntryId: string
 		},
 		vaultId,
 	);
-	const newBlob: VaultBlob = {
-		slots: blob.slots,
-		entriesIv: outer.entriesIv,
-		entriesCiphertext: outer.entriesCiphertext,
-	};
-	await writeVault(encodeVaultBlob(newBlob), vaultId);
+
+	// Format-preserving write: a VLT2 vault keeps its sharing layer.
+	await writeVaultEntries(outer.entriesIv, outer.entriesCiphertext, vaultId);
 	updateLoginCredentials(chosenEntryId, username, capture.password);
 	await broadcastVaultChanged();
 }

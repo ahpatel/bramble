@@ -123,13 +123,33 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 	});
 
 	// Encrypt each entry under a fresh DEK and pair it with its stamp.
+	//
+	// Entries whose stamp equals the stamp of the on-disk envelope are REUSED verbatim
+	// rather than re-encrypted. Re-encrypting every entry on every write re-randomizes
+	// each one's DEK, and a sharing wrapper pins the DEK it was created from — so any
+	// unrelated write (e.g. stamping the sharing region right after a grant) silently
+	// invalidated every wrapper. An unchanged entry's content doesn't need a new
+	// envelope; changed or new entries get a fresh DEK as before.
 	const buildPayload = async (next: VaultEntries): Promise<EntriesPayload> => {
+		let onDisk: Map<string, EncryptedEntry>;
+		try {
+			const current = await readEntriesPayload();
+			onDisk = new Map(current.entries.map((e) => [e.id, e]));
+		} catch {
+			onDisk = new Map();
+		}
 		const entries: EncryptedEntry[] = await Promise.all(
 			next.entries.map(async (entry) => {
 				const { id, ...data } = entry;
-				const enc = await crypto.encryptEntry(JSON.stringify(data));
 				const hlc = next.stamps.get(id);
 				if (!hlc) throw new Error(`missing sync stamp for entry ${id}`);
+				const existing = onDisk.get(id);
+				if (existing && hlc.wall === existing.hlc.wall && hlc.counter === existing.hlc.counter) {
+					// Unchanged since that envelope was written: reuse it. The wrapper
+					// records (and any peer's copy) stay valid.
+					return existing;
+				}
+				const enc = await crypto.encryptEntry(JSON.stringify(data));
 				return {
 					id,
 					wrappedDek: enc.wrappedDek,

@@ -7,7 +7,14 @@ import {
 	encodeEntriesPayload,
 } from "@core/sync";
 import { base64ToBytes, bytesToBase64 } from "@core/util/bytes";
-import { decodeVaultBlob, type EncryptedEntry, type VaultBlob } from "@core/vault-format";
+import {
+	decodeVault,
+	decodeVaultBlob,
+	type EncryptedEntry,
+	encodeVaultBlob,
+	type VaultBlob,
+	VLT2,
+} from "@core/vault-format";
 import { api } from "../platform-api";
 import { extensionStorage } from "../storage";
 import { sendToOffscreen } from "./offscreen-client";
@@ -31,6 +38,39 @@ export async function readVaultBytes(vaultId?: string): Promise<Uint8Array> {
  * is always writable headless, so the write always goes straight through. */
 export async function writeVault(blob: Uint8Array, vaultId?: string): Promise<void> {
 	await extensionStorage.writeVaultBlob(blob, vaultId);
+}
+
+/** Re-write a vault's outer entries blob with new ciphertext, preserving the on-disk
+ * format. A sharing-enabled (VLT2) vault keeps its sharing layer (wraps, member
+ * secrets, region) — re-encoding as plain VLT1 here silently stripped it and broke
+ * member sync. The base fields (slots, sharing) come from the bytes on disk, so a
+ * concurrent writer's other changes are carried forward, not reverted. */
+export async function writeVaultEntries(
+	entriesIv: Uint8Array,
+	entriesCiphertext: Uint8Array,
+	vaultId?: string,
+): Promise<void> {
+	const bytes = await readVaultBytes(vaultId);
+	const decoded = decodeVault(bytes);
+	if (decoded.format === "vlt2") {
+		await writeVault(
+			VLT2.encode({
+				...decoded.blob,
+				entriesIv,
+				entriesCiphertext,
+			}),
+			vaultId,
+		);
+	} else {
+		await writeVault(
+			encodeVaultBlob({
+				slots: decoded.blob.slots,
+				entriesIv,
+				entriesCiphertext,
+			}),
+			vaultId,
+		);
+	}
 }
 
 /** Decrypt, mutate, re-encrypt the outer entry list via offscreen so plaintext never leaves it.

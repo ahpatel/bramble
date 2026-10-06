@@ -328,6 +328,11 @@ export interface SyncEvent {
 	/** Inviter, MEMBER join (v2): the updated outer sharing wraps (JSON array, wire
 	 * form) after the host registered the joining member — the UI persists these. */
 	sharingWrapsJson?: string;
+	/** Inviter, MEMBER join (v2): the updated region (JSON) with the joining member
+	 * registered — travels with the wraps, since persisting wraps alone left the
+	 * member invisible. The collection keys are NOT included (the host's copy has
+	 * none); the UI keeps its own. */
+	sharingRegionJson?: string;
 	/** Joiner: a human-readable reason a join failed recoverably (e.g. password mismatch). */
 	message?: string;
 	/** For kind "enroll-approval" (inviter) and "sas" (joiner): the pairing SAS to display. */

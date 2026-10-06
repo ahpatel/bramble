@@ -142,13 +142,18 @@ export function SharingSection() {
 			const code = await inviteMember("", undefined, {
 				sharing,
 				memberLabel: memberName.trim(),
-				persistWraps: async (wrapsJson: string) => {
-					// The host registered the member; adopt its wraps and persist.
+				persistWraps: async (wrapsJson: string, regionJson?: string) => {
+					// The host registered the member; adopt its wraps and region. The
+					// collection keys stay ours — the host's copy of the state has none.
 					const { sharingWrapFromWire } = await import("../../../../vault/member-invite");
 					const wraps = JSON.parse(wrapsJson) as Parameters<typeof sharingWrapFromWire>[0][];
+					const region = regionJson
+						? (JSON.parse(regionJson) as typeof sharing.region)
+						: sharing.region;
 					await runSharingTransition(async () => ({
 						...sharing,
 						sharingWraps: wraps.map(sharingWrapFromWire),
+						region,
 					}));
 				},
 			});

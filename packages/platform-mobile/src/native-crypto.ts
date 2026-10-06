@@ -263,7 +263,14 @@ const nativeModule: VaultCrypto = {
 		).value ?? undefined,
 	decrypt_with_vek: async (iv, ciphertext) =>
 		(await Native.decryptWithVek({ ivB64: iv, ciphertextB64: ciphertext })).value,
-
+	// TODO(mobile): the native bridge needs unwrap_dek/wrap_dek commands (the Rust
+	// core has them); until then DEK-level operations throw instead of corrupting.
+	unwrap_dek: async () => {
+		throw new Error("dek unwrap is not supported on mobile yet");
+	},
+	wrap_dek: async () => {
+		throw new Error("dek wrap is not supported on mobile yet");
+	},
 	passkey_make_credential: (rpId, userVerified) =>
 		Native.passkeyMakeCredential({ rpId, userVerified }),
 	passkey_get_assertion: (rpId, privateKeyB64, alg, clientDataHashB64, userVerified) =>

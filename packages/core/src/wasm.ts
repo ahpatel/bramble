@@ -86,6 +86,8 @@ export interface VaultCrypto {
 	decrypt_entries?(entries: EncryptedPayload[]): Awaitable<string[]>;
 	encrypt_with_vek(plaintext: string): Awaitable<VekEncrypted>;
 	decrypt_with_vek(iv: string, ciphertext: string): Awaitable<string>;
+	unwrap_dek(wrapped_dek: string, dek_iv: string): Awaitable<string>;
+	wrap_dek(dek_b64: string): Awaitable<{ iv: string; ciphertext: string }>;
 
 	passkey_make_credential(rpId: string, userVerified: boolean): Awaitable<PasskeyRegistration>;
 	passkey_import_pkcs8(pkcs8B64: string): Awaitable<PasskeyImportResult>;

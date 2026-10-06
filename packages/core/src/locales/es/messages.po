@@ -43,6 +43,16 @@ msgstr "{0, plural, one {# entrada va al archivo, con sus passkeys y su historia
 msgid "{0, plural, one {Delete # entry?} other {Delete # entries?}}"
 msgstr "{0, plural, one {¿Eliminar # entrada?} other {¿Eliminar # entradas?}}"
 
+#. placeholder {0}: ids.length
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "{0, plural, one {Share # entry} other {Share # entries}}"
+msgstr ""
+
+#. placeholder {0}: ids.length
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "{0, plural, one {Unshare # entry} other {Unshare # entries}}"
+msgstr ""
+
 #. placeholder {0}: fingerprint(d.publicKey)
 #. placeholder {1}: addedOn(d.addedAt)
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
@@ -53,6 +63,24 @@ msgstr "{0} · añadido {1}"
 #: packages/core/src/app/screens/Settings/components/AliasSection.tsx
 msgid "{0} (your domain)"
 msgstr "{0} (su dominio)"
+
+#. placeholder {0}: (conflictEntryIds ?? []).length
+#. placeholder {1}: (conflictEntryIds ?? []).length === 1 ? "entry" : "entries"
+#. placeholder {2}: (conflictEntryIds ?? []).length === 1 ? "was" : "were"
+#: packages/core/src/app/screens/VaultHome/VaultHome.tsx
+msgid "{0} {1} {2} edited on multiple devices."
+msgstr ""
+
+#. placeholder {0}: sharing.region.collections.filter((c) => c.memberIds.includes(member.id)).length
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "{0} collection(s)"
+msgstr ""
+
+#. placeholder {0}: collection.memberIds.length
+#. placeholder {1}: sharing.region.wrappers.filter((w) => w.collectionId === collection.id).length
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "{0} member(s) · {1} entries"
+msgstr ""
 
 #: packages/core/src/app/bulk-actions/tags.tsx
 msgid "{affected, plural, one {Tag # entry} other {Tag # entries}}"
@@ -152,6 +180,10 @@ msgstr "Un dispositivo se ha conectado con su código de emparejamiento. Verifiq
 #~ msgid "A device has connected with your pairing code. Check that it is showing this exact number, then approve. Your vault has not been sent yet."
 #~ msgstr "Un dispositivo se ha conectado con su código de emparejamiento. Compruebe que muestra este número exacto y después apruebe. Su caja fuerte aún no se ha enviado."
 
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "A named set of entries, shared with the people you pick."
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/RecoveryCodeSection.tsx
 msgid "A one-time backup code that unlocks your vault if you're locked out."
 msgstr "Código de respaldo único que desbloquea su bóveda si queda bloqueado"
@@ -237,6 +269,10 @@ msgstr "Añadir la bóveda del escritorio"
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Add the websites this login covers. Leave empty for a credential not tied to a site."
 msgstr "Añadir los sitios web que cubre este inicio de sesión. Deje vacío si la credencial no está vinculada a un sitio."
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Add to collection"
+msgstr ""
 
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Add URL"
@@ -339,6 +375,10 @@ msgstr "Apariencia"
 #: packages/core/src/app/components/SasDisplay.tsx
 msgid "Apple"
 msgstr "Manzana"
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Approve"
+msgstr ""
 
 #: packages/core/src/app/bulk-actions/archive.tsx
 #: packages/core/src/app/screens/EntryDetail/EntryDetail.tsx
@@ -610,6 +650,7 @@ msgstr "No se puede guardar este código"
 #: packages/core/src/app/screens/Settings/components/MasterPasswordSection.tsx
 #: packages/core/src/app/screens/Settings/components/RecoveryCodeSection.tsx
 #: packages/core/src/app/screens/Settings/components/RotateSecretSection.tsx
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 #: packages/core/src/app/screens/Settings/components/TapToUnlockSection.tsx
 msgid "Cancel"
@@ -700,6 +741,10 @@ msgstr "Seleccione una contraseña maestra"
 msgid "Choose a password for the exported file."
 msgstr "Elija una contraseña para el archivo exportado."
 
+#: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
+msgid "Choose a password for this shared vault."
+msgstr ""
+
 #: packages/core/src/app/screens/VaultPicker/VaultPicker.tsx
 msgid "Choose a vault to unlock"
 msgstr "Elija una bóveda para desbloquear"
@@ -768,6 +813,14 @@ msgstr "Código escaneado"
 msgid "Codes are short-lived on purpose. Generate a new one when your other device is ready to scan it."
 msgstr "Los códigos caducan rápidamente a propósito. Genere uno nuevo cuando su otro dispositivo esté listo para escanearlo."
 
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Collection name"
+msgstr ""
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Collections"
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Coming soon"
 msgstr "Próximamente"
@@ -804,6 +857,10 @@ msgstr "Confirme en su dispositivo…"
 #: packages/core/src/app/components/ui/file-password-dialog.tsx
 msgid "Confirm password"
 msgstr "Confirmar contraseña"
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Confirm this code matches on their device:"
+msgstr ""
 
 #: packages/core/src/app/screens/Settings/components/DeleteVaultSection.tsx
 #~ msgid "Confirm with security key"
@@ -994,6 +1051,10 @@ msgstr "No se pudo escribir el archivo."
 msgid "Couldn't write to the vault."
 msgstr "No se pudo escribir en la bóveda."
 
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Create"
+msgstr ""
+
 #: packages/core/src/app/screens/VaultSetup/components/SetupHeader.tsx
 msgid "Create a new vault alongside your existing ones, with its own master password."
 msgstr "Cree una nueva caja fuerte junto a las existentes, con su propia contraseña maestra."
@@ -1015,6 +1076,10 @@ msgstr "Cree y almacene claves de acceso para otros sitios. Mientras esté activ
 msgid "Create another vault"
 msgstr "Crear otra bóveda"
 
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Create collections of entries and share each with specific people. Everyone keeps their own password; no account, no server."
+msgstr ""
+
 #: packages/core/src/app/screens/VaultPicker/VaultPicker.tsx
 #: packages/core/src/app/screens/VaultSetup/components/ModeTabs.tsx
 msgid "Create new vault"
@@ -1023,6 +1088,10 @@ msgstr "Crear bóveda nueva"
 #: packages/core/src/app/screens/VaultSetup/components/PasswordCard.tsx
 msgid "Create vault"
 msgstr "Crear bóveda"
+
+#: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
+msgid "Create your password"
+msgstr ""
 
 #: packages/core/src/app/screens/Auth/Auth.tsx
 msgid "Create your vault"
@@ -1103,6 +1172,10 @@ msgstr "Eliminar almacén"
 msgid "Deleting…"
 msgstr "Eliminando..."
 
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Deny"
+msgstr ""
+
 #: packages/core/src/app/screens/VaultHome/SelectionBar.tsx
 msgid "Deselect all"
 msgstr "Deseleccionar todo"
@@ -1164,6 +1237,7 @@ msgstr "Perro"
 #: packages/core/src/app/screens/Import/ImportShell.tsx
 #: packages/core/src/app/screens/Restore/RestoreShell.tsx
 #: packages/core/src/app/screens/Settings/components/RecoveryCodeSection.tsx
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
 msgid "Done"
 msgstr "Hecho"
 
@@ -1237,6 +1311,10 @@ msgstr "Si está vacío, se utiliza el conjunto estándar."
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Enable autofill"
 msgstr "Habilitar autocompletado"
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Enable sharing"
+msgstr ""
 
 #: packages/core/src/app/screens/Auth/Auth.tsx
 msgid "Encrypted on your device"
@@ -1389,6 +1467,10 @@ msgstr "Falló"
 #: packages/core/src/app/components/ui/password-strength-meter.tsx
 msgid "Fair"
 msgstr "Aceptable"
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Family sharing"
+msgstr ""
 
 #: packages/core/src/app/entry-modes/custom-fields.tsx
 msgid "Field name"
@@ -1586,6 +1668,10 @@ msgstr "Reloj de arena"
 msgid "Hyphen (-)"
 msgstr "Guion (-)"
 
+#: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
+msgid "I was invited as a family member"
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/RotateSecretSection.tsx
 msgid "I've saved it"
 msgstr "Lo he guardado"
@@ -1639,6 +1725,10 @@ msgstr "Se importaron {imported} elementos"
 msgid "Importing…"
 msgstr "Importando..."
 
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "In person: they scan the code, you both confirm the words, and they choose their own password."
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/BrowserPairingSection.tsx
 msgid "In the Bramble extension, open Settings → Sync → Desktop app and enter this code."
 msgstr "En la extensión Bramble, abra Ajustes → Sincronización → Aplicación de escritorio e introduzca este código."
@@ -1669,6 +1759,14 @@ msgstr "Interrupción: Bramble se cerró antes de que se confirmara esta copia d
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Interrupted: Bramble was closed before this backup was confirmed. Tap Back up now to try again."
 msgstr "Interrupción: Bramble se cerró antes de que se confirmara esta copia de seguridad. Pulse Realizar copia de seguridad ahora para volver a intentarlo."
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Invite"
+msgstr ""
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Invite someone"
+msgstr ""
 
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Is this your device?"
@@ -1717,6 +1815,10 @@ msgstr "Unirse a la bóveda"
 #: packages/core/src/hooks/useVault.tsx
 msgid "KDBX export isn't available here."
 msgstr "La exportación a KDBX no está disponible aquí."
+
+#: packages/core/src/app/screens/VaultHome/VaultHome.tsx
+msgid "Keep current"
+msgstr ""
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Keep everything"
@@ -1964,6 +2066,14 @@ msgstr "Nunca"
 msgid "New {modeLabel}"
 msgstr "Nuevo {modeLabel}"
 
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "New collection"
+msgstr ""
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "New name"
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/MasterPasswordSection.tsx
 msgid "New password"
 msgstr "Nueva contraseña"
@@ -1984,6 +2094,14 @@ msgstr "No se encontraron elementos archivados que coincidan con su búsqueda."
 #: packages/core/src/app/entry-modes/login.tsx
 #~ msgid "No authenticator QR code found on the page. Make sure it's visible, then retry, or paste the setup key."
 #~ msgstr "No se encontró ningún código QR del autenticador en la página. Asegúrese de que sea visible y luego reintente, o pegue la clave de configuración."
+
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "No collections yet. Create one in Settings → Family sharing."
+msgstr ""
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "No collections yet. Create one, then share entries into it."
+msgstr ""
 
 #: packages/core/src/app/components/ReviewNudgeCard.tsx
 #~ msgid "No company and no marketing budget, so reviews are most of how anyone hears about it. If something is broken instead, the issue tracker is faster than a star rating."
@@ -2041,6 +2159,10 @@ msgstr "No hay ninguna bóveda seleccionada."
 #: packages/core/src/app/components/PasswordGenerator.tsx
 msgid "None"
 msgstr "Ninguno"
+
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "None of the selected entries are in a collection."
+msgstr ""
 
 #: packages/core/src/app/bulk-actions/tags.tsx
 msgid "None of the selected entries have this tag."
@@ -2120,9 +2242,17 @@ msgstr "Ofrece inicios de sesión guardados, tarjetas y contraseñas generadas e
 msgid "Offer to save logins"
 msgstr "Ofrecer guardar credenciales"
 
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "OK"
+msgstr ""
+
 #: packages/core/src/app/components/SasDisplay.tsx
 msgid "Older version on the other device? Compare this instead:"
 msgstr "¿Versión anterior en el otro dispositivo? Compare esto en su lugar:"
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Once sharing is on, update Bramble on your other devices before syncing again — an out-of-date device can no longer open this vault."
+msgstr ""
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "One-click sign-in for {name} is coming in a future update. For now, pick a provider under \"Bring your own storage\"."
@@ -2348,6 +2478,10 @@ msgstr "Lápiz"
 msgid "Penguin"
 msgstr "Pingüino"
 
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "People"
+msgstr ""
+
 #: packages/core/src/app/components/PasswordGenerator.tsx
 msgid "Period (.)"
 msgstr "Punto (.)"
@@ -2491,6 +2625,7 @@ msgid "Reload"
 msgstr "Recargar"
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Remove"
 msgstr "Eliminar"
@@ -2513,6 +2648,10 @@ msgstr "Quitar una etiqueta"
 #: packages/core/src/app/entry-modes/custom-fields.tsx
 msgid "Remove field"
 msgstr "Eliminar campo"
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Remove member"
+msgstr ""
 
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Remove passkey"
@@ -2538,6 +2677,10 @@ msgstr "Etiqueta {removed} eliminada. {0} etiquetas."
 #: packages/core/src/app/bulk-actions/tags.tsx
 msgid "Removing…"
 msgstr "Quitando…"
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Rename collection"
+msgstr ""
 
 #. placeholder {0}: formatDateTimeExact(change.changedAt)
 #: packages/core/src/app/entry-modes/login.tsx
@@ -2665,6 +2808,10 @@ msgstr "Guardar {modeLabel}"
 #: packages/core/src/app/screens/Settings/components/DataSection.tsx
 msgid "Save a .kdbx you can open in KeePassXC or any KeePass app, under a password you pick."
 msgstr "Guarde un archivo .kdbx que pueda abrir en KeePassXC o cualquier aplicación KeePass, con una contraseña que elija."
+
+#: packages/core/src/app/screens/Settings/components/DataSection.tsx
+msgid "Save an encrypted .bramble copy of the entries you can open. It still needs your master password to open."
+msgstr ""
 
 #: packages/core/src/app/screens/Settings/components/DataSection.tsx
 msgid "Save an encrypted .bramble copy of your vault. It still needs your master password to open."
@@ -2850,6 +2997,34 @@ msgstr "Configuración"
 msgid "Settings sections"
 msgstr "Secciones de configuración"
 
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "Share"
+msgstr ""
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Share entries with family"
+msgstr ""
+
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "Share with a collection"
+msgstr ""
+
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "Share…"
+msgstr ""
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Sharing"
+msgstr ""
+
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "Sharing is not enabled on this vault yet. Turn it on in Settings."
+msgstr ""
+
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "Sharing…"
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Show a save / update card in the corner of the page when you sign in with credentials Vault doesn't have."
 msgstr "Mostrar una tarjeta para guardar/actualizar en la esquina de la página cuando se inicia sesión con credenciales que la Bóveda no posee."
@@ -2923,6 +3098,10 @@ msgstr "Carita sonriente"
 #: packages/core/src/app/ErrorBoundary.tsx
 msgid "Something went wrong"
 msgstr "Ha ocurrido un error"
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Something went wrong."
+msgstr ""
 
 #: packages/core/src/app/screens/VaultHome/VaultSearchBar.tsx
 msgid "Sort"
@@ -3173,6 +3352,10 @@ msgstr "El retransmisor de señalización que introduce los dispositivos. Por de
 msgid "The vault was locked or switched while that was in progress. Try again."
 msgstr "La caja fuerte fue bloqueada o cambiada mientras eso estaba en curso. Inténtelo de nuevo."
 
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Their name"
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/AppearanceSection.tsx
 msgid "Theme"
 msgstr "Tema"
@@ -3252,6 +3435,10 @@ msgstr "Esto crea una nueva bóveda en este dispositivo y la sincroniza desde su
 #: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
 #~ msgid "This creates a new vault on this device and syncs it from your other device. You'll register a new key here, on this device, so you never type the master password. Your other device keeps its own key."
 #~ msgstr "Esto crea una nueva bóveda en este dispositivo y la sincroniza desde su otro dispositivo. Registrará una nueva clave aquí, en este dispositivo, para que nunca tenga que escribir la contraseña maestra. Su otro dispositivo conserva su propia clave."
+
+#: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
+msgid "This creates a new vault on this device holding the entries your family shares with you. You choose the password; the other device never sees it."
+msgstr ""
 
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 #: packages/core/src/app/screens/Settings/components/TapToUnlockSection.tsx
@@ -3484,6 +3671,10 @@ msgstr "Desbloquee la bóveda antes de rotar."
 msgid "Unlock the vault before setting a master password."
 msgstr "Desbloquee la bóveda antes de establecer una contraseña maestra."
 
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Unlock this vault to manage sharing."
+msgstr ""
+
 #: packages/core/src/app/screens/Auth/Auth.tsx
 msgid "Unlock Vault"
 msgstr "Desbloquear Bóveda"
@@ -3569,6 +3760,14 @@ msgstr "Desbloqueando…"
 msgid "Unnamed device"
 msgstr "Dispositivo sin nombre"
 
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "Unshare"
+msgstr ""
+
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "Unshare…"
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Unsigned"
 msgstr "Sin firmar"
@@ -3618,9 +3817,17 @@ msgstr "Usar claro, oscuro o coincidir con su sistema"
 msgid "Use only digits, spaces or dashes."
 msgstr "Usar solo dígitos, espacios o guiones."
 
+#: packages/core/src/app/screens/VaultHome/VaultHome.tsx
+msgid "Use other version"
+msgstr ""
+
 #: packages/core/src/app/components/PasswordGenerator.tsx
 msgid "Use password"
 msgstr "Usar contraseña"
+
+#: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
+msgid "Use this only if the invite is a family sharing invite. For a device join, leave it off and use that device's master password."
+msgstr ""
 
 #: packages/core/src/app/components/ui/weak-password-notice.tsx
 msgid "Use this password anyway"
@@ -3764,6 +3971,7 @@ msgstr "Palabras"
 msgid "Words are easier to read aloud; characters are shorter."
 msgstr "Las palabras son más fáciles de leer en voz alta; los caracteres son más cortos."
 
+#: packages/core/src/app/bulk-actions/share.tsx
 #: packages/core/src/app/screens/Settings/components/RecoveryCodeSection.tsx
 msgid "Working…"
 msgstr "Trabajando..."
@@ -3796,6 +4004,10 @@ msgstr "Necesita una bóveda antes de poder importar en ella."
 #: packages/core/src/app/components/RecoveryCodeDisplay.tsx
 msgid "You won't be able to see this code again."
 msgstr "No podrá ver este código nuevamente."
+
+#: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
+msgid "You'll create your own password for the shared vault — share it with no one."
+msgstr ""
 
 #: packages/core/src/app/screens/Settings/components/MasterPasswordSection.tsx
 msgid "You'll unlock this vault by tapping a key only. If you lose access to all of them, your recovery code is the only way back in. There's no master password to fall back on."

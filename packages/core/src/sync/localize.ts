@@ -122,6 +122,13 @@ export async function localizePayload(
 export interface SyncViewCrypto {
 	decryptWithVek(iv: string, ciphertext: string): Promise<string>;
 	encryptWithVek(plaintext: string): Promise<{ iv: string; ciphertext: string }>;
+	/** Binary-safe DEK unwrap (base64 out). Preferred over decryptWithVek for
+	 * envelope DEKs, which are random bytes and cannot survive a text decode. */
+	decryptEntryDek?(dekIv: string, wrappedDek: string): Promise<string>;
+	/** Binary-safe DEK wrap: seals the RAW bytes of the base64 DEK, matching the
+	 * entry format. The text-input encryptWithVek would seal the base64 string,
+	 * producing a wrap decrypt_entry rejects ("key must be 32 bytes"). */
+	wrapEntryDek?(dekB64: string): Promise<{ iv: string; ciphertext: string }>;
 }
 
 /** Build the device's sync sharing view from its decoded VLT2 blob, using the
@@ -200,13 +207,19 @@ export function localizeDepsFromCrypto(crypto: SyncViewCrypto): LocalizeDeps {
 	return {
 		tryUnwrapLocal: async (envelope) => {
 			try {
-				return await crypto.decryptWithVek(envelope.dekIv, envelope.wrappedDek);
+				// The DEK is random bytes: on hosts with a text-only decrypt this
+				// unwrap needs the binary-safe path or it fails with a utf8 error.
+				return crypto.decryptEntryDek
+					? await crypto.decryptEntryDek(envelope.dekIv, envelope.wrappedDek)
+					: await crypto.decryptWithVek(envelope.dekIv, envelope.wrappedDek);
 			} catch {
 				return null;
 			}
 		},
 		wrapLocal: async (dek) => {
-			const w = await crypto.encryptWithVek(dek);
+			const w = crypto.wrapEntryDek
+				? await crypto.wrapEntryDek(dek)
+				: await crypto.encryptWithVek(dek);
 			return { dekIv: w.iv, wrappedDek: w.ciphertext };
 		},
 		tryUnwrapWithKey: tryDecryptWithKey,

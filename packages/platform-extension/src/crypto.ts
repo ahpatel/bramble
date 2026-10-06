@@ -31,10 +31,12 @@ import type {
 	CryptoPasskeyImportPkcs8,
 	CryptoPasskeyMake,
 	CryptoUnlockWithVek,
+	CryptoUnwrapDek,
 	CryptoUnwrapPasswordSlot,
 	CryptoUnwrapWebauthnSlot,
 	CryptoVerifyPasswordSlot,
 	CryptoVerifyWebauthnSlot,
+	CryptoWrapDek,
 	CryptoWrapPasswordSlot,
 	CryptoWrapWebauthnSlot,
 } from "./crypto/messages";
@@ -176,6 +178,12 @@ function makeCrypto(vaultId?: string): CryptoAdapter {
 			send<VekEncrypted>("CRYPTO_ENCRYPT_OUTER", { plaintext } satisfies CryptoEncryptOuter),
 		decryptWithVek: (iv, ciphertext) =>
 			send<string>("CRYPTO_DECRYPT_OUTER", { iv, ciphertext } satisfies CryptoDecryptOuter),
+		decryptEntryDek: (dekIv, wrappedDek) =>
+			send<string>("CRYPTO_UNWRAP_DEK", { dekIv, wrappedDek } satisfies CryptoUnwrapDek),
+		wrapEntryDek: (dekB64) =>
+			send<{ iv: string; ciphertext: string }>("CRYPTO_WRAP_DEK", {
+				dekB64,
+			} satisfies CryptoWrapDek),
 
 		openKdbx: (input: OpenKdbxInput) => send<KdbxRawEntry[]>("CRYPTO_OPEN_KDBX", input),
 		// Reply is the .kdbx as base64; the message channel wouldn't preserve raw bytes.

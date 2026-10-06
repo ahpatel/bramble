@@ -140,6 +140,9 @@ export const desktopCrypto: CryptoAdapter = {
 	decryptEntries: (payloads) => invoke<string[]>("crypto_decrypt_entries", { payloads }),
 	encryptWithVek: (plaintext) => invoke<VekEncrypted>("crypto_encrypt_with_vek", { plaintext }),
 	decryptWithVek: (iv, ciphertext) => invoke<string>("crypto_decrypt_with_vek", { iv, ciphertext }),
+	decryptEntryDek: (dekIv, wrappedDek) =>
+		invoke<string>("crypto_unwrap_dek", { dekIv, wrappedDek }),
+	wrapEntryDek: (dekB64) => invoke("crypto_wrap_dek", { dekB64 }),
 
 	// Passkey PROVIDER (mint/assert for other sites) stays unwired, and not just for effort:
 	// a Tauri webview has no WebAuthn surface to intercept and no OS registration, so there is
