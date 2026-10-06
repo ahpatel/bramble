@@ -178,7 +178,7 @@
 	"passkeyUseOther": {
 		"message": "Utiliser un autre authentificateur"
 	},
-	"passkeyUseOtherInstead": {
-		"message": "Utiliser plutôt un autre authentificateur"
+	"passkeyDeclineNoteDisable": {
+		"message": "Refuser transmet cette demande aux autres authentificateurs de votre appareil et désactive « Utiliser Bramble pour les clés d'accès », afin que la tentative suivante du site les utilise. Réactivez-la dans les Paramètres pour retrouver Bramble."
 	}
 }

@@ -117,13 +117,13 @@ export function savePasskeyBody({
 
 	// A pickable list acts on row click, so it needs no confirm buttons (dismiss via the ×).
 	// A single confirm (locked prompt, or a save with no ambiguity) keeps the button row.
-	// The no-match card inverts the row: the primary action is the handoff to the user's
-	// OTHER authenticators (Bramble has nothing for this site), with "Not now" alongside.
+	// The no-match card inverts the row: Bramble has nothing for this site, so the primary
+	// action IS the handoff to the user's other authenticators. Any refusal ("Not now",
+	// the ×, the ceremony timeout) hands off too, so no second button is needed.
 	const actions = noMatch
 		? [
 				html`<div class="tp-actions">
 			<button class="tp-btn tp-btn-primary" data-tp-action="passkey-native">${t("passkeyUseOther")}</button>
-			<button class="tp-btn" data-tp-action="passkey-dismiss">${t("notNow")}</button>
 		</div>`,
 			]
 		: hasList
@@ -135,15 +135,18 @@ export function savePasskeyBody({
 		</div>`,
 				];
 
-	// On every other variant the handoff is the escape hatch, not the primary: a user who
-	// came to enroll Touch ID or a YubiKey (e.g. Cloudflare Access's "Add an MFA device")
-	// can bail to the native prompt without Bramble minting a credential they didn't want.
-	const nativeAlt =
-		!noMatch && nativeFallback
-			? [
-					html`<button type="button" class="tp-native-alt" data-tp-action="passkey-native">${t("passkeyUseOtherInstead")}</button>`,
-				]
-			: [];
+	// Every refusal from a passkey card hands off, so the note says what "Not now" does
+	// (the no-match card already says it in its body): Firefox relays natively; Chrome
+	// has no passthrough, so the request fails with the handoff message, the provider
+	// turns off, and the site's retry goes native.
+	const declineNote = !noMatch
+		? nativeFallback === "disable"
+			? t("passkeyDeclineNoteDisable")
+			: nativeFallback === "passthrough"
+				? t("passkeyDeclineNotePassthrough")
+				: ""
+		: "";
+	const nativeAlt = declineNote ? [html`<div class="tp-subnote">${declineNote}</div>`] : [];
 
 	return html`
 		<div class="tp-head">

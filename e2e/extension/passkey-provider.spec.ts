@@ -108,13 +108,33 @@ test("a step-up get() with no matching passkey hands off instead of dead-ending 
 	const page = await context.newPage();
 	await serve(page);
 	await page.goto("http://localhost/");
+	const sw = await backgroundWorker(context);
+	const prefIsOn = async () =>
+		sw.evaluate(async () => {
+			const r = await chrome.storage.local.get("pref.passkeyProviderEnabled");
+			return r["pref.passkeyProviderEnabled"];
+		});
 
-	// The step-up verification: allowCredentials the vault has never seen.
+	// Refusal #1: the card's x ("Not now" on every other variant; on the no-match card
+	// the primary is the handoff and the x is the refusal). The user's expectation:
+	// declining makes Bramble step aside, not fail the request cold.
 	await page.locator("#step-up").click();
-	await expect(page.locator("#bramble-corner-prompt")).toBeAttached({ timeout: 10_000 });
+	const card = page.locator("#bramble-corner-prompt");
+	await expect(card).toBeAttached({ timeout: 10_000 });
+	const box = await card.boundingBox();
+	expect(box).not.toBeNull();
+	await page.mouse.click(box!.x + box!.width - 32, box!.y + 30); // the x (center of the close glyph)
+	await expect(page.locator("#out")).toHaveText(
+		/step-up :: NotAllowedError \| .*another authenticator/i,
+		{
+			timeout: 10_000,
+		},
+	);
+	await expect.poll(prefIsOn, { timeout: 10_000 }).toBe(false);
 
-	// "Use another authenticator": the request is failed with the handoff message, and the
-	// provider turns itself off (persisted) so the browser's own WebAuthn takes over again.
+	// Refusal #2 via the primary button, after re-enabling: same outcome.
+	await enableProvider(context, extensionId);
+	await page.locator("#step-up").click();
 	await clickCardPrimary(page);
 	await expect(page.locator("#out")).toHaveText(
 		/step-up :: NotAllowedError \| .*another authenticator/i,
@@ -122,17 +142,7 @@ test("a step-up get() with no matching passkey hands off instead of dead-ending 
 			timeout: 10_000,
 		},
 	);
-	const sw = await backgroundWorker(context);
-	await expect
-		.poll(
-			async () =>
-				sw.evaluate(async () => {
-					const r = await chrome.storage.local.get("pref.passkeyProviderEnabled");
-					return r["pref.passkeyProviderEnabled"];
-				}),
-			{ timeout: 10_000 },
-		)
-		.toBe(false);
+	await expect.poll(prefIsOn, { timeout: 10_000 }).toBe(false);
 
 	// And native WebAuthn is genuinely reachable again: a virtual platform authenticator
 	// (the CDP kind, standing in for Touch ID) now serves the enrollment the proxy
@@ -147,7 +157,6 @@ test("a step-up get() with no matching passkey hands off instead of dead-ending 
 		await virtual.remove();
 	}
 });
-
 test("an enrollment create() still mints and stores a passkey through the provider", async ({
 	context,
 	extensionId,
@@ -161,12 +170,25 @@ test("an enrollment create() still mints and stores a passkey through the provid
 	await page.goto("http://localhost/");
 
 	await page.locator("#enroll").click();
-	await expect(page.locator("#bramble-corner-prompt")).toBeAttached({ timeout: 10_000 });
-	await clickCardPrimary(page, 70); // "Save passkey"; 70 skips the tertiary native link below the actions
-
-	await expect(page.locator("#out")).toHaveText(/enroll :: resolved public-key/i, {
-		timeout: 10_000,
-	});
+	const card = page.locator("#bramble-corner-prompt");
+	await expect(card).toBeAttached({ timeout: 10_000 });
+	// The save card's actions row sits ABOVE the "what declining does" subnote, whose
+	// height depends on wrapping; the note is inert, so sweep candidate offsets until
+	// "Save passkey" lands. A landed click detaches the card and the page's promise
+	// settles a beat later, so poll for the change rather than reading it instantly.
+	const out = page.locator("#out");
+	for (const fromBottom of [134, 118, 150, 102]) {
+		const box = await card.boundingBox().catch(() => null);
+		if (!box) break; // the card is gone: a click already landed
+		await page.mouse.click(box.x + 85, box.y + box.height - fromBottom);
+		const changed = await expect
+			.poll(async () => out.innerText(), { timeout: 4_000 })
+			.not.toBe("idle")
+			.then(() => true)
+			.catch(() => false);
+		if (changed) break;
+	}
+	await expect(out).toHaveText(/enroll :: resolved public-key/i, { timeout: 10_000 });
 
 	// The minted passkey really is in the vault: the popup lists the new login for the site.
 	// (The popup reopens on the Settings route persisted by the enableProvider step, so

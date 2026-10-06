@@ -178,7 +178,7 @@
 	"passkeyUseOther": {
 		"message": "Usar otro autenticador"
 	},
-	"passkeyUseOtherInstead": {
-		"message": "Usar otro autenticador en su lugar"
+	"passkeyDeclineNoteDisable": {
+		"message": "Al rechazar, esta solicitud se pasa a los demás autenticadores de tu dispositivo y se desactiva «Usar Bramble para claves de acceso», de modo que el siguiente intento del sitio los utilice. Reactívala en Ajustes cuando quieras volver a Bramble."
 	}
 }

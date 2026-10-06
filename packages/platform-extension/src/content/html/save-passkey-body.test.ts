@@ -45,7 +45,7 @@ describe("savePasskeyBody", () => {
 		expect(out).not.toContain("passkeyNoneNoteDisable");
 	});
 
-	it("keeps the ordinary confirm card, plus the low-key native escape hatch", async () => {
+	it("keeps the ordinary confirm card, plus the note saying what a refusal does", async () => {
 		const savePasskeyBody = await loadSavePasskeyBody();
 		const out = savePasskeyBody({
 			...base,
@@ -53,13 +53,27 @@ describe("savePasskeyBody", () => {
 			nativeFallback: "disable",
 		});
 		expect(out).toContain('data-tp-action="passkey-approve"'); // the primary stays Bramble
-		expect(out).toContain('class="tp-native-alt" data-tp-action="passkey-native"'); // the bail-out is secondary
+		expect(out).toContain('data-tp-action="passkey-dismiss"'); // "Not now", which now hands off
+		expect(out).toContain("passkeyDeclineNoteDisable"); // the note says what declining does
+		expect(out).not.toContain("passkey-native"); // no separate native button anymore
 	});
 
-	it("omits the native escape hatch when the delivery cannot offer it", async () => {
+	it("labels the refusal note for passthrough where the delivery can relay", async () => {
+		const savePasskeyBody = await loadSavePasskeyBody();
+		const out = savePasskeyBody({
+			...base,
+			intent: "create",
+			nativeFallback: "passthrough",
+		});
+		expect(out).toContain("passkeyDeclineNotePassthrough");
+		expect(out).not.toContain("passkeyDeclineNoteDisable");
+	});
+
+	it("omits the refusal note when the delivery cannot offer a handoff", async () => {
 		const savePasskeyBody = await loadSavePasskeyBody();
 		const out = savePasskeyBody({ ...base, intent: "create" });
-		expect(out).not.toContain("passkey-native");
+		expect(out).not.toContain("passkeyDeclineNoteDisable");
+		expect(out).not.toContain("passkeyDeclineNotePassthrough");
 	});
 
 	it("renders account rows as real markup in the picker", async () => {

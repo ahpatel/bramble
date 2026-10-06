@@ -380,13 +380,14 @@ describe("runCreateCeremony", () => {
 		const unlock = vi.fn(async () => true);
 		const { h } = host({ locked: true, replies: [{ approved: false }] });
 		h.ensureUnlocked = unlock;
-		expect(await runCreateCeremony(req, h)).toEqual({ approved: false, detail: "user declined" });
+		// A refusal is the handoff ("Bramble, step aside"), never a bare decline.
+		expect(await runCreateCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
 		expect(unlock).not.toHaveBeenCalled();
 	});
 
 	it("failed unlock aborts", async () => {
 		const { h } = host({ locked: true, unlockOk: false });
-		expect(await runCreateCeremony(req, h)).toEqual({ approved: false, detail: "user declined" });
+		expect(await runCreateCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
 	});
 
 	it("declining the picker aborts", async () => {
@@ -394,7 +395,7 @@ describe("runCreateCeremony", () => {
 		const { h } = host({ entries: five, replies: [{ approved: false }] });
 		expect(await runCreateCeremony({ ...req, userName: "nomatch" }, h)).toEqual({
 			approved: false,
-			detail: "user declined",
+			nativeFallback: true,
 		});
 	});
 
@@ -516,12 +517,9 @@ describe("runGetCeremony", () => {
 		expect(cards[0]?.nativeFallback).toBe("disable");
 	});
 
-	it("no match, card dismissed -> the plain no-match error, nothing minted or relayed", async () => {
+	it("no match, card dismissed ('Not now' / x) -> the handoff, exactly like the primary", async () => {
 		const { h } = host({ entries: [], nativeFallback: "card", replies: [{ approved: false }] });
-		expect(await runGetCeremony(req, h)).toEqual({
-			approved: false,
-			detail: "no matching passkey",
-		});
+		expect(await runGetCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
 	});
 
 	it("multiple matches -> picker; chosen credentialId returned", async () => {
@@ -535,7 +533,7 @@ describe("runGetCeremony", () => {
 	it("declining the picker aborts", async () => {
 		const entries = [pk("AAA", "octocat"), pk("BBB", "octocat2")];
 		const { h } = host({ entries, replies: [{ approved: false }] });
-		expect(await runGetCeremony(req, h)).toEqual({ approved: false, detail: "user declined" });
+		expect(await runGetCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
 	});
 
 	it("locked -> confirm + unlock then picker for multiple", async () => {
@@ -554,12 +552,12 @@ describe("runGetCeremony", () => {
 		// Unlocked, empty vault: the reply lands on the no-match card.
 		expect(await runGetCeremony(req, host({ replies: [{ approved: false }] }).h)).toEqual({
 			approved: false,
-			detail: "no matching passkey",
+			nativeFallback: true,
 		});
 		// Locked: the reply is the unlock-confirm; the unlock itself then fails.
 		expect(await runGetCeremony(req, host({ locked: true, unlockOk: false }).h)).toEqual({
 			approved: false,
-			detail: "user declined",
+			nativeFallback: true,
 		});
 	});
 

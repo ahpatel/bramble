@@ -26,6 +26,12 @@ test("extension pages load with no CSP violations (zod jitless)", async ({
 		});
 	};
 	context.on("page", (p) => collect(p));
+	// The service worker is its own realm with its own DevTools console; a probe or
+	// violation there would never show on a page. Watch existing and future workers.
+	const collectWorker = (sw: { on: (ev: string, cb: (m: unknown) => void) => void }) =>
+		collect(sw as never);
+	for (const sw of context.serviceWorkers()) collectWorker(sw);
+	context.on("serviceworker", (sw) => collectWorker(sw));
 
 	const page = await context.newPage();
 	await createVault(page, extensionId); // full options-page flow: schema parses galore
