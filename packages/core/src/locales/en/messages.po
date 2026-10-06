@@ -3959,10 +3959,6 @@ msgstr "Weekly"
 msgid "Welcome to {appName}"
 msgstr "Welcome to {appName}"
 
-#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
-msgid "What should this person be called?"
-msgstr "What should this person be called?"
-
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Wipe copied passwords after"
 msgstr "Wipe copied passwords after"
