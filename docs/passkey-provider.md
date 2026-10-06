@@ -409,12 +409,16 @@ mitigations, all implemented:
   ceremony is in flight, the unlock popup hides the biometric/security-key paths and the
   biometric auto-prompt when the vault has a password slot, with a note saying why
   (`shell.passkeyCeremonyHoldsWebauthnUnlock` → `PASSKEY_CEREMONY_QUERY`; see `Auth.tsx`). The
-  user unlocks with the master password and the page's request survives.
+  user unlocks with the master password and the page's request survives. **Chrome only, by
+  construction**: the query reports an active ceremony only where the proxy namespace exists,
+  because Firefox's shim skips the extension's own origin, an unlock there cannot conflict,
+  and the popup keeps its WebAuthn paths.
 - **Fail the request early when the vault is WebAuthn-only.** If the vault is locked and its
   header has no password slot, any unlock from the ceremony needs a WebAuthn tap, which would
   kill the very request being served, so the ceremony completes the request immediately with
   `WEBAUTHN_UNLOCK_CONFLICT_MESSAGE` ("unlock Bramble from its toolbar first, then retry")
-  instead of walking the user into the abort (`unlockNeedsWebauthn` in `webauthn-provider.ts`).
+  instead of walking the user into the abort (`unlockNeedsWebauthn` in `webauthn-provider.ts`,
+  wired only for the proxy delivery for the same Chrome-only reason).
 
 Note this hole is not unique to Bramble: any provider on this API that authenticates its own unlock
 with WebAuthn has it. It is the price of all-or-nothing interception; with the mitigations above,
@@ -431,7 +435,7 @@ popup disconnects its port, and the disconnect IS the resume.)
 
 All-or-nothing interception has a second edge beyond the pause hole: while attached, Bramble is
 the browser's ONLY WebAuthn authenticator, so a request the vault cannot serve used to fail the
-whole browser. The Cloudflare Access case is the filing's own example: the step-up `get()` with a step-up `get()` with `allowCredentials` naming already-registered devices (Touch ID, a YubiKey) returned `NotAllowedError: "no matching passkey"`
+whole browser. The Cloudflare Access case is the filing's own example: the step-up `get()` with `allowCredentials` naming already-registered devices (Touch ID, a YubiKey) returned `NotAllowedError: "no matching passkey"`
 and the user's existing MFA became unreachable. The fix is delivery-specific, because the two
 transports have different powers:
 

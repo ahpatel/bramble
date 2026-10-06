@@ -156,7 +156,12 @@ function cornerCeremonyForTab(
 			loadEntries: loadDecryptedEntries,
 			showCard: (opts) => showCard(tabId, cardPayload(req, opts)),
 			nativeFallback,
-			unlockNeedsWebauthn,
+			// The WebAuthn-unlock conflict is Chrome's alone: the proxy intercepts every
+			// origin including our own, so an unlock tap mid-ceremony kills the request.
+			// Firefox's shim deliberately skips the extension's moz-extension origin, so
+			// an unlock there cannot conflict and the early fail would only lose the user
+			// their one unlock method.
+			...(nativeFallback === "card" ? { unlockNeedsWebauthn } : {}),
 		};
 		ceremonyDepth++;
 		try {
@@ -179,9 +184,18 @@ function cornerCeremonyForTab(
  * request this ceremony exists to serve (docs/passkey-provider.md, the pause hole). */
 let ceremonyDepth = 0;
 
+/** Whether this delivery's own WebAuthn unlock can kill a waiting page request: Chrome's
+ * all-or-nothing proxy intercepts every origin including our own, so it can; Firefox's
+ * shim skips the extension's moz-extension origin, so it cannot. */
+function unlockCanConflict(): boolean {
+	return typeof api.webAuthenticationProxy !== "undefined";
+}
+
 on("PASSKEY_CEREMONY_QUERY", async () => ({
 	ok: true,
-	data: { active: ceremonyDepth > 0 },
+	// Steer-away only where the conflict exists: on Firefox the popup keeps its
+	// WebAuthn unlock paths even mid-ceremony.
+	data: { active: ceremonyDepth > 0 && unlockCanConflict() },
 }));
 
 /** Whether unlocking from a provider ceremony needs a WebAuthn tap (a security-key or

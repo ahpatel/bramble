@@ -189,10 +189,6 @@ msgid "A one-time backup code that unlocks your vault if you're locked out."
 msgstr "A one-time backup code that unlocks your vault if you're locked out."
 
 #: packages/core/src/app/screens/Auth/Auth.tsx
-#~ msgid "A passkey request from a page is waiting on this unlock. Use your master password here — a security key or biometric tap would interrupt it."
-#~ msgstr "A passkey request from a page is waiting on this unlock. Use your master password here — a security key or biometric tap would interrupt it."
-
-#: packages/core/src/app/screens/Auth/Auth.tsx
 msgid "A passkey request from a page is waiting on this unlock. Use your master password here instead; a security key or biometric tap would interrupt it."
 msgstr "A passkey request from a page is waiting on this unlock. Use your master password here instead; a security key or biometric tap would interrupt it."
 
