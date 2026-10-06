@@ -186,7 +186,8 @@ export interface PasskeyPromptResponse {
 	promptId: string;
 	approved: boolean;
 	/** create picker: the chosen login id, or "new" to create a fresh login. The
-	 * sentinel "native" (any card) is the "use another authenticator" action, not a pick. */
+	 * no-match card's primary replies with the sentinel "native"; since every refusal
+	 * hands off, the background treats it the same as any declined reply. */
 	choice?: string;
 }
 

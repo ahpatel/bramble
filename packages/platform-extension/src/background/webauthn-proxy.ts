@@ -91,13 +91,6 @@ export type CeremonyDecision =
 	  };
 export type CeremonyFn = (req: CeremonyRequest) => Promise<CeremonyDecision>;
 
-/** The card reply sentinel for the "use another authenticator" action on the no-match card.
- *  Since the decline-is-a-handoff change every card refusal produces the same decision, so
- *  nothing reads the sentinel anymore; it stays exported as the single spelling of the
- *  wire value the content card still sends (and the docs reference). Credential ids
- *  (base64) and login ids never collide with it. */
-export const NATIVE_CHOICE = "native";
-
 /** DOMException message when the request is handed to the user's other authenticators. */
 export const NATIVE_FALLBACK_MESSAGE =
 	"No Bramble passkey can serve this request. Continue with another authenticator.";

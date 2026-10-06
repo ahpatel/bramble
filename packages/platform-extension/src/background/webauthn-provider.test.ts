@@ -25,6 +25,8 @@ const h = vi.hoisted(() => ({
 	vaultHasPasswordSlot: true,
 	/** Optional gate: runGetCeremony/runCreateCeremony wait on it before resolving. */
 	ceremonyGate: undefined as Promise<void> | undefined,
+	/** Whether the mocked platform has the Chrome proxy namespace (Firefox = false). */
+	hasWebAuthnProxy: true,
 }));
 
 vi.mock("./prefs", () => ({
@@ -43,6 +45,10 @@ vi.mock("./router", () => ({
 
 vi.mock("../platform-api", () => ({
 	api: {
+		// A getter so one test can be Firefox (namespace absent) without a second mock.
+		get webAuthenticationProxy() {
+			return h.hasWebAuthnProxy ? { attach: async () => {} } : undefined;
+		},
 		runtime: { sendMessage: async () => {} },
 		tabs: { query: async () => [], sendMessage: async () => {} },
 		action: {},
@@ -96,6 +102,7 @@ async function load() {
 	h.activeVaultId = null;
 	h.vaultHasPasswordSlot = true;
 	h.ceremonyGate = undefined;
+	h.hasWebAuthnProxy = true;
 	const mod = await import("./webauthn-provider");
 	mod.setProviderApplyHook(async (enabled) => {
 		h.applied.push(enabled);
@@ -225,5 +232,31 @@ describe("the ceremony state the unlock screen asks about", () => {
 		release();
 		expect(await done).toEqual({ approved: false });
 		await expect.poll(query).toBe(false); // and closed out afterwards
+	});
+
+	it("never reports active on Firefox, where an unlock cannot conflict with a ceremony", async () => {
+		// The shim skips the extension's own moz-extension origin, so Bramble's own WebAuthn
+		// unlock there does not touch a waiting page request; the popup keeps its WebAuthn
+		// paths and no steer-away is needed. Pin the gate so a regression that reintroduces
+		// the Chrome-shaped steer on Firefox is caught.
+		const m = await load();
+		h.hasWebAuthnProxy = false; // Firefox: no webAuthenticationProxy namespace
+		let release!: () => void;
+		h.ceremonyGate = new Promise<void>((r) => {
+			release = r;
+		});
+		const deps = m.depsForTab(3, { nativeFallback: "silent" });
+		const done = deps.ceremony({
+			kind: "get",
+			rpId: "example.com",
+			origin: "https://example.com",
+		});
+		await new Promise((r) => setTimeout(r, 50)); // the ceremony is held mid-flight
+		const res = (await h.handlers.get("PASSKEY_CEREMONY_QUERY")?.({})) as {
+			data: { active: boolean };
+		};
+		expect(res.data.active).toBe(false);
+		release();
+		expect(await done).toEqual({ approved: false });
 	});
 });
