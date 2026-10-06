@@ -159,10 +159,12 @@ export interface SavePasskeyPrompt extends CornerPromptCommon {
 	 * post-unlock). Drives the "no Bramble passkey here, use another authenticator"
 	 * card instead of a confirm-then-error dead end. See docs/passkey-provider.md. */
 	noMatch?: boolean;
-	/** Offer the "use another authenticator" action (sentinel choice "native" on reply):
-	 * Firefox relays the request to the native authenticator; Chrome has no passthrough
-	 * (the proxy is all-or-nothing), so the provider turns itself off and the site's
-	 * retry goes native. Carries which, so the card can say what will happen. */
+	/** Render the handoff affordances (the no-match card's primary action, and the note
+	 * saying what a refusal does). Every refusal from a passkey card hands the request to
+	 * the user's other authenticators: Firefox relays natively (origin binding preserved);
+	 * Chrome has no passthrough, so the delivery completes the attempt with the handoff
+	 * message and turns the provider off, making the site's retry native. Carries which,
+	 * so the card can say what will happen. */
 	nativeFallback?: "passthrough" | "disable";
 	/** create only: name of the existing login this passkey will attach to, when one
 	 * covers the rpId unambiguously (resolved only when the vault is already unlocked).

@@ -443,13 +443,21 @@ transports have different powers:
   authenticator" action on create cards (the escape hatch for a user who came to enroll Touch ID
   or a hardware key, e.g. Cloudflare Access's "Add an MFA device").
 - **Chrome (`webauthn-proxy-init.ts`):** the proxy API has NO passthrough, so the handoff is the
-  user's explicit choice. The no-match card's primary action is "Use another authenticator", and
-  accepting it **turns the provider off** (persisted pref + detach, exactly the Settings toggle's
-  write) so the site's retry reaches the platform authenticator. The order inside the delivery
+  user's explicit choice, and since the maintainer's UX call **every refusal from a card is that
+  choice**: "Not now", the x, and even the ceremony timeout all count. The site's request
+  completes with the handoff message, the provider turns itself off (persisted pref + detach,
+  exactly the Settings toggle's write), and the site's retry reaches the platform authenticator.
+  The no-match card's primary action is still "Use another authenticator", labelled for clarity;
+  there is nothing else on the card to press. The order inside the delivery
   layer is load-bearing and unit-tested: complete the request with the handoff message FIRST,
   then detach, because detaching mid-flight aborts the page's promise with a bare `AbortError`, which
   would eat the message the user just clicked for. No timed auto re-attach: a timer re-attaching
   over a live native ceremony is exactly the desync class this feature spent its bug budget on.
+
+The one refusal that does NOT hand off is the early fail for a locked, WebAuthn-only vault:
+there Bramble may well hold the matching passkey and the user merely cannot unlock from inside
+the ceremony, so that path stays a hard error with the "unlock from the toolbar, then retry"
+guidance rather than turning the provider off.
 
 The decision travels as `CeremonyDecision {approved: false, nativeFallback: true}` from the pure
 ceremony (`webauthn-proxy.ts`) up through `handleGet`/`handleCreate`, which return the usual

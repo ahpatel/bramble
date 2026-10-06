@@ -91,8 +91,11 @@ export type CeremonyDecision =
 	  };
 export type CeremonyFn = (req: CeremonyRequest) => Promise<CeremonyDecision>;
 
-/** The card reply sentinel for the "use another authenticator" action. Credential ids
- * (base64) and login ids never collide with it. */
+/** The card reply sentinel for the "use another authenticator" action on the no-match card.
+ *  Since the decline-is-a-handoff change every card refusal produces the same decision, so
+ *  nothing reads the sentinel anymore; it stays exported as the single spelling of the
+ *  wire value the content card still sends (and the docs reference). Credential ids
+ *  (base64) and login ids never collide with it. */
 export const NATIVE_CHOICE = "native";
 
 /** DOMException message when the request is handed to the user's other authenticators. */
@@ -124,8 +127,9 @@ export interface CeremonyHost {
 		passkeyChoices?: { credentialId: string; label: string }[];
 		/** get only: the vault holds no passkey that could serve this request. */
 		noMatch?: boolean;
-		/** Render the "use another authenticator" action; says what the reply will do
-		 * ("passthrough" relays natively, "disable" turns the provider off). */
+		/** Render the handoff affordances (the no-match card's primary action, and the
+		 * note saying what a refusal does): "passthrough" relays natively, "disable"
+		 * turns the provider off. The note is informational; any refusal hands off. */
 		nativeFallback?: "passthrough" | "disable";
 	}) => Promise<CardReply>;
 	isLocked: () => boolean;
@@ -133,8 +137,8 @@ export interface CeremonyHost {
 	loadEntries: () => Promise<Entry[]>;
 	/** How a request the vault cannot serve hands off: "silent" relays to the native
 	 * authenticator with no card (Firefox, where the shim holds the page's own options);
-	 * "card" asks first, because Chrome's all-or-nothing proxy has no passthrough and the
-	 * fallback instead turns the provider off, a state change the user must choose. */
+	 * "card" shows one (Chrome's all-or-nothing proxy has no passthrough, so the handoff
+	 * turns the provider off and the card must say so). */
 	nativeFallback?: "silent" | "card";
 	/** While locked: whether unlocking needs a WebAuthn tap (security-key or platform
 	 * slot), which would pause the proxy and kill this very request. The locked branches
@@ -147,9 +151,21 @@ function passkeyLabel(p: { userName?: string; userDisplayName?: string }): strin
 	return p.userName?.trim() || p.userDisplayName?.trim() || "Passkey";
 }
 
-/** Declined, with the reason the site's DOMException will carry. */
-function declined(detail = "user declined"): CeremonyDecision {
+/** Declined, with the reason the site's DOMException will carry. Only for refusals with
+ *  no handoff to offer (the WebAuthn-only locked vault's early fail, which points the
+ *  user at the toolbar so Bramble itself can serve the retry); every card refusal uses
+ *  refused() instead. */
+function declined(detail: string): CeremonyDecision {
 	return { approved: false, detail };
+}
+
+/** A user refusal from a card: the "Bramble, step aside" answer, not a dead end. The
+ *  request is handed to the user's other authenticators: Firefox relays it with the page's
+ *  own options, and Chrome, whose proxy has no passthrough, completes this attempt with
+ *  the handoff message and turns the provider off, so the site's retry goes native.
+ *  This is what the user expects "Not now" (and the ×, and the ceremony timeout) to do. */
+function refused(): CeremonyDecision {
+	return { approved: false, nativeFallback: true };
 }
 
 /** The card opts for the native handoff action, as the host's delivery can afford it. */
@@ -158,19 +174,15 @@ function nativeFallbackOpts(host: CeremonyHost): { nativeFallback?: "passthrough
 	return { nativeFallback: host.nativeFallback === "card" ? "disable" : "passthrough" };
 }
 
-/** Whether a card reply picked the "use another authenticator" action. */
-function isNativeReply(reply: CardReply): boolean {
-	return reply.choice === NATIVE_CHOICE;
-}
-
 /** No stored passkey can serve this request. Never a confirm-then-error dead end: "silent"
  * relays to the native authenticator immediately; "card" asks, because the handoff turns
  * the provider off (Chrome has no passthrough) and that must be the user's click. */
 async function noMatchDecision(host: CeremonyHost): Promise<CeremonyDecision> {
-	if (host.nativeFallback === "silent") return { approved: false, nativeFallback: true };
-	const reply = await host.showCard({ noMatch: true, ...nativeFallbackOpts(host) });
-	if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
-	return declined("no matching passkey");
+	if (host.nativeFallback === "silent") return refused();
+	// Any way the card ends (primary, "Not now", x, timeout) hands off: there is nothing
+	// Bramble can do for this request, so a refusal is the handoff.
+	await host.showCard({ noMatch: true, ...nativeFallbackOpts(host) });
+	return refused();
 }
 
 /** The locked prologue both ceremonies share: fail early when unlocking from here would
@@ -180,9 +192,8 @@ async function noMatchDecision(host: CeremonyHost): Promise<CeremonyDecision> {
 async function lockedGate(host: CeremonyHost): Promise<CeremonyDecision | undefined> {
 	if (await unlockWouldConflict(host)) return declined(WEBAUTHN_UNLOCK_CONFLICT_MESSAGE);
 	const reply = await host.showCard(nativeFallbackOpts(host));
-	if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
-	if (!reply.approved) return declined();
-	if (!(await host.ensureUnlocked())) return declined();
+	if (!reply.approved) return refused();
+	if (!(await host.ensureUnlocked())) return refused();
 	return undefined;
 }
 
@@ -231,8 +242,7 @@ export async function runGetCeremony(
 		})),
 		...nativeFallbackOpts(host),
 	});
-	if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
-	if (!reply.approved) return declined();
+	if (!reply.approved) return refused();
 	return {
 		approved: true,
 		userVerified: true,
@@ -244,9 +254,9 @@ export async function runGetCeremony(
  * create(): confirm + unlock, then resolve which login the passkey attaches to. When
  * locked we confirm generically first (the vault can't be read yet); once unlocked we
  * attach to the unambiguous account, create a new login when the domain has none, or
- * show a picker (candidates + "create new") when several accounts are ambiguous. Every
- * card also offers the "use another authenticator" action, so a user who came to enroll
- * a device-native credential (Touch ID, a YubiKey) is never forced through Bramble.
+ * show a picker (candidates + "create new") when several accounts are ambiguous. Any
+ * refusal hands the request to the user's other authenticators, so a user who came to
+ * enroll a device-native credential (Touch ID, a YubiKey) is never forced through Bramble.
  */
 export async function runCreateCeremony(
 	req: CeremonyCreateRequest,
@@ -271,8 +281,7 @@ export async function runCreateCeremony(
 				existingLoginName: target.name,
 				...nativeFallbackOpts(host),
 			});
-			if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
-			if (!reply.approved) return declined();
+			if (!reply.approved) return refused();
 		}
 		return { approved: true, userVerified: true, placement: { entryId: target.id } };
 	}
@@ -281,8 +290,7 @@ export async function runCreateCeremony(
 	if (candidates.length === 0) {
 		if (!startedLocked) {
 			const reply = await host.showCard(nativeFallbackOpts(host));
-			if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
-			if (!reply.approved) return declined();
+			if (!reply.approved) return refused();
 		}
 		return { approved: true, userVerified: true, placement: "new" };
 	}
@@ -292,8 +300,7 @@ export async function runCreateCeremony(
 		candidates: candidates.map((c) => ({ id: c.id, name: c.name, username: c.username })),
 		...nativeFallbackOpts(host),
 	});
-	if (isNativeReply(reply)) return { approved: false, nativeFallback: true };
-	if (!reply.approved) return declined();
+	if (!reply.approved) return refused();
 	return {
 		approved: true,
 		userVerified: true,
