@@ -271,6 +271,17 @@ export const cornerStyles = html`
 				background: rgba(255, 255, 255, 0.06);
 				border-color: rgba(255, 255, 255, 0.24);
 			}
+			/* The muted "what 'Not now' does" note on passkey cards. */
+			.tp-subnote {
+				margin-top: 10px;
+				background: transparent;
+				border: none;
+				color: rgba(235, 235, 245, 0.45);
+				font: inherit;
+				font-size: 11px;
+				line-height: 1.5;
+				padding: 0 2px;
+			}
 			button.tp-btn-primary {
 				background: #fafafa;
 				color: #18181b;

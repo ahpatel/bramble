@@ -23,14 +23,21 @@ import { handleCreate, handleGet } from "./webauthn-proxy";
 
 type TransportResult =
 	| { passthrough: true }
+	| { fallback: true }
 	| { error: { name: string; message: string } }
 	| { responseJson: string };
 
-/** Map a handler's response details to the shim's transport result. */
+/** Map a handler's response details to the shim's transport result. `nativeFallback` is
+ *  the handoff marker: the vault cannot serve this request, so instead of throwing the
+ *  error at the page, tell the shim to relay to the NATIVE navigator.credentials with the
+ *  page's own options (origin binding preserved): the site behaves as if Bramble weren't
+ *  installed for this one request. */
 function toTransportResult(details: {
 	error?: { name: string; message: string };
 	responseJson?: string;
+	nativeFallback?: boolean;
 }): TransportResult {
+	if (details.nativeFallback) return { fallback: true };
 	if (details.error) return { error: { name: details.error.name, message: details.error.message } };
 	if (details.responseJson) return { responseJson: details.responseJson };
 	return { error: { name: "NotAllowedError", message: "no passkey response" } };
@@ -56,7 +63,14 @@ if (typeof api.webAuthenticationProxy === "undefined") {
 		const origin = senderOrigin(sender);
 		if (!origin) return { ok: true, data: { passthrough: true } };
 		const json = JSON.stringify(message.payload ?? {});
-		const details = await handleCreate(depsForTab(sender.tab?.id), 0, json, origin);
+		// "silent": a request the vault can't serve relays to the native authenticator
+		// with no card (the shim holds the page's own options, so this is a true passthrough).
+		const details = await handleCreate(
+			depsForTab(sender.tab?.id, { nativeFallback: "silent" }),
+			0,
+			json,
+			origin,
+		);
 		return { ok: true, data: toTransportResult(details) };
 	});
 
@@ -65,7 +79,12 @@ if (typeof api.webAuthenticationProxy === "undefined") {
 		const origin = senderOrigin(sender);
 		if (!origin) return { ok: true, data: { passthrough: true } };
 		const json = JSON.stringify(message.payload ?? {});
-		const details = await handleGet(depsForTab(sender.tab?.id), 0, json, origin);
+		const details = await handleGet(
+			depsForTab(sender.tab?.id, { nativeFallback: "silent" }),
+			0,
+			json,
+			origin,
+		);
 		return { ok: true, data: toTransportResult(details) };
 	});
 }

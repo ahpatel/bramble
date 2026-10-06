@@ -117,6 +117,12 @@ export type CornerPromptPayload =
 			rpId: string;
 			rpName?: string;
 			userName?: string;
+			/** get: the vault holds no passkey that could serve this request. */
+			noMatch?: boolean;
+			/** Render the handoff affordances (the no-match card's primary action, and the
+			 * note saying what a refusal does): "passthrough" relays natively, "disable"
+			 * turns the provider off. Any refusal hands off. */
+			nativeFallback?: "passthrough" | "disable";
 			existingLoginName?: string;
 			candidates?: { id: string; name: string; username: string }[];
 			passkeyChoices?: { credentialId: string; label: string }[];

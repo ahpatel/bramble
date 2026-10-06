@@ -166,5 +166,20 @@
 	"cardUsedHere": {
 		"message": "Used here",
 		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	},
+	"passkeyNoneTitle": {
+		"message": "No Bramble passkey for this site"
+	},
+	"passkeyNoneNotePassthrough": {
+		"message": "Bramble has no passkey stored for this site. Continue with one of your other sign-in methods and the request will be handed to your device's other authenticators."
+	},
+	"passkeyNoneNoteDisable": {
+		"message": "Bramble has no passkey stored for this site. Continue with one of your other sign-in methods and “Use Bramble for passkeys” will be turned off so your other authenticators can handle it. Try again afterwards."
+	},
+	"passkeyUseOther": {
+		"message": "Use another authenticator"
+	},
+	"passkeyDeclineNoteDisable": {
+		"message": "Declining hands this request to your device's other authenticators and turns \"Use Bramble for passkeys\" off, so the site's next attempt uses them. Re-enable it in Settings when you want Bramble back."
 	}
 }

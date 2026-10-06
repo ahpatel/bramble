@@ -127,6 +127,15 @@ export interface ShellAdapter {
 	setAutofillEnabled?(enabled: boolean): Promise<void>;
 	/** Attach/detach the passkey provider at runtime (extension only; paired with the passkeyProvider capability). Persisting the pref is the caller's job; this just applies it now. */
 	setPasskeyProviderEnabled?(enabled: boolean): Promise<void>;
+	/**
+	 * True while a page's passkey request (the provider ceremony) is waiting on this UI,
+	 * typically an unlock the ceremony opened. The unlock screen then steers away from
+	 * WebAuthn-based unlock (security key, platform biometric): Bramble's own WebAuthn
+	 * ceremony would pause the interception layer and kill the very request being served.
+	 * Extension only; absent elsewhere, where nothing can hold a passkey request.
+	 * See docs/passkey-provider.md.
+	 */
+	passkeyCeremonyHoldsWebauthnUnlock?(): Promise<boolean>;
 	/** Subscribe to passkey-provider saves so the UI can confirm them (extension only). Returns an unsubscribe. */
 	onPasskeySaved?(callback: (info: PasskeySavedInfo) => void): () => void;
 	/**

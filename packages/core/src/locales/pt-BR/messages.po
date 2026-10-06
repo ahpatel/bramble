@@ -188,6 +188,10 @@ msgstr "Um conjunto nomeado de entradas, compartilhado com as pessoas que você 
 msgid "A one-time backup code that unlocks your vault if you're locked out."
 msgstr "Um código de backup único que desbloqueia seu cofre caso você seja bloqueado."
 
+#: packages/core/src/app/screens/Auth/Auth.tsx
+msgid "A passkey request from a page is waiting on this unlock. Use your master password here instead; a security key or biometric tap would interrupt it."
+msgstr "Uma solicitação de passkey de uma página aguarda este desbloqueio. Use aqui sua senha mestra; um toque de chave de segurança ou biometria interromperia."
+
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "A QR code was found, but it isn't an authenticator setup code. Open the site's 2FA page, or paste the setup key."
 msgstr "Um código QR foi encontrado, mas não é um código de configuração de autenticador. Abra a página de 2FA do site ou cole a chave de configuração."

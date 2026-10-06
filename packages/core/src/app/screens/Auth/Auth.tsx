@@ -69,6 +69,25 @@ export function Auth() {
 	const activeIndex = vaults.findIndex((v) => v.id === activeId);
 	const vaultLabel =
 		activeIndex >= 0 ? displayLabel(vaults[activeIndex]!.label, activeIndex) : null;
+	// Whether a page's passkey ceremony opened this unlock. While one waits, a WebAuthn-based
+	// unlock (security key / platform biometric) would pause the provider's interception and
+	// kill the request this popup was opened to serve; with a password slot to fall back on,
+	// the WebAuthn buttons hide and steer to the password instead. Absent capability
+	// (mobile, desktop) or a manual popup open reads false and changes nothing.
+	const [ceremonyHoldsWebauthn, setCeremonyHoldsWebauthn] = useState(false);
+	useEffect(() => {
+		let live = true;
+		shell
+			.passkeyCeremonyHoldsWebauthnUnlock?.()
+			.then((held) => {
+				if (live) setCeremonyHoldsWebauthn(held);
+			})
+			.catch(() => {});
+		return () => {
+			live = false;
+		};
+	}, [shell]);
+	const steerFromWebauthnUnlock = ceremonyHoldsWebauthn && hasPasswordSlot;
 	const canWebauthnUnlock = useWebauthnUnlock();
 	const { popOut, canPopOut } = usePopOut();
 	const { t } = useLingui();
@@ -160,8 +179,10 @@ export function Auth() {
 	// Hidden where it can't work (mobile): no PRF, so offering it would be a dead end even for
 	// a vault synced from a browser with a registered key. Declared up here because it doubles as
 	// the handoff's readiness gate: a resume before this is true would unlock against no active
-	// vault. See useWebauthnHandoff.
-	const webauthnKeyAvailable = hasVault && canWebauthnUnlock && (hasWebauthnSlot || couldNotRead);
+	// vault. See useWebauthnHandoff. Also hidden while a passkey ceremony holds this unlock and a
+	// password exists to steer to: the tap would interrupt the page's waiting request.
+	const webauthnKeyAvailable =
+		hasVault && canWebauthnUnlock && (hasWebauthnSlot || couldNotRead) && !steerFromWebauthnUnlock;
 
 	// Resume an unlock the popup could not host (Firefox); no-op everywhere else.
 	const onResume = useCallback(
@@ -247,8 +268,11 @@ export function Auth() {
 	const showPasswordForm = hasVault && (hasPasswordSlot || couldNotRead);
 	const recoveryAvailable = hasVault && hasRecoveryCode;
 	// Device-local biometric is the fast path when set up; the password/security-key/
-	// recovery methods stay as the fallback below it.
-	const showBiometric = hasVault && biometricEnabled && biometricAvailable;
+	// recovery methods stay as the fallback below it. Suppressed while a passkey ceremony
+	// holds this unlock (with a password to steer to): the WebAuthn tap would interrupt
+	// the page's waiting request, and this also silences the auto-prompt below.
+	const showBiometric =
+		hasVault && biometricEnabled && biometricAvailable && !steerFromWebauthnUnlock;
 	// Opt-in fast unlock: present the gate as soon as this screen is up, one attempt per mount
 	// (= per lock episode, since the guard bounces here on every lock). docs/auth-and-unlock.md.
 	const autoPromptedRef = useRef(false);
@@ -426,6 +450,15 @@ export function Auth() {
 								</div>
 							)}
 						</div>
+					)}
+
+					{steerFromWebauthnUnlock && (hasWebauthnSlot || biometricAvailable) && (
+						<p className="mt-3 text-center text-xs text-muted-foreground">
+							<Trans>
+								A passkey request from a page is waiting on this unlock. Use your master password
+								here instead; a security key or biometric tap would interrupt it.
+							</Trans>
+						</p>
 					)}
 
 					{couldNotRead && (

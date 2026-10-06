@@ -188,6 +188,10 @@ msgstr "Un insieme di voci denominato condiviso con le persone che hai seleziona
 msgid "A one-time backup code that unlocks your vault if you're locked out."
 msgstr "Codice di backup usa e getta che sblocca il tuo Vault in caso di blocco."
 
+#: packages/core/src/app/screens/Auth/Auth.tsx
+msgid "A passkey request from a page is waiting on this unlock. Use your master password here instead; a security key or biometric tap would interrupt it."
+msgstr "Una richiesta passkey da una pagina è in attesa di questo sblocco. Usare qui la password principale; un tocco di chiave di sicurezza o biometria lo interromperebbe."
+
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "A QR code was found, but it isn't an authenticator setup code. Open the site's 2FA page, or paste the setup key."
 msgstr "È stato trovato un codice QR, ma non è un codice di configurazione per l'autenticatore. Apri la pagina 2FA del sito o incolla la chiave di configurazione."

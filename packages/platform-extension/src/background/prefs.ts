@@ -82,6 +82,16 @@ export async function getPasskeyProviderEnabled(): Promise<boolean> {
 	return DEFAULT_PASSKEY_PROVIDER;
 }
 
+/** Persist the provider opt-in. The background's own fallback path ("use another
+ * authenticator" on Chrome, where the all-or-nothing proxy has no passthrough) turns the
+ * provider off through here, so it stays off exactly like a Settings toggle the user
+ * flipped (same key, same shape), picked up on the next UI read. */
+export async function setPasskeyProviderEnabled(enabled: boolean): Promise<void> {
+	try {
+		await api.storage.local.set({ [PREF_PASSKEY_PROVIDER]: enabled });
+	} catch {}
+}
+
 /** The generator settings the app saved. Normalized here as everywhere else: this reads a stored
  * object, not a scalar, so a value written by another build cannot be trusted to still fit. */
 export async function getGeneratorSettings(): Promise<GeneratorSettings> {

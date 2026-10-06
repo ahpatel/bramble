@@ -15,6 +15,64 @@ import {
 
 const DETACHED_FLAG = "detached";
 
+/** The passkey-proxy pause port's name; must match PASSKEY_PAUSE_PORT in
+ *  background/webauthn-proxy-init.ts (the SW side: connect = pause, disconnect = resume). */
+const PASSKEY_PAUSE_PORT = "tp-passkey-pause";
+
+/**
+ * Open the proxy-pause port and keep it held for Bramble's own security-key PRF ceremony.
+ *
+ * The port's disconnect delivery is browser-guaranteed, which is the whole point: the
+ * old PASSKEY_PROXY_PAUSE/RESUME messages died with the popup (click away during the key
+ * tap) and stranded the proxy in whatever state it was in. Two guarantees come from the
+ * port shape instead:
+ *  - the popup dying fires the background's onDisconnect, so the resume always lands;
+ *  - the worker dying mid-ceremony drops the popup's port, and the reconnect below makes
+ *    the revived worker pause again on the new connection (it would otherwise re-attach
+ *    and hijack the very ceremony the popup is running).
+ *
+ * `ready` resolves on the background's "paused" ack so the caller's navigator.credentials
+ * runs only once the pause has actually landed, capped so a wedged worker never blocks
+ * unlock (the pauser is best-effort, exactly as before). `close` releases the pause.
+ */
+function holdPausePort(): { ready: Promise<void>; close: () => void } {
+	let port: chrome.runtime.Port | null = null;
+	let closed = false;
+	const open = () => {
+		const p = api.runtime.connect({ name: PASSKEY_PAUSE_PORT });
+		port = p;
+		p.onDisconnect.addListener(() => {
+			if (closed) return;
+			try {
+				open(); // worker died mid-ceremony: reconnect so the revived worker re-pauses
+			} catch {
+				// The browser is going away; nothing is left to hold a pause for.
+			}
+		});
+	};
+	try {
+		open();
+	} catch {
+		// No background to talk to; run the ceremony anyway, as the old best-effort pauser did.
+	}
+	const ready = new Promise<void>((resolve) => {
+		const done = () => {
+			clearTimeout(timer);
+			resolve();
+		};
+		const timer = setTimeout(done, 2_000);
+		port?.onMessage.addListener(function ack() {
+			port?.onMessage.removeListener(ack);
+			done();
+		});
+	});
+	const close = () => {
+		closed = true;
+		port?.disconnect();
+	};
+	return { ready, close };
+}
+
 /** A tab's http(s) origin, or null for extension pages, about:blank, files, and unparseable urls. */
 function webOrigin(tab: chrome.tabs.Tab | undefined): string | null {
 	if (!tab?.url) return null;
@@ -33,19 +91,16 @@ const POPUP_ROUTE_KEY = "popup.route";
 
 // When the passkey provider proxy is attached it intercepts all browser WebAuthn,
 // which would hijack Bramble's own security-key (PRF) unlock. Pause it around our
-// ceremony by detaching for the duration; best-effort so a messaging hiccup never
-// blocks unlock. Runs in the popup/options context (where the ceremony runs). See
-// docs/passkey-provider.md.
+// ceremony by holding the pause port for the duration; the disconnect is the resume,
+// and the browser guarantees its delivery (see holdPausePort). Runs in the
+// popup/options context (where the ceremony runs). See docs/passkey-provider.md.
 setWebauthnInterceptionPauser(async (run) => {
+	const hold = holdPausePort();
 	try {
-		await api.runtime.sendMessage({ type: "PASSKEY_PROXY_PAUSE" });
-	} catch {}
-	try {
+		await hold.ready;
 		return await run();
 	} finally {
-		try {
-			await api.runtime.sendMessage({ type: "PASSKEY_PROXY_RESUME" });
-		} catch {}
+		hold.close();
 	}
 });
 
@@ -217,6 +272,16 @@ export const extensionShell: ShellAdapter = {
 		};
 		api.runtime.onMessage.addListener(handler);
 		return () => api.runtime.onMessage.removeListener(handler);
+	},
+	// Whether a page's passkey request (the provider ceremony) is currently waiting on this
+	// UI. The unlock screen asks so it can steer away from security-key / biometric unlock
+	// while one runs: Bramble's own WebAuthn unlock would pause the proxy and kill the
+	// request the ceremony exists to serve (docs/passkey-provider.md, the pause hole).
+	async passkeyCeremonyHoldsWebauthnUnlock() {
+		const res = (await api.runtime.sendMessage({ type: "PASSKEY_CEREMONY_QUERY" })) as
+			| { ok?: boolean; data?: { active?: boolean } }
+			| undefined;
+		return res?.ok === true && res.data?.active === true;
 	},
 	onCornerSaved(callback) {
 		const handler = (msg: { type?: string; payload?: unknown } | undefined) => {

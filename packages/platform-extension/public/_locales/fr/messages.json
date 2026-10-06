@@ -165,5 +165,20 @@
 	},
 	"cardUsedHere": {
 		"message": "Utilisée ici"
+	},
+	"passkeyNoneTitle": {
+		"message": "Aucune clé d'accès Bramble pour ce site"
+	},
+	"passkeyNoneNotePassthrough": {
+		"message": "Bramble n'a aucune clé d'accès enregistrée pour ce site. Continuez avec une autre méthode de connexion ; la demande sera transmise aux autres authentificateurs de votre appareil."
+	},
+	"passkeyNoneNoteDisable": {
+		"message": "Bramble n'a aucune clé d'accès enregistrée pour ce site. Continuez avec une autre méthode de connexion ; « Utiliser Bramble pour les clés d'accès » sera désactivé pour que vos autres authentificateurs puissent traiter la demande. Réessayez ensuite."
+	},
+	"passkeyUseOther": {
+		"message": "Utiliser un autre authentificateur"
+	},
+	"passkeyDeclineNoteDisable": {
+		"message": "Refuser transmet cette demande aux autres authentificateurs de votre appareil et désactive « Utiliser Bramble pour les clés d'accès », afin que la tentative suivante du site les utilise. Réactivez-la dans les Paramètres pour retrouver Bramble."
 	}
 }
