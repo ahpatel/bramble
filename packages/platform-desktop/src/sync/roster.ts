@@ -61,6 +61,13 @@ const syncViewCrypto: SyncViewCrypto = {
 		const w = await desktopSyncCrypto.encrypt_with_vek(plaintext);
 		return { iv: w.iv, ciphertext: w.ciphertext };
 	},
+	// Binary-safe DEK unwrap/wrap: the localize path needs these for shared
+	// entries, whose DEKs are raw bytes that the text-shaped ops cannot carry.
+	decryptEntryDek: (dekIv, wrappedDek) => desktopSyncCrypto.unwrap_dek(wrappedDek, dekIv),
+	wrapEntryDek: async (dekB64) => {
+		const w = await desktopSyncCrypto.wrap_dek(dekB64);
+		return { iv: w.iv, ciphertext: w.ciphertext };
+	},
 };
 
 import { notifyExternalChange, onVaultStateChange } from "../adapters/vault-session";

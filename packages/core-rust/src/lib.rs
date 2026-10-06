@@ -1141,3 +1141,39 @@ mod portable_vault_tests {
         assert!(is_locked());
     }
 }
+
+#[cfg(test)]
+mod dek_roundtrip_tests {
+    use super::*;
+
+    #[test]
+    fn unwrap_dek_roundtrips_encrypt_entry_output() {
+        // generate_vek + encrypt_entry produce a real wrapped DEK (random bytes);
+        // unwrap_dek must return it as base64 without any UTF-8 coercion.
+        generate_vek();
+        let payload = encrypt_entry_core("{\"n\":1}").expect("encrypt");
+        let dek = unwrap_dek(payload.wrapped_dek.clone(), payload.dek_iv.clone()).expect("unwrap");
+        assert_eq!(dek.len(), 44); // base64 of 32 bytes
+        // And the wrap_dek inverse must produce something decrypt_entry can open.
+        let rewrapped = wrap_dek_core(&dek).expect("wrap");
+        let plaintext = decrypt_entry(
+            payload.ciphertext.clone(),
+            payload.iv.clone(),
+            rewrapped.ciphertext.clone(),
+            rewrapped.iv.clone(),
+        )
+        .expect("decrypt with rewrapped dek");
+        assert_eq!(plaintext, "{\"n\":1}");
+    }
+
+    #[test]
+    fn decrypt_with_vek_still_fails_on_binary() {
+        // The old path: feeding a wrapped DEK through decrypt_with_vek must fail
+        // with the utf8 error (this is what the desktop hit before the fix).
+        generate_vek();
+        let payload = encrypt_entry_core("{\"n\":1}").expect("encrypt");
+        let result = decrypt_with_vek(payload.dek_iv.clone(), payload.wrapped_dek.clone());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("utf8"));
+    }
+}
