@@ -22,12 +22,14 @@ import {
 	encryptRegion,
 	grantEntry,
 	moveEntry,
+	passwordConcealed,
 	promoteEntry,
 	removeMember,
 	removeMemberFromCollection,
 	renameCollection,
 	resolveEntryDek,
 	type SharingState,
+	setCollectionPasswordHidden,
 	unshareEntry,
 	upsertIndexEntry,
 } from "./sharing-mutations";
@@ -516,4 +518,71 @@ describe("resolveEntryDek", () => {
 		state = await grantEntry(deps, state, { entryId: "entry-1", collectionId, dekB64 });
 		return { state, collectionId, dekB64 };
 	}
+});
+
+describe("passwordConcealed", () => {
+	it("is false for the owner and for entries with no wrapper", async () => {
+		let state = await ownerState();
+		state = await createCollection(deps, state, "Banking");
+		const collection = state.region.collections[0]!;
+		const hidden = await setCollectionPasswordHidden(deps, state, collection.id, true);
+		// Owner never conceals their own entry.
+		expect(passwordConcealed(hidden, "entry-1")).toBe(false);
+		// A member with no grant for this entry sees nothing to conceal.
+		const member = { ...hidden, performer: { role: "member" as const, memberId: "dad" } };
+		expect(passwordConcealed(member, "entry-1")).toBe(false);
+	});
+
+	it("is true for a member whose only granting collection hides passwords", async () => {
+		let state = await ownerState();
+		state = await createCollection(deps, state, "Banking");
+		const collection = state.region.collections[0]!;
+		const hidden = await setCollectionPasswordHidden(deps, state, collection.id, true);
+		const wrapped = await grantEntry(deps, hidden, {
+			entryId: "entry-1",
+			collectionId: collection.id,
+			dekB64: await generateKey(),
+		});
+		const member = {
+			...wrapped,
+			region: {
+				...wrapped.region,
+				collections: wrapped.region.collections.map((c) => ({
+					...c,
+					memberIds: [...c.memberIds, "dad"],
+				})),
+			},
+			performer: { role: "member" as const, memberId: "dad" },
+		};
+		expect(passwordConcealed(member, "entry-1")).toBe(true);
+	});
+
+	it("is false when any granting collection is visible", async () => {
+		let state = await ownerState();
+		state = await createCollection(deps, state, "Banking");
+		state = await createCollection(deps, state, "Family");
+		const [banking, family] = state.region.collections;
+		let mixed = await setCollectionPasswordHidden(deps, state, banking!.id, true);
+		for (const collection of [banking!, family!]) {
+			mixed = await grantEntry(deps, mixed, {
+				entryId: "entry-1",
+				collectionId: collection.id,
+				dekB64: await generateKey(),
+			});
+		}
+		const member = {
+			...mixed,
+			region: {
+				...mixed.region,
+				collections: mixed.region.collections.map((c) => ({
+					...c,
+					memberIds: [...c.memberIds, "dad"],
+				})),
+			},
+			performer: { role: "member" as const, memberId: "dad" },
+		};
+		// The member is in a visible collection for the same entry, so the
+		// password is legitimately in their "can see" audience.
+		expect(passwordConcealed(member, "entry-1")).toBe(false);
+	});
 });

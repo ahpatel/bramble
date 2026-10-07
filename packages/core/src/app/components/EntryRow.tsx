@@ -8,6 +8,7 @@ import {
 	MoreVertical,
 	Pencil,
 	Trash2,
+	Users,
 } from "lucide-react";
 import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import { usePlatform, useSurface } from "../../context/PlatformContext";
@@ -31,6 +32,9 @@ interface EntryRowProps {
 	passkeys?: number;
 	/** Quick-copy actions; empty hides the copy button. */
 	copyItems: CopyItem[];
+	/** Names of the collections this entry is shared through, when shared at
+	 * all. Shows the shared indicator beside the title (docs/adr/0009). */
+	sharedVia?: string[];
 	onSelect: (id: string) => void;
 	onEdit: (id: string) => void;
 	onDelete: (id: string) => Promise<void>;
@@ -59,6 +63,7 @@ export const EntryRow = memo(function EntryRow({
 	leaked,
 	passkeys = 0,
 	copyItems,
+	sharedVia,
 	onSelect,
 	onEdit,
 	onDelete,
@@ -204,6 +209,15 @@ export const EntryRow = memo(function EntryRow({
 							<KeyRound
 								className="w-3 h-3 text-primary shrink-0 self-center"
 								aria-label={passkeyLabel}
+								role="img"
+							/>
+						)}
+						{sharedVia !== undefined && sharedVia.length > 0 && (
+							<Users
+								className="w-3 h-3 text-primary shrink-0 self-center"
+								// The full truth in the accessible name; the row stays
+								// compact (same treatment as the passkey marker).
+								aria-label={`Shared via ${sharedVia.join(", ")}`}
 								role="img"
 							/>
 						)}

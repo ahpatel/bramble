@@ -694,7 +694,7 @@ function PasswordChangelogField({
 	);
 }
 
-function LoginDetail({ entry, copied, copy }: EntryDetailBodyProps) {
+function LoginDetail({ entry, copied, copy, passwordConcealed }: EntryDetailBodyProps) {
 	const login = entry as LoginEntry;
 	const { t } = useLingui();
 	const [showPassword, setShowPassword] = useState(false);
@@ -733,26 +733,40 @@ function LoginDetail({ entry, copied, copy }: EntryDetailBodyProps) {
 			<DetailField
 				label={t`Password`}
 				copied={copied}
-				copyName="password"
-				onCopy={() => copy("password", login.password)}
+				// Concealed (hide-password policy): no copy, no reveal — autofill
+				// still works, TOTP stays visible. The copy says what is true:
+				// hidden from view, not locked away.
+				copyName={passwordConcealed ? undefined : "password"}
+				onCopy={passwordConcealed ? undefined : () => copy("password", login.password)}
 				extraAction={
-					<Button
-						variant="ghost"
-						size="none"
-						onClick={() => setShowPassword((v) => !v)}
-						className="p-1.5 rounded-md"
-						aria-label={showPassword ? t`Hide password` : t`Show password`}
-					>
-						{showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-					</Button>
+					passwordConcealed ? undefined : (
+						<Button
+							variant="ghost"
+							size="none"
+							onClick={() => setShowPassword((v) => !v)}
+							className="p-1.5 rounded-md"
+							aria-label={showPassword ? t`Hide password` : t`Show password`}
+						>
+							{showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+						</Button>
+					)
+				}
+				note={
+					passwordConcealed
+						? t`Hidden by the owner. It still fills on login pages, and isn't included in exports.`
+						: undefined
 				}
 			>
-				<DetailValue mono wrap={showPassword}>
-					{showPassword ? login.password : "•".repeat(Math.min(login.password.length, 16))}
+				<DetailValue mono wrap={showPassword && !passwordConcealed}>
+					{!passwordConcealed && showPassword
+						? login.password
+						: "•".repeat(Math.min(login.password.length, 16))}
 				</DetailValue>
 			</DetailField>
 
-			{login.passwordChangelog && login.passwordChangelog.length > 0 && (
+			{/* The changelog holds previous passwords — as sensitive as the current one,
+			    so it is part of the same concealment. */}
+			{!passwordConcealed && login.passwordChangelog && login.passwordChangelog.length > 0 && (
 				<PasswordChangelogField changelog={login.passwordChangelog} copied={copied} copy={copy} />
 			)}
 
@@ -877,7 +891,7 @@ export const loginMode: EntryMode = {
 			secondary: login.username,
 			copyItems: [
 				{ label: i18n._(msg`username`), value: login.username },
-				{ label: i18n._(msg`password`), value: login.password },
+				{ label: i18n._(msg`password`), value: login.password, kind: "password" },
 				...(parsedTotp
 					? [
 							{

@@ -106,6 +106,10 @@ msgstr "{count, plural, one {# ausgewählt} other {# ausgewählt}}"
 msgid "{duplicates} more were already in your vault and will not be added again."
 msgstr "{duplicates} weitere befanden sich bereits in Ihrem Tresor und werden nicht erneut hinzugefügt."
 
+#: packages/core/src/app/screens/Settings/components/KdbxExportDialog.tsx
+msgid "{hidden} password(s) hidden by the owner weren't included."
+msgstr "Die {hidden} Passwort(e) wurden vom Besitzer versteckt und wurden nicht mitaufgenommen."
+
 #: packages/core/src/app/screens/VaultHome/SelectionBar.tsx
 msgid "{hiddenCount, plural, one {# hidden by the current filter} other {# hidden by the current filter}}"
 msgstr "{hiddenCount, plural, one {# vom aktuellen Filter ausgeblendet} other {# vom aktuellen Filter ausgeblendet}}"
@@ -114,6 +118,10 @@ msgstr "{hiddenCount, plural, one {# vom aktuellen Filter ausgeblendet} other {#
 #: packages/core/src/app/bulk-actions/export.tsx
 msgid "{hiddenCount, plural, one {# of them is hidden by the current filter.} other {# of them are hidden by the current filter.}}"
 msgstr "{hiddenCount, plural, one {# davon ist vom aktuellen Filter ausgeblendet.} other {# davon sind vom aktuellen Filter ausgeblendet.}}"
+
+#: packages/core/src/hooks/useVault.tsx
+msgid "{hiddenCount} password(s) hidden by the owner weren't included."
+msgstr "Die {hiddenCount} Passwort(e) wurden vom Besitzer versteckt und wurden nicht mitaufgenommen."
 
 #: packages/core/src/app/bulk-actions/archive.tsx
 msgid "{moving, plural, one {Archive # entry?} other {Archive # entries?}}"
@@ -1615,6 +1623,10 @@ msgid "Hidden"
 msgstr "Verborgen"
 
 #: packages/core/src/app/entry-modes/login.tsx
+msgid "Hidden by the owner. It still fills on login pages, and isn't included in exports."
+msgstr "Versteckt vom Besitzer. Es wird immer noch auf Anmelde-Seiten ausgefüllt und wird nicht in Ausgaben enthalten."
+
+#: packages/core/src/app/entry-modes/login.tsx
 msgid "Hide authenticator key"
 msgstr "Authentifikator-Schlüssel ausblenden"
 
@@ -1634,6 +1646,14 @@ msgstr "Passphrase ausblenden"
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Hide password"
 msgstr "Passwort ausblenden"
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Hide passwords in this collection from members."
+msgstr "Passwörter in dieser Sammlung von Mitgliedern verstecken."
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Hide passwords in this collection from members. Autofill keeps working; this is a courtesy, not a lock."
+msgstr "Passwörter in dieser Sammlung von Mitgliedern verstecken. Autofill funktioniert weiterhin; dies ist eine Höflichkeit, keine Abschließung."
 
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Hide previous password"
@@ -2446,6 +2466,10 @@ msgstr "Passwortstärke"
 msgid "Password updated for {0}"
 msgstr "Passwort für {0} aktualisiert"
 
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Passwords are hidden from members in this collection — autofill still works, but this is a courtesy, not a lock."
+msgstr "Die Passwörter in dieser Sammlung sind den Mitgliedern verborgen — Autofill funktioniert immer noch, aber dies ist eine Höflichkeit, nicht ein Schloss."
+
 #: packages/core/src/app/screens/VaultSetup/components/PasswordCard.tsx
 msgid "passwords don't match"
 msgstr "Die Passwörter stimmen nicht überein"
@@ -2453,6 +2477,10 @@ msgstr "Die Passwörter stimmen nicht überein"
 #: packages/core/src/app/screens/Settings/components/MasterPasswordSection.tsx
 msgid "Passwords don't match"
 msgstr "Die Passwörter stimmen nicht überein"
+
+#: packages/core/src/app/screens/Settings/components/SharingSection.tsx
+msgid "Passwords in this collection are hidden from members. Show them."
+msgstr "Die Passwörter in dieser Sammlung sind den Mitgliedern verborgen. Zeigen Sie sie."
 
 #: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
 msgid "Paste code instead"
@@ -3024,6 +3052,10 @@ msgstr "Teilung"
 #: packages/core/src/app/bulk-actions/share.tsx
 msgid "Sharing is not enabled on this vault yet. Turn it on in Settings."
 msgstr "Die Teilung ist noch nicht aktiviert für diese Tresorraum. Aktivieren Sie sie in Einstellungen."
+
+#: packages/core/src/app/bulk-actions/share.tsx
+msgid "Sharing stops here. Anyone who already has a copy keeps it — rotate the password if that matters."
+msgstr "Der Teilen hält hier auf. Jeder, der bereits eine Kopie hat, behält sie — drehen Sie das Passwort, wenn das relevant ist."
 
 #: packages/core/src/app/bulk-actions/share.tsx
 msgid "Sharing…"

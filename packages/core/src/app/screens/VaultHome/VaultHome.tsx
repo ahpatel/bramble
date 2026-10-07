@@ -40,6 +40,9 @@ export interface VaultListItem {
 	archived: boolean;
 	/** Lowercased tag keys, for the `#tag` filter. Rows themselves don't show tags. */
 	tagKeys?: string[];
+	/** Decrypted names of the collections this entry is shared through, when it
+	 * is shared at all. Drives the row's shared indicator. */
+	sharedVia?: string[];
 }
 
 interface VaultHomeProps {
@@ -321,6 +324,7 @@ export function VaultHome({
 											leaked={item.leaked}
 											passkeys={item.passkeys}
 											copyItems={item.copyItems}
+											sharedVia={item.sharedVia}
 											onSelect={onSelectEntry}
 											onEdit={onEditEntry}
 											onDelete={onDeleteEntry}

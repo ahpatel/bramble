@@ -229,9 +229,11 @@ import {
 	adoptSharedRegion,
 	createSharingDeps,
 	grantEntry,
+	passwordConcealed,
 	SHARING_REGION_SETTING,
 	type SharingDeps,
 	type SharingState,
+	setCollectionPasswordHidden as setCollectionPasswordHiddenLayer,
 	unshareEntry,
 } from "../vault/sharing-mutations";
 import {
@@ -329,6 +331,10 @@ export interface VaultActions {
 	resolveConflict(entryId: string, choice: "winner" | "other"): Promise<void>;
 	/** Remove entries from a collection without deleting them. */
 	unshareEntries(ids: string[], collectionId: string): Promise<void>;
+	/** Owner-only concealment policy for a collection: members' apps hide its
+	 * passwords from view (detail, list, export) while autofill keeps working.
+	 * Policy, not enforcement — see docs/adr/0009. */
+	setCollectionPasswordHidden(collectionId: string, hidden: boolean): Promise<void>;
 	lock(): Promise<void>;
 	/** Creates a new vault (parallel to any existing ones) and returns its initial plaintext recovery code (shown once). */
 	createVault(password: string, label?: string): Promise<string>;
@@ -346,7 +352,8 @@ export interface VaultActions {
 	 * file, unrelated to the master password. Unlike `exportVault` this re-encrypts decrypted
 	 * entries, so it only works unlocked. Rejects where the platform can't save files.
 	 */
-	exportKdbx(password: string): Promise<void>;
+	/** Returns how many concealed passwords were skipped, for the export notice. */
+	exportKdbx(password: string): Promise<number>;
 	/**
 	 * Hand the vault to another app on this device via the OS (FIDO CXP). Like `exportKdbx`
 	 * this reads decrypted entries, so it needs an unlocked vault; unlike it, nothing is
@@ -1005,6 +1012,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		[sharingDeps, readDecodedBlob, storage],
 	);
 
+	const setCollectionPasswordHidden = useCallback(
+		async (collectionId: string, hidden: boolean): Promise<void> => {
+			await runSharingTransition((deps, state) =>
+				setCollectionPasswordHiddenLayer(deps, state, collectionId, hidden),
+			);
+		},
+		[runSharingTransition],
+	);
+
 	/** Run a get() assertion over the given slots, returning the PRF secret. */
 	// Slot wrapping lives in vault/build-vault (shared with device enrollment); these
 	// bind the CryptoAdapter and keep the recovery-code normalization at the edge.
@@ -1225,6 +1241,29 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
 	/** Download an encrypted backup of the vault as a `.bramble` file (the encrypted VLT1
 	 * blob, so it is safe at rest and still needs the master password to open). */
+	// Hide-password policy (docs/adr/0009): a member's plaintext exports (KDBX,
+	// OS transfer) omit the password and its changelog for concealed entries and
+	// report how many were skipped. The encrypted .bramble backup needs no
+	// scrubbing — the policy flag travels inside it, so a restored copy keeps
+	// the same concealment. The fill path in a browser is intentionally
+	// unaffected: this is a courtesy for the vault UI, not a lock.
+	const scrubForExport = useCallback(
+		(source: readonly Entry[]): { entries: Entry[]; hiddenCount: number } => {
+			let hiddenCount = 0;
+			const out = source.map((entry) => {
+				if (!passwordConcealed(sharingRef.current, entry.id)) return entry;
+				hiddenCount += 1;
+				const { password, passwordChangelog, ...rest } = entry as typeof entry & {
+					password?: string;
+					passwordChangelog?: { changedAt: number; value: string }[];
+				};
+				return rest as Entry;
+			});
+			return { entries: out, hiddenCount };
+		},
+		[],
+	);
+
 	const exportVault = useCallback(async () => {
 		if (!shell.exportBytes) throw new Error(t`Export isn't available here.`);
 		const bytes = await storage.readVaultBlob();
@@ -1240,8 +1279,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			if (!shell.exportBytes) throw new Error(t`Export isn't available here.`);
 			if (!crypto.saveKdbx) throw new Error(t`KDBX export isn't available here.`);
 			if (!password) throw new Error(t`Choose a password for the exported file.`);
+			const { entries: exportEntries, hiddenCount } = scrubForExport(latestRef.current.entries);
 			const b64 = await crypto.saveKdbx({
-				entries: toKdbxEntries(latestRef.current.entries),
+				entries: toKdbxEntries(exportEntries),
 				password,
 			});
 			const stamp = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -1250,16 +1290,23 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 				base64ToBytes(b64),
 				"application/octet-stream",
 			);
+			// The caller surfaces how many concealed passwords were left out.
+			return hiddenCount;
 		},
-		[shell, crypto, t],
+		[shell, crypto, t, scrubForExport],
 	);
 
 	/** Send the decrypted entries to another app through the OS. The payload is built inside
 	 * the callback, which the adapter runs only after the user has picked a destination. */
 	const exportToApp = useCallback(async () => {
 		if (!exchange) throw new Error(t`Transferring to another app isn't available here.`);
-		return exportToOs(exchange, latestRef.current.entries, shell.appName);
-	}, [exchange, shell.appName, t]);
+		const { entries: exportEntries, hiddenCount } = scrubForExport(latestRef.current.entries);
+		const warnings = await exportToOs(exchange, exportEntries, shell.appName);
+		if (hiddenCount > 0) {
+			warnings.push(t`${hiddenCount} password(s) hidden by the owner weren't included.`);
+		}
+		return warnings;
+	}, [exchange, shell.appName, t, scrubForExport]);
 
 	/** Re-encrypt all entries with their stamps plus the tombstone list, and write
 	 * a new blob; the slot list is unchanged. Stamps come from the caller so a
@@ -2018,6 +2065,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			runSharingTransition,
 			shareEntries,
 			unshareEntries,
+			setCollectionPasswordHidden,
 			resolveConflict: (entryId, choice) =>
 				resolveConflictRef.current?.(entryId, choice) ?? Promise.resolve(),
 			createVault,
@@ -2098,6 +2146,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			runSharingTransition,
 			shareEntries,
 			unshareEntries,
+			setCollectionPasswordHidden,
 		],
 	);
 

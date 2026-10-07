@@ -3,8 +3,10 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePlatform } from "../../context/PlatformContext";
+import { useCollectionLabels } from "../../hooks/useCollectionLabels";
 import { usePrefs } from "../../hooks/usePrefs";
 import { isLogin, useVault } from "../../hooks/useVault";
+import { passwordConcealed } from "../../vault/sharing-mutations";
 import { allTags } from "../../vault/tags";
 import { ReviewNudgeCard } from "../components/ReviewNudgeCard";
 import { useReviewNudge } from "../hooks/useReviewNudge";
@@ -26,7 +28,8 @@ export function VaultHomeRoute() {
 		}),
 		[raw.q, raw.type, raw.sort, raw.archived],
 	);
-	const { entries, ready, deleteEntry, touchEntry, conflictEntryIds, resolveConflict } = useVault();
+	const { entries, ready, deleteEntry, touchEntry, conflictEntryIds, resolveConflict, sharing } =
+		useVault();
 	const { shell } = usePlatform();
 	const { prefs, update } = usePrefs();
 	// Hide stored breach flags when breach checking is off.
@@ -71,10 +74,26 @@ export function VaultHomeRoute() {
 	// shares the same search box.
 	const tags = useMemo(() => allTags(entries), [entries]);
 
-	// Project each entry into a list row via its mode descriptor (type-agnostic).
+	// Decrypted collection labels, one cache for every row and chip.
+	const labels = useCollectionLabels(sharing);
+
+	// Project each entry into a list row via its mode descriptor (type-agnostic),
+	// plus the sharing facts the row itself shows: whether a shared-indicator
+	// applies (the collections it grants, by label) and whether the hide-password
+	// policy removes the password from the copy menu.
 	const items = useMemo<VaultListItem[]>(
-		() => entries.map((entry) => toListItem(entry, showBreaches)),
-		[entries, showBreaches],
+		() =>
+			entries.map((entry) => {
+				const via = (sharing?.region.wrappers ?? [])
+					.filter((w) => w.entryId === entry.id)
+					.map((w) => labels[w.collectionId])
+					.filter((label) => label !== undefined);
+				return {
+					...toListItem(entry, showBreaches, passwordConcealed(sharing, entry.id)),
+					sharedVia: via.length > 0 ? via : undefined,
+				};
+			}),
+		[entries, showBreaches, sharing, labels],
 	);
 
 	// replace: typing shouldn't stack history entries.

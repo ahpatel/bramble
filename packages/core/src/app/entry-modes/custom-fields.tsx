@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button";
 import { SelectField } from "../components/ui/select-field";
 import { TextField } from "../components/ui/text-field";
 import { DetailField, DetailValue } from "./DetailField";
+import type { CopyItem } from "./types";
 
 /** Form-side shape of a custom field: the persisted `hidden` boolean becomes a "text"/"password" type. */
 export interface CustomFieldFormValue {
@@ -41,9 +42,7 @@ export function formToCustomFields(
 }
 
 /** Quick-copy actions for a vault-list row (fields with a value only). */
-export function customFieldsCopyItems(
-	fields: CustomField[] | undefined,
-): { label: string; value: string }[] {
+export function customFieldsCopyItems(fields: CustomField[] | undefined): CopyItem[] {
 	return (fields ?? []).filter((f) => f.value).map((f) => ({ label: f.key, value: f.value }));
 }
 

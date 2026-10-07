@@ -2,8 +2,9 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import { AlertTriangle, Archive, ArchiveRestore, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePlatform } from "../../../context/PlatformContext";
-import type { Entry } from "../../../hooks/useVault";
+import { type Entry, useVault } from "../../../hooks/useVault";
 import { formatDateTime } from "../../../util/format-date";
+import { passwordConcealed } from "../../../vault/sharing-mutations";
 import { Button } from "../../components/ui/button";
 import { getEntryMode } from "../../entry-modes";
 import { CustomFieldsDetail } from "../../entry-modes/custom-fields";
@@ -40,6 +41,10 @@ export function EntryDetail({
 
 	const mode = getEntryMode(entry.type);
 	const { icon: Icon, initials } = mode.row(entry);
+	// Hide-password policy (docs/adr/0009): a member whose granting collections
+	// all conceal keeps the password out of view here — autofill still works.
+	const { sharing } = useVault();
+	const passwordHidden = passwordConcealed(sharing, entry.id);
 	const subtitle = mode.detailSubtitle?.(entry);
 	const alert = mode.detailAlert?.(entry) ?? null;
 	const Detail = mode.Detail;
@@ -166,7 +171,7 @@ export function EntryDetail({
 						</div>
 					</div>
 
-					<Detail entry={entry} copied={copied} copy={copy} />
+					<Detail entry={entry} copied={copied} copy={copy} passwordConcealed={passwordHidden} />
 
 					{entry.customFields && entry.customFields.length > 0 && (
 						<CustomFieldsDetail fields={entry.customFields} copied={copied} copy={copy} />

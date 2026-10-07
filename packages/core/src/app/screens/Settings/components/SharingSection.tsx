@@ -4,7 +4,7 @@
 // See docs/adr/0001..0005 and vault/sharing-mutations.
 
 import { Trans, useLingui } from "@lingui/react/macro";
-import { FolderPlus, Pencil, Share2, Users } from "lucide-react";
+import { EyeOff, FolderPlus, Pencil, Share2, Users } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useState } from "react";
 import { usePlatform } from "../../../../context/PlatformContext";
@@ -104,7 +104,14 @@ function MemberCollectionPicker({
 }
 
 export function SharingSection() {
-	const { sharing, runSharingTransition, enableSharing, inviteMember, isLocked } = useVault();
+	const {
+		sharing,
+		runSharingTransition,
+		enableSharing,
+		inviteMember,
+		isLocked,
+		setCollectionPasswordHidden,
+	} = useVault();
 	const { t } = useLingui();
 	const { show } = useToast();
 	const [creating, setCreating] = useState(false);
@@ -241,6 +248,36 @@ export function SharingSection() {
 							sharing.region.wrappers.filter((w) => w.collectionId === collection.id).length
 						} entries`}
 					>
+						<Button
+							variant="ghost"
+							size="sm"
+							disabled={busy}
+							aria-pressed={collection.hidePassword === true}
+							aria-label={
+								collection.hidePassword === true
+									? t`Passwords in this collection are hidden from members. Show them.`
+									: t`Hide passwords in this collection from members.`
+							}
+							title={
+								collection.hidePassword === true
+									? t`Passwords are hidden from members in this collection — autofill still works, but this is a courtesy, not a lock.`
+									: t`Hide passwords in this collection from members. Autofill keeps working; this is a courtesy, not a lock.`
+							}
+							onClick={() =>
+								void act(async () => {
+									await setCollectionPasswordHidden(
+										collection.id,
+										collection.hidePassword !== true,
+									);
+								})
+							}
+						>
+							<EyeOff
+								className={`w-4 h-4 ${
+									collection.hidePassword === true ? "text-foreground" : "text-muted-foreground"
+								}`}
+							/>
+						</Button>
 						<Button
 							variant="ghost"
 							size="sm"

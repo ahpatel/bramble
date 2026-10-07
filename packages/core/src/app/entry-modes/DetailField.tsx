@@ -30,12 +30,17 @@ interface DetailFieldProps {
 	label: string;
 	children: ReactNode;
 	// Label of the most recently copied field; when it equals `copyName` the
-	// copy button shows its ✓ confirmation state.
+	// copy button shows its ✓ confirmation state. Omit both `copyName` and
+	// `onCopy` to render a field with no copy action at all (e.g. a password
+	// kept out of view by the hide-password policy).
 	copied: string | null;
 	copyName?: string;
-	onCopy: () => void;
+	onCopy?: () => void;
 	// An extra control rendered before the copy button (e.g. a show/hide toggle).
 	extraAction?: ReactNode;
+	// A muted line under the row, for context that isn't a value (e.g. why a
+	// field has no copy action).
+	note?: string;
 }
 
 /** One labelled, copyable read-only field row shared by every mode's detail view. */
@@ -46,6 +51,7 @@ export function DetailField({
 	copyName,
 	onCopy,
 	extraAction,
+	note,
 }: DetailFieldProps) {
 	const { t } = useLingui();
 	const matched = copyName ? copied === copyName : false;
@@ -55,20 +61,23 @@ export function DetailField({
 			<div className="flex items-center gap-2 px-3 py-2.5 rounded-md border border-border/50">
 				<div className="flex-1 min-w-0">{children}</div>
 				{extraAction}
-				<Button
-					variant="ghost"
-					size="none"
-					onClick={onCopy}
-					className="p-1.5 rounded-md"
-					aria-label={t`Copy ${label.toLowerCase()}`}
-				>
-					{matched ? (
-						<Check className="w-3.5 h-3.5 text-primary" />
-					) : (
-						<Copy className="w-3.5 h-3.5" />
-					)}
-				</Button>
+				{onCopy && (
+					<Button
+						variant="ghost"
+						size="none"
+						onClick={onCopy}
+						className="p-1.5 rounded-md"
+						aria-label={t`Copy ${label.toLowerCase()}`}
+					>
+						{matched ? (
+							<Check className="w-3.5 h-3.5 text-primary" />
+						) : (
+							<Copy className="w-3.5 h-3.5" />
+						)}
+					</Button>
+				)}
 			</div>
+			{note && <p className="px-3 text-[11px] text-muted-foreground">{note}</p>}
 		</div>
 	);
 }

@@ -11,8 +11,14 @@ import { getEntryMode } from "../../entry-modes";
 import { customFieldsCopyItems, customFieldsSearchText } from "../../entry-modes/custom-fields";
 import type { VaultListItem } from "./VaultHome";
 
-/** `showBreaches` off hides the badge without the list having to know why. */
-export function toListItem(entry: Entry, showBreaches: boolean): VaultListItem {
+/** `showBreaches` off hides the badge without the list having to know why.
+ * `concealPassword` drops the password copy action (hide-password policy,
+ * docs/adr/0009) — the fill path is unaffected, only the vault UI's copy. */
+export function toListItem(
+	entry: Entry,
+	showBreaches: boolean,
+	concealPassword = false,
+): VaultListItem {
 	const mode = getEntryMode(entry.type);
 	const view = mode.row(entry);
 	return {
@@ -23,7 +29,9 @@ export function toListItem(entry: Entry, showBreaches: boolean): VaultListItem {
 		leaked: showBreaches ? view.leaked : false,
 		// Custom fields are shared across all modes, so they fold into copy actions and search
 		// text here rather than in each descriptor.
-		copyItems: [...view.copyItems, ...customFieldsCopyItems(entry.customFields)],
+		copyItems: [...view.copyItems, ...customFieldsCopyItems(entry.customFields)].filter(
+			(item) => !(concealPassword && item.kind === "password"),
+		),
 		// Tags join the free-text haystack as well as driving the `#tag` filter, so a plain
 		// "work" finds the entries tagged work without the user having to know the syntax.
 		searchText:
