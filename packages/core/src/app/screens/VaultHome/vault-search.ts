@@ -59,6 +59,9 @@ export interface SearchableEntry {
 	archived?: boolean;
 	/** Lowercased tag keys, so the filter never re-derives them per keystroke. */
 	tagKeys?: string[];
+	/** Lowercased names of the collections the entry is shared through, for the
+	 * `@collection` filter. Empty/absent for private entries. */
+	collectionLabels?: string[];
 }
 
 /** Split a raw query into lowercased tokens. */
@@ -70,6 +73,7 @@ export function queryTokens(q: string): string[] {
 export interface ParsedQuery {
 	text: string[];
 	tags: string[];
+	collections: string[];
 }
 
 /**
@@ -79,7 +83,15 @@ export interface ParsedQuery {
 export function parseQuery(q: string): ParsedQuery {
 	const text: string[] = [];
 	const tags: string[] = [];
+	const collections: string[] = [];
 	for (const token of queryTokens(q)) {
+		if (token.startsWith("@")) {
+			// The @-family filters on collections, mirroring #tag: "@dad" narrows to
+			// entries shared through a collection whose name starts with dad.
+			const collection = token.replace(/^@+/, "");
+			if (collection) collections.push(collection);
+			continue;
+		}
 		if (!token.startsWith("#")) {
 			text.push(token);
 			continue;
@@ -87,7 +99,7 @@ export function parseQuery(q: string): ParsedQuery {
 		const tag = token.replace(/^#+/, "");
 		if (tag) tags.push(tag);
 	}
-	return { text, tags };
+	return { text, tags, collections };
 }
 
 function byName(a: SearchableEntry, b: SearchableEntry): number {
@@ -117,6 +129,13 @@ const COMPARATORS: Record<SortKey, (a: SearchableEntry, b: SearchableEntry) => n
  * when the query does not end in one. Drives the search bar's tag suggestions: only the
  * LAST token counts, because that is the one still being typed.
  */
+export function trailingCollectionFragment(q: string): string | null {
+	if (/\s$/.test(q)) return null;
+	const last = q.split(/\s+/).at(-1) ?? "";
+	if (!last.startsWith("@")) return null;
+	return last.replace(/^@+/, "").toLowerCase();
+}
+
 export function trailingTagFragment(q: string): string | null {
 	if (/\s$/.test(q)) return null;
 	const last = q.split(/\s+/).at(-1) ?? "";
@@ -129,6 +148,22 @@ export function trailingTagFragment(q: string): string | null {
  * suggestion lands the user ready to type the next term rather than inside the one they
  * just completed.
  */
+/** Replace the trailing `@fragment` with `@collection` (plus a trailing space),
+ * mirroring completeTagFragment. */
+export function completeCollectionFragment(q: string, collection: string): string {
+	const parts = q.split(/(\s+)/);
+	let last = -1;
+	for (let i = parts.length - 1; i >= 0; i--) {
+		if ((parts[i] ?? "").trim().length > 0) {
+			last = i;
+			break;
+		}
+	}
+	if (last === -1) return `@${collection} `;
+	parts[last] = `@${collection}`;
+	return `${parts.join("")} `;
+}
+
 export function completeTagFragment(q: string, tag: string): string {
 	// Split KEEPING the separators, so the rest of the query survives verbatim rather
 	// than being re-joined with whitespace the user didn't type.
@@ -160,7 +195,7 @@ export function filterAndSortEntries<T extends SearchableEntry>(
 	search: VaultSearch,
 	matchedIds?: ReadonlySet<string>,
 ): T[] {
-	const { text, tags } = parseQuery(search.q);
+	const { text, tags, collections } = parseQuery(search.q);
 	const filtered = items.filter((item) => {
 		// The archive side is a hard gate, ahead of the query: searching the live vault must
 		// never surface an archived entry, however well it matches.
@@ -169,6 +204,13 @@ export function filterAndSortEntries<T extends SearchableEntry>(
 		// Every tag token must match some tag, as with text tokens: two of them narrow.
 		const keys = item.tagKeys;
 		if (tags.length > 0 && !tags.every((t) => keys?.some((k) => k.startsWith(t)))) return false;
+		// @tokens narrow on collection names the same way — prefix while typing.
+		const cols = item.collectionLabels;
+		if (
+			collections.length > 0 &&
+			!collections.every((c) => cols?.some((label) => label.startsWith(c)))
+		)
+			return false;
 		return text.every((tok) => item.searchText.includes(tok));
 	});
 	const cmp = COMPARATORS[search.sort];

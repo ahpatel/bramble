@@ -69,13 +69,21 @@ export function VaultHomeRoute() {
 	// is still one this person put there, which is all the signal is measuring.
 	const reviewNudge = useReviewNudge(entries.length);
 
+	// Decrypted collection labels, one cache for every row and chip.
+	const labels = useCollectionLabels(sharing);
+
 	// The vault's tag vocabulary, for the search bar's `#` suggestions. Taken from ALL
 	// entries, archived included: an archived entry is still tagged, and the archive view
 	// shares the same search box.
 	const tags = useMemo(() => allTags(entries), [entries]);
 
-	// Decrypted collection labels, one cache for every row and chip.
-	const labels = useCollectionLabels(sharing);
+	// The collection vocabulary for `@` suggestions: every collection's decrypted
+	// name, from the sharing region (not from entries — an empty collection is
+	// still a valid filter target).
+	const collectionNames = useMemo(() => {
+		const names = Object.values(labels);
+		return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+	}, [labels]);
 
 	// Project each entry into a list row via its mode descriptor (type-agnostic),
 	// plus the sharing facts the row itself shows: whether a shared-indicator
@@ -88,9 +96,11 @@ export function VaultHomeRoute() {
 					.filter((w) => w.entryId === entry.id)
 					.map((w) => labels[w.collectionId])
 					.filter((label) => label !== undefined);
+				const collectionLabels = via.map((label) => label.toLowerCase());
 				return {
 					...toListItem(entry, showBreaches, passwordConcealed(sharing, entry.id)),
 					sharedVia: via.length > 0 ? via : undefined,
+					collectionLabels: collectionLabels.length > 0 ? collectionLabels : undefined,
 				};
 			}),
 		[entries, showBreaches, sharing, labels],
@@ -128,6 +138,7 @@ export function VaultHomeRoute() {
 			items={items}
 			search={search}
 			onSearchChange={onSearchChange}
+			collectionNames={collectionNames}
 			matchedIds={matchedIds}
 			onCreate={(type) => navigate({ to: "/vault/new/$type", params: { type } })}
 			onSelectEntry={onSelectEntry}

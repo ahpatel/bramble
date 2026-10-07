@@ -2029,8 +2029,12 @@ msgid "Master password updated."
 msgstr "Mot de passe maître mis à jour."
 
 #: packages/core/src/app/screens/VaultHome/VaultSearchBar.tsx
-msgid "Matching tags"
-msgstr "Étiquettes correspondantes"
+#~ msgid "Matching tags"
+#~ msgstr "Étiquettes correspondantes"
+
+#: packages/core/src/app/screens/VaultHome/VaultSearchBar.tsx
+msgid "Matching tags and collections"
+msgstr "Tags et collections correspondants"
 
 #: packages/core/src/app/screens/Settings/components/AppearanceSection.tsx
 msgid "Mode"
@@ -3045,6 +3049,14 @@ msgstr "Partager avec une collection"
 msgid "Share…"
 msgstr "Partager…"
 
+#: packages/core/src/app/screens/EntryDetail/EntryDetail.tsx
+msgid "Shared in"
+msgstr "Partagée dans"
+
+#: packages/core/src/app/screens/EntryDetail/EntryDetail.tsx
+msgid "Shared with you"
+msgstr "Partagée avec vous"
+
 #: packages/core/src/app/screens/Settings/components/SharingSection.tsx
 msgid "Sharing"
 msgstr "Partage"
@@ -3080,6 +3092,10 @@ msgstr "Afficher le numéro de carte"
 #: packages/core/src/app/entry-modes/card.tsx
 msgid "Show CVV"
 msgstr "Afficher le CVV"
+
+#: packages/core/src/app/entry-modes/collections.tsx
+msgid "Show entries in {name}"
+msgstr "Afficher les entrées de {name}"
 
 #: packages/core/src/app/entry-modes/tags.tsx
 msgid "Show everything tagged {tag}"

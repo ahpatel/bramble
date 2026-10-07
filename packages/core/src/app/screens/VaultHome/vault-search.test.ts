@@ -227,16 +227,45 @@ describe("parseQuery", () => {
 		expect(parseQuery("#work github alice")).toEqual({
 			text: ["github", "alice"],
 			tags: ["work"],
+			collections: [],
+		});
+	});
+
+	it("splits @collection tokens from the rest of the query", () => {
+		expect(parseQuery("@banking github")).toEqual({
+			text: ["github"],
+			tags: [],
+			collections: ["banking"],
+		});
+		// Both families at once, each narrowing its own axis.
+		expect(parseQuery("#work @dad")).toEqual({
+			text: [],
+			tags: ["work"],
+			collections: ["dad"],
+		});
+		// A bare @ is a user mid-word, dropped exactly like a bare #.
+		expect(parseQuery("@ github")).toEqual({
+			text: ["github"],
+			tags: [],
+			collections: [],
 		});
 	});
 
 	// A bare "#" is a user mid-word, not a filter matching every tag.
 	it("ignores a bare hash", () => {
-		expect(parseQuery("# github")).toEqual({ text: ["github"], tags: [] });
+		expect(parseQuery("# github")).toEqual({
+			text: ["github"],
+			tags: [],
+			collections: [],
+		});
 	});
 
 	it("lowercases both sides", () => {
-		expect(parseQuery("#Work GitHub")).toEqual({ text: ["github"], tags: ["work"] });
+		expect(parseQuery("#Work GitHub")).toEqual({
+			text: ["github"],
+			tags: ["work"],
+			collections: [],
+		});
 	});
 });
 
