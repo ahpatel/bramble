@@ -60,7 +60,12 @@ is similarly bound to the same live password field and rechecks for CAPTCHAs.
 `hostnameMatches` (background) returns true when the page hostname matches any of
 a login's registered hostnames under that entry's **subdomain match** policy:
 
-- `etld1` (default): the registrable domain and all its subdomains.
+- `etld1` (default): the registrable domain and all its subdomains. The boundary
+  is the full Public Suffix List **including its private section**, so tenants of
+  shared hosts (`alice.github.io`, `x.vercel.app`, `y.pages.dev`) are separate
+  sites. tldts leaves the private section out by default, which collapsed every
+  tenant to `github.io` and offered one tenant's login to all the others
+  (GHSA-rf5w-r5j3-6wmf).
 - `exact`: that exact hostname only.
 - `subdomain`: this domain plus its subdomains.
 
