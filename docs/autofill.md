@@ -672,10 +672,27 @@ a credential and the page reads it back. Stopped by `pickIsTrustworthy()`, which
 honors a pick only when the host is actually visible to the user: on-screen,
 legibly sized, opaque (counting ancestors), unclipped, and not overlaid
 (`elementFromPoint` at its center resolves to the host). It runs on the shadow
-fallback too, which a page can force by keeping the iframe from loading. Not
-caught: an overlay with `pointer-events: none` painted over the picker, since
-hit testing skips it (IntersectionObserver v2's `trackVisibility` would see it,
-in Chromium only).
+fallback too, which a page can force by keeping the iframe from loading.
+
+Two more gates apply to **clicks** only. Keyboard picks (↓ then Enter in the
+focused field) are deliberate and skip both:
+
+- **Early clicks.** A click is dropped until the picker has sat still for 500 ms,
+  and the clock restarts whenever it appears, un-hides or moves. A page that can
+  open the picker (script focus) or move its field can otherwise put it under a
+  click the user is already making, a double-click lure being the classic.
+- **Browser-vouched visibility (Chromium).** Hit testing skips an overlay with
+  `pointer-events: none`, so a decoy painted over the picker passes
+  `elementFromPoint` while the user's click goes straight through it to a row.
+  The iframe watches itself with IntersectionObserver v2 (`trackVisibility`) and
+  refuses clicks unless the browser reports it unobscured, unfiltered and
+  opaque. A refused click shows "Use ↓ and Enter to fill on this page". It also
+  refuses under any filter on the page root, so with Dark Reader's filter mode
+  clicks don't fill in Chromium and the keyboard does.
+
+Firefox has no `trackVisibility`, so a static `pointer-events: none` decoy is
+still open there; putting the picker in the top layer (`popover`) is the
+candidate fix. `picker-iframe.spec.ts` runs the decoy in Chromium.
 
 **Blast-radius containment.** If a fill is somehow triggered anyway,
 `authorizeFill` (background) still requires a **login** to match the verified

@@ -10,6 +10,12 @@ export const STRONG_PW = "Zx9-mQ2-vLp7-wK4-tR8";
  * Create the first vault through the full-tab options setup flow (which the popup's "Create your
  * vault" opens). Leaves the vault created and unlocked. Pass through the recovery-code screen.
  */
+/** The picker drops clicks in its first 500 ms on screen and again after it moves, since a page
+ *  could put it under a click already in flight. Wait that out before clicking a row. */
+export async function waitOutPickerClickGuard(page: Page): Promise<void> {
+	await page.waitForTimeout(600);
+}
+
 export async function createVault(page: Page, extensionId: string, password = STRONG_PW) {
 	await page.goto(optionsUrl(extensionId));
 	await expect(page.locator("#root")).not.toBeEmpty();

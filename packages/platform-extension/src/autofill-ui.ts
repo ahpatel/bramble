@@ -218,6 +218,7 @@ const STYLE = `
 	.tp-alias-busy { opacity: 0.75; cursor: default; }
 	.tp-alias-error .tp-user { color: var(--tp-danger, #dc2626); }
 	.tp-spin { animation: tp-spin 0.9s linear infinite; }
+	.tp-hint { padding: 8px 12px; color: var(--tp-muted); font-size: 12px; }
 	@keyframes tp-spin { to { transform: rotate(360deg); } }
 	.tp-avatar-suggest svg { width: 20px; height: 20px; }
 	.tp-suggest-pw {
@@ -345,10 +346,47 @@ function lockedRow(): string {
 /** Render body html, then report the rendered height so the parent can size the iframe. */
 function render(bodyHtml: string): void {
 	document.body.innerHTML = `<style>${STYLE}</style><div class="tp-list" role="listbox">${bodyHtml}</div>`;
+	reportHeight();
+}
+
+function reportHeight(): void {
 	requestAnimationFrame(() => {
 		const list = document.body.querySelector(".tp-list");
 		postHeight(list ? Math.ceil(list.getBoundingClientRect().height) : 0);
 	});
+}
+
+// Chromium can vouch that this frame is unobscured and unfiltered on screen (IntersectionObserver
+// v2), which catches a pointer-events: none decoy over us that no hit test sees. Clicks wait for
+// it; keys don't. Engines without it (Firefox) leave clicks to the content script's checks.
+const TRACKS_VISIBILITY =
+	typeof IntersectionObserver !== "undefined" &&
+	"trackVisibility" in IntersectionObserver.prototype;
+let vouchedVisible = false;
+if (TRACKS_VISIBILITY) {
+	new IntersectionObserver(
+		(entries) => {
+			const last = entries[entries.length - 1] as IntersectionObserverEntry & {
+				isVisible?: boolean;
+			};
+			vouchedVisible = last?.isVisible === true;
+		},
+		{ threshold: [0], trackVisibility: true, delay: 100 } as IntersectionObserverInit,
+	).observe(document.body);
+}
+
+/** Whether a click may fill; when it may not, say how to fill from the keyboard instead. */
+function clickAllowed(): boolean {
+	if (!TRACKS_VISIBILITY || vouchedVisible) return true;
+	const list = document.body.querySelector(".tp-list");
+	if (list && !list.querySelector(".tp-hint")) {
+		list.insertAdjacentHTML(
+			"beforeend",
+			html`<div class="tp-hint" role="status">${t("pickerUseKeyboard")}</div>`,
+		);
+		reportHeight();
+	}
+	return false;
 }
 
 /** Move the keyboard highlight and tell the parent whether a row is selected (gates Enter-to-pick). */
@@ -391,20 +429,23 @@ document.addEventListener("mousedown", (e) => {
 		post({ type: "UI_REGENERATE" });
 		return;
 	}
+	// Anything that fills is marked as a click, so the content script can time it.
 	const item = target?.closest<HTMLElement>("[data-entry-id]");
 	if (item?.dataset.entryId) {
 		e.preventDefault();
-		post({ type: "UI_PICK", entryId: item.dataset.entryId, otpOnly });
+		if (clickAllowed()) {
+			post({ type: "UI_PICK", entryId: item.dataset.entryId, otpOnly, pointer: true });
+		}
 		return;
 	}
 	if (target?.closest("[data-tp-suggest]")) {
 		e.preventDefault();
-		post({ type: "UI_USE_SUGGESTED" });
+		if (clickAllowed()) post({ type: "UI_USE_SUGGESTED", pointer: true });
 		return;
 	}
 	if (target?.closest("[data-tp-alias]")) {
 		e.preventDefault();
-		post({ type: "UI_USE_ALIAS" });
+		if (clickAllowed()) post({ type: "UI_USE_ALIAS", pointer: true });
 		return;
 	}
 	if (target?.closest("[data-tp-popout]")) {

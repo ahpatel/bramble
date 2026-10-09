@@ -185,8 +185,23 @@ function positionHostElement(el: HTMLElement, field: HTMLInputElement): void {
 	// translate (compositor-only) instead of top/left (layout) so the per-frame
 	// tracker doesn't thrash layout; write only on change.
 	const transform = `translate3d(${x}px, ${y}px, 0)`;
-	if (el.style.transform !== transform) el.style.transform = transform;
-	if (el.style.width !== width) el.style.width = width;
+	if (el.style.transform === transform && el.style.width === width) return;
+	el.style.transform = transform;
+	el.style.width = width;
+	markPickerMoved();
+}
+
+// A page that can open or move the picker can put it under a click the user is already making
+// (a double-click lure). Clicks before it has sat still this long are dropped; keys are not timed.
+const EARLY_CLICK_MS = 500;
+let pickerSettledAt = Number.NEGATIVE_INFINITY;
+
+function markPickerMoved(): void {
+	pickerSettledAt = performance.now();
+}
+
+function clickIsEarly(): boolean {
+	return performance.now() - pickerSettledAt < EARLY_CLICK_MS;
 }
 
 // Per-frame position tracking while a picker is visible. window 'scroll' is
@@ -240,6 +255,7 @@ function startPositionTracking(): void {
 		if (rebaseline || moved) {
 			host.style.transform = `translate3d(${x}px, ${y}px, 0)`;
 			host.style.width = `${width}px`;
+			markPickerMoved();
 		}
 		lastX = x;
 		lastY = y;
@@ -258,6 +274,7 @@ function startPositionTracking(): void {
 		} else if (scrollHidden && (rebaseline || ts - lastMoveTs >= SCROLL_SETTLE_MS)) {
 			host.style.visibility = "";
 			scrollHidden = false;
+			markPickerMoved();
 		}
 		trackingRaf = requestAnimationFrame(tick);
 	};
@@ -360,17 +377,17 @@ function buildDropdown(matches: MatchSummary[], field: HTMLInputElement, opts?: 
 		const item = target?.closest<HTMLElement>("[data-entry-id]");
 		if (item?.dataset.entryId) {
 			e.preventDefault();
-			if (pickIsTrustworthy(dropdownEl)) pickCb?.(item.dataset.entryId, opts?.otpOnly === true);
+			if (pickAllowed(dropdownEl, true)) pickCb?.(item.dataset.entryId, opts?.otpOnly === true);
 			return;
 		}
 		if (target?.closest("[data-tp-suggest]")) {
 			e.preventDefault();
-			if (pickIsTrustworthy(dropdownEl)) onSuggestedCb?.();
+			if (pickAllowed(dropdownEl, true)) onSuggestedCb?.();
 			return;
 		}
 		if (target?.closest("[data-tp-alias]")) {
 			e.preventDefault();
-			if (pickIsTrustworthy(dropdownEl)) aliasCb?.();
+			if (pickAllowed(dropdownEl, true)) aliasCb?.();
 		}
 	});
 }
@@ -474,6 +491,7 @@ function destroyIframeHost(): void {
 /** Create the iframe host (closed-shadow wrapper around the extension-origin iframe), or un-hide it if it exists. */
 function ensureIframeHost(): void {
 	if (iframeHostEl) {
+		if (iframeHostEl.style.display === "none") markPickerMoved();
 		iframeHostEl.style.display = "block";
 		return;
 	}
@@ -605,6 +623,12 @@ function effectiveOpacity(el: Element): number {
 	return out;
 }
 
+/** Gate for anything that fills: a click must also have waited out EARLY_CLICK_MS. */
+function pickAllowed(host: HTMLElement | null, pointer: unknown): boolean {
+	if (pointer === true && clickIsEarly()) return false;
+	return pickIsTrustworthy(host);
+}
+
 /** Pick-time anti-clickjacking: reject a pick when the host is hidden, clipped, overlaid, or off-field. */
 function pickIsTrustworthy(host: HTMLElement | null): boolean {
 	if (!host) return false;
@@ -695,11 +719,11 @@ function onUiMessage(e: MessageEvent): void {
 	const msg = e.data as
 		| { type: "UI_CONNECTED" }
 		| { type: "UI_RESIZE"; height?: number }
-		| { type: "UI_PICK"; entryId?: string; otpOnly?: boolean }
+		| { type: "UI_PICK"; entryId?: string; otpOnly?: boolean; pointer?: boolean }
 		| { type: "UI_POPOUT" }
-		| { type: "UI_USE_SUGGESTED" }
+		| { type: "UI_USE_SUGGESTED"; pointer?: boolean }
 		| { type: "UI_REGENERATE" }
-		| { type: "UI_USE_ALIAS" }
+		| { type: "UI_USE_ALIAS"; pointer?: boolean }
 		| undefined;
 	switch (msg?.type) {
 		case "UI_CONNECTED":
@@ -720,7 +744,7 @@ function onUiMessage(e: MessageEvent): void {
 			if (
 				typeof msg.entryId === "string" &&
 				iframeRenderedIds.has(msg.entryId) &&
-				pickIsTrustworthy(iframeHostEl)
+				pickAllowed(iframeHostEl, msg.pointer)
 			) {
 				pickCb?.(msg.entryId, !!msg.otpOnly);
 			}
@@ -735,7 +759,7 @@ function onUiMessage(e: MessageEvent): void {
 		case "UI_USE_SUGGESTED":
 			// Using the suggestion fills the page field, so it needs the same
 			// anti-clickjacking gate as a secret pick.
-			if (pickIsTrustworthy(iframeHostEl)) onSuggestedCb?.();
+			if (pickAllowed(iframeHostEl, msg.pointer)) onSuggestedCb?.();
 			break;
 		case "UI_REGENERATE":
 			regenerateCb?.();
@@ -743,7 +767,7 @@ function onUiMessage(e: MessageEvent): void {
 		case "UI_USE_ALIAS":
 			// Creating an alias spends the user's allowance and fills the page field, so it takes
 			// the same anti-clickjacking gate as a secret pick.
-			if (pickIsTrustworthy(iframeHostEl)) aliasCb?.();
+			if (pickAllowed(iframeHostEl, msg.pointer)) aliasCb?.();
 			break;
 	}
 }

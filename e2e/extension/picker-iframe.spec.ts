@@ -7,6 +7,7 @@ import {
 	STRONG_PW,
 	seedExampleCard,
 	seedExampleLogin,
+	waitOutPickerClickGuard,
 } from "./helpers";
 
 // The picker's PRIMARY renderer: an extension-origin iframe that keeps the UI out of the page's
@@ -311,6 +312,42 @@ test("a page cannot drive the picker: it shares the window, not the port", async
 	await expect(page.locator("#pass")).toHaveValue("");
 });
 
+test("a click through a pointer-events: none decoy does not fill; the keyboard still does", async ({
+	context,
+	extensionId,
+}) => {
+	// The decoy is painted over the picker, so the user aims at it, and clicks pass straight
+	// through it to the row. No hit test sees it; Chromium's IntersectionObserver v2 does.
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+
+	const page = await context.newPage();
+	await serve(page, LOGIN);
+	await page.goto("https://example.com/");
+
+	const frame = await openPickerIframe(page, "#user");
+	const row = frame.locator("[data-entry-id]");
+	await expect(row).toBeVisible({ timeout: 10_000 });
+	await page.evaluate(() => {
+		const decoy = document.createElement("div");
+		decoy.style.cssText =
+			"position:fixed;inset:0;z-index:2147483647;pointer-events:none;background:rgba(255,255,255,0.6)";
+		document.body.appendChild(decoy);
+	});
+	await page.waitForTimeout(600);
+
+	await row.click();
+	await page.waitForTimeout(500);
+	await expect(page.locator("#user")).toHaveValue("");
+	await expect(frame.locator(".tp-hint")).toBeVisible();
+
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.press("Enter");
+	await expect(page.locator("#user")).toHaveValue("alice@example.com", { timeout: 10_000 });
+});
+
 test("tabbing off the field re-anchors the picker, then takes it down", async ({
 	context,
 	extensionId,
@@ -435,6 +472,7 @@ test("the strong-password suggestion renders and regenerates in the iframe", asy
 
 	// Using the suggestion fills the field with the password shown, and offers to save it.
 	const shown = (await frame.locator(".tp-suggest-pw").textContent())?.trim() ?? "";
+	await waitOutPickerClickGuard(page);
 	await suggest.click();
 	await expect(page.locator("#pass")).toHaveValue(shown, { timeout: 10_000 });
 	await expect(page.locator("#bramble-corner-prompt")).toBeAttached({ timeout: 10_000 });
@@ -486,6 +524,7 @@ test("click-to-unlock from the iframe: the pop-out closes and the match replaces
 	await expect(shown!.locator("[data-tp-popout]")).toHaveCount(0);
 
 	// And it really fills.
+	await waitOutPickerClickGuard(page);
 	await shown!.locator("[data-entry-id]").click();
 	await expect(page.locator("#user")).toHaveValue("alice@example.com", { timeout: 10_000 });
 });

@@ -1,6 +1,12 @@
 import type { BrowserContext, Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { createVault, openPopup, seedExampleCard, seedSecondCard } from "./helpers";
+import {
+	createVault,
+	openPopup,
+	seedExampleCard,
+	seedSecondCard,
+	waitOutPickerClickGuard,
+} from "./helpers";
 
 // Card fill on an ordinary same-document checkout, as opposed to the hosted-fields iframe case
 // in picker-relay.spec.ts. What is driven here needs a real browser: switching cards depends on
@@ -74,6 +80,7 @@ async function openPickerOn(page: Page, selector: string) {
 
 /** Click the nth row of the open picker (rows live in a closed shadow root, so click by position). */
 async function clickRow(page: Page, box: { x: number; y: number; height: number }, n: number) {
+	await waitOutPickerClickGuard(page);
 	await page.mouse.click(box.x + 30, box.y + 24 + n * 44);
 }
 

@@ -88,6 +88,13 @@ type ReadyIframe = {
 
 let openPorts: MessagePort[] = [];
 
+// The early-click guard reads performance.now(); tests that click move this clock past it.
+let clock = 0;
+function freezeClock(): void {
+	clock = 10_000;
+	vi.spyOn(performance, "now").mockImplementation(() => clock);
+}
+
 /** Let queued port messages land. */
 function settle(): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, 20));
@@ -353,6 +360,66 @@ describe("picker: only the iframe's port can pick", () => {
 	});
 });
 
+// A page that can open the picker can open it under a click the user is already making (a
+// double-click lure, or moving the field under the cursor). Clicks that land before the picker
+// has sat still for 500 ms are dropped; keyboard picks are deliberate and are not timed.
+describe("picker: early clicks", () => {
+	async function setup(): Promise<
+		ReadyIframe & { picks: [string, boolean][]; field: HTMLInputElement }
+	> {
+		document.body.innerHTML = `<form><input id="user" type="email" name="email" /></form>`;
+		const field = document.getElementById("user") as HTMLInputElement;
+		stubRect(field, BOX);
+		const picks: [string, boolean][] = [];
+		picker.onPick((id, otpOnly) => picks.push([id, otpOnly]));
+		freezeClock();
+		const ready = await readyIframe(field);
+		trustHost(field);
+		return { ...ready, picks, field };
+	}
+
+	const click = { type: "UI_PICK", entryId: MATCH.id, otpOnly: false, pointer: true };
+
+	it("drops a click in the picker's first 500 ms on screen", async () => {
+		const { uiPort, picks } = await setup();
+		clock += 300;
+
+		uiPort.postMessage(click);
+		await settle();
+
+		expect(picks).toEqual([]);
+	});
+
+	it("takes a click once the picker has sat still for 500 ms", async () => {
+		const { uiPort, picks } = await setup();
+		clock += 600;
+
+		uiPort.postMessage(click);
+
+		await vi.waitFor(() => expect(picks).toEqual([[MATCH.id, false]]));
+	});
+
+	it("starts the clock again when the picker moves", async () => {
+		const { uiPort, picks, field } = await setup();
+		clock += 600;
+		stubRect(field, { ...BOX, x: 80 });
+		await frame();
+
+		uiPort.postMessage(click);
+		await settle();
+
+		expect(picks).toEqual([]);
+	});
+
+	it("does not time keyboard picks", async () => {
+		const { uiPort, picks } = await setup();
+
+		uiPort.postMessage({ ...click, pointer: undefined });
+
+		await vi.waitFor(() => expect(picks).toEqual([[MATCH.id, false]]));
+	});
+});
+
 // Enter belongs to the page's form unless a row is highlighted. Waiting for the iframe to report
 // its highlight raced the user's Enter (it lost in e2e), so the gate follows the keys we sent.
 describe("picker: Enter after an arrow key", () => {
@@ -461,18 +528,34 @@ describe("picker: the shadow fallback", () => {
 
 	it("takes a real click on a visible row", () => {
 		const { field, picks } = setup();
+		freezeClock();
 		const { host, row, mousedown } = fallBack(field);
 		trustHost(field, () => ({}), host);
+		clock += 600;
 
 		mousedown(trustedMousedown(row));
 
 		expect(picks).toEqual([[MATCH.id, false]]);
 	});
 
+	it("refuses a click in its first 500 ms on screen", () => {
+		const { field, picks } = setup();
+		freezeClock();
+		const { host, row, mousedown } = fallBack(field);
+		trustHost(field, () => ({}), host);
+		clock += 300;
+
+		mousedown(trustedMousedown(row));
+
+		expect(picks).toEqual([]);
+	});
+
 	it("refuses a click while the page has made the dropdown invisible", () => {
 		const { field, picks } = setup();
+		freezeClock();
 		const { host, row, mousedown } = fallBack(field);
 		trustHost(field, (el) => (el === host ? { opacity: "0" } : {}), host);
+		clock += 600;
 
 		mousedown(trustedMousedown(row));
 
