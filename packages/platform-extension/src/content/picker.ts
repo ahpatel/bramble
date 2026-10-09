@@ -360,17 +360,17 @@ function buildDropdown(matches: MatchSummary[], field: HTMLInputElement, opts?: 
 		const item = target?.closest<HTMLElement>("[data-entry-id]");
 		if (item?.dataset.entryId) {
 			e.preventDefault();
-			pickCb?.(item.dataset.entryId, opts?.otpOnly === true);
+			if (pickIsTrustworthy(dropdownEl)) pickCb?.(item.dataset.entryId, opts?.otpOnly === true);
 			return;
 		}
 		if (target?.closest("[data-tp-suggest]")) {
 			e.preventDefault();
-			onSuggestedCb?.();
+			if (pickIsTrustworthy(dropdownEl)) onSuggestedCb?.();
 			return;
 		}
 		if (target?.closest("[data-tp-alias]")) {
 			e.preventDefault();
-			aliasCb?.();
+			if (pickIsTrustworthy(dropdownEl)) aliasCb?.();
 		}
 	});
 }
@@ -403,13 +403,13 @@ const AUTOFILL_UI_URL = api.runtime.getURL("autofill-ui.html");
 // The extension url scheme (chrome-extension: / moz-extension:), the one thing about the iframe's
 // origin we can know up front.
 const EXT_SCHEME = new URL(AUTOFILL_UI_URL).protocol;
-// The origin the iframe actually speaks from, adopted at its READY handshake. It is NOT always the
-// origin of the url we set as src: under Chromium's manifest `use_dynamic_url`, getURL hands a
-// content script a per-session GUID origin while the document it loads reports the extension's
-// static one. Pinning posts (and inbound checks) to the src origin silently dropped every message
-// in both directions, so READY never landed and the picker fell back to its shadow renderer on
-// every page. Null until the handshake; every post is pinned to it, never "*".
-let uiOrigin: string | null = null;
+// Our end of the private channel handed to the iframe at its READY. The page shares the window
+// both of us would otherwise talk on, so everything after READY rides this port. READY's origin
+// pins the hand-over, and it is NOT always the origin of the url we set as src: under Chromium's
+// manifest `use_dynamic_url`, getURL hands a content script a per-session GUID origin while the
+// document it loads reports the extension's static one. Pinning to the src origin silently
+// dropped the hand-over, and the picker fell back to its shadow renderer on every page.
+let uiPort: MessagePort | null = null;
 
 type IframeRender =
 	| {
@@ -430,8 +430,13 @@ let iframeReady = false;
 let pendingRender: IframeRender | null = null;
 let readinessTimer: number | null = null;
 let iframeMatchesKey = "";
-// Whether the iframe has a keyboard-highlighted row (drives Enter-to-pick).
+// Whether the iframe has a keyboard-highlighted row (drives Enter-to-pick). Tracked from the
+// renders and arrows we send, which the iframe applies in order, not from its UI_HIGHLIGHT: that
+// arrives a round trip late and lost the race to a quick Enter.
 let iframeHasHighlight = false;
+let iframeNavRows = 0;
+// Ids last sent to the iframe. A pick naming anything else is dropped, as in relay-client.ts.
+let iframeRenderedIds = new Set<string>();
 
 /** Hide the iframe host (kept alive for reuse). */
 function hideIframe(): void {
@@ -458,7 +463,8 @@ function destroyIframeHost(): void {
 	}
 	iframeEl = null;
 	iframeReady = false;
-	uiOrigin = null; // a fresh frame re-introduces itself
+	closeUiPort();
+	iframeRenderedIds = new Set();
 	pendingRender = null;
 	iframeMatchesKey = "";
 	iframeHasHighlight = false;
@@ -491,17 +497,29 @@ function ensureIframeHost(): void {
 	iframeReady = false;
 }
 
-/** Post to the iframe, pinned to the origin it introduced itself with. No-op before the handshake. */
+function closeUiPort(): void {
+	uiPort?.close();
+	uiPort = null;
+}
+
+/** Post to the iframe over its port. No-op before the handshake. */
 function postToUi(message: unknown): void {
-	const win = iframeEl?.contentWindow;
-	if (!win || uiOrigin === null) return;
-	win.postMessage(message, uiOrigin);
+	uiPort?.postMessage(message);
 }
 
 function flushPendingRender(): void {
 	if (!iframeEl?.contentWindow || !pendingRender) return;
 	const render = pendingRender;
 	pendingRender = null;
+	iframeRenderedIds = new Set(render.kind === "matches" ? render.matches.map((m) => m.id) : []);
+	// Mirrors autofill-ui.ts: a render clears the highlight, and a busy alias row takes no keys.
+	iframeHasHighlight = false;
+	iframeNavRows =
+		render.kind === "locked"
+			? 1
+			: render.matches.length +
+				(render.suggest ? 1 : 0) +
+				(render.alias && render.alias.state !== "busy" ? 1 : 0);
 	if (render.kind === "matches") {
 		postToUi({
 			type: "RENDER_MATCHES",
@@ -565,10 +583,32 @@ function iframeShow(field: HTMLInputElement, render: IframeRender): void {
 	else armReadinessTimeout();
 }
 
+/** Product of the `opacity()` functions in a computed filter (1 when there are none). */
+function filterOpacity(filter: string): number {
+	let out = 1;
+	for (const m of filter.matchAll(/opacity\(\s*([\d.]+)(%?)\s*\)/g)) {
+		out *= Number(m[1]) / (m[2] ? 100 : 1);
+	}
+	return out;
+}
+
+/** The opacity the picker is painted at: neither `opacity` nor `filter` inherits, so an ancestor's
+ * never shows in the host's own computed style. Other ancestor filters are allowed (Dark Reader's
+ * filter mode inverts every page's root). */
+function effectiveOpacity(el: Element): number {
+	let out = 1;
+	for (let node: Element | null = el; node; node = node.parentElement) {
+		const cs = getComputedStyle(node);
+		const own = Number.parseFloat(cs.opacity);
+		out *= (Number.isNaN(own) ? 1 : own) * filterOpacity(cs.filter ?? "");
+	}
+	return out;
+}
+
 /** Pick-time anti-clickjacking: reject a pick when the host is hidden, clipped, overlaid, or off-field. */
-function pickIsTrustworthy(): boolean {
-	if (!iframeHostEl) return false;
-	const rect = iframeHostEl.getBoundingClientRect();
+function pickIsTrustworthy(host: HTMLElement | null): boolean {
+	if (!host) return false;
+	const rect = host.getBoundingClientRect();
 	if (rect.width < 60 || rect.height < 20) return false;
 	if (
 		rect.bottom <= 0 ||
@@ -578,14 +618,14 @@ function pickIsTrustworthy(): boolean {
 	) {
 		return false;
 	}
-	const cs = getComputedStyle(iframeHostEl);
+	const cs = getComputedStyle(host);
 	if (cs.visibility !== "visible" || cs.display === "none") return false;
-	if (Number.parseFloat(cs.opacity) < 0.9) return false;
+	if (effectiveOpacity(host) < 0.9) return false;
 	if (cs.filter !== "none" || cs.mixBlendMode !== "normal" || cs.clipPath !== "none") return false;
 	// elementFromPoint resolves to the host (closed shadow); an unrelated element means an overlay.
 	const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
 	if (!top) return false;
-	return top === iframeHostEl || iframeHostEl.contains(top) || top.contains(iframeHostEl);
+	return top === host || host.contains(top) || top.contains(host);
 }
 
 // --- The visible host (shadow or iframe), positioning, and dismissal ---
@@ -634,30 +674,35 @@ function showLockedUi(field: HTMLInputElement): void {
 	iframeShow(field, { kind: "locked" });
 }
 
-// Bridge from the iframe: honor only OUR iframe's window on an extension origin (a page-forged
-// postMessage has a different source, and a frame navigated off the extension a different scheme).
+// Handshake: READY from OUR iframe's window on an extension origin (a page-forged postMessage has a
+// different source, and a frame navigated off the extension a different scheme) gets a fresh port.
+// Nothing else is taken from the window. A reloaded frame says READY again and gets a new one.
 window.addEventListener("message", (e) => {
-	if (!iframeEl || e.source !== iframeEl.contentWindow) return;
-	// The handshake introduces the frame's origin; everything after must match it exactly.
-	if (uiOrigin === null) {
-		if ((e.data as { type?: string } | undefined)?.type !== "AUTOFILL_UI_READY") return;
-		if (!e.origin.startsWith(`${EXT_SCHEME}//`)) return;
-		uiOrigin = e.origin;
-	} else if (e.origin !== uiOrigin) {
-		return;
-	}
+	const win = iframeEl?.contentWindow;
+	if (!win || e.source !== win) return;
+	if ((e.data as { type?: string } | undefined)?.type !== "AUTOFILL_UI_READY") return;
+	if (!e.origin.startsWith(`${EXT_SCHEME}//`)) return;
+	closeUiPort();
+	const channel = new MessageChannel();
+	uiPort = channel.port1;
+	uiPort.onmessage = onUiMessage;
+	win.postMessage({ type: "UI_CONNECT" }, e.origin, [channel.port2]);
+});
+
+// Bridge from the iframe, over the port only. Ready is the iframe's ack, not its READY, so a frame
+// that never takes our port falls back to the shadow renderer like one that never loads.
+function onUiMessage(e: MessageEvent): void {
 	const msg = e.data as
-		| { type: "AUTOFILL_UI_READY" }
+		| { type: "UI_CONNECTED" }
 		| { type: "UI_RESIZE"; height?: number }
 		| { type: "UI_PICK"; entryId?: string; otpOnly?: boolean }
 		| { type: "UI_POPOUT" }
-		| { type: "UI_HIGHLIGHT"; active?: boolean }
 		| { type: "UI_USE_SUGGESTED" }
 		| { type: "UI_REGENERATE" }
 		| { type: "UI_USE_ALIAS" }
 		| undefined;
 	switch (msg?.type) {
-		case "AUTOFILL_UI_READY":
+		case "UI_CONNECTED":
 			iframeReady = true;
 			uiMode = "iframe";
 			if (readinessTimer !== null) {
@@ -672,12 +717,13 @@ window.addEventListener("message", (e) => {
 			}
 			break;
 		case "UI_PICK":
-			if (typeof msg.entryId === "string" && pickIsTrustworthy()) {
+			if (
+				typeof msg.entryId === "string" &&
+				iframeRenderedIds.has(msg.entryId) &&
+				pickIsTrustworthy(iframeHostEl)
+			) {
 				pickCb?.(msg.entryId, !!msg.otpOnly);
 			}
-			break;
-		case "UI_HIGHLIGHT":
-			iframeHasHighlight = !!msg.active;
 			break;
 		case "UI_POPOUT": {
 			// Capture the anchor before hideIframe() clears it, so the caller can re-surface here.
@@ -689,7 +735,7 @@ window.addEventListener("message", (e) => {
 		case "UI_USE_SUGGESTED":
 			// Using the suggestion fills the page field, so it needs the same
 			// anti-clickjacking gate as a secret pick.
-			if (pickIsTrustworthy()) onSuggestedCb?.();
+			if (pickIsTrustworthy(iframeHostEl)) onSuggestedCb?.();
 			break;
 		case "UI_REGENERATE":
 			regenerateCb?.();
@@ -697,10 +743,10 @@ window.addEventListener("message", (e) => {
 		case "UI_USE_ALIAS":
 			// Creating an alias spends the user's allowance and fills the page field, so it takes
 			// the same anti-clickjacking gate as a secret pick.
-			if (pickIsTrustworthy()) aliasCb?.();
+			if (pickIsTrustworthy(iframeHostEl)) aliasCb?.();
 			break;
 	}
-});
+}
 
 /** Arrow/Enter/Escape navigation for the open iframe dropdown; returns true if the key was consumed. */
 function handleDropdownKey(e: KeyboardEvent): boolean {
@@ -711,6 +757,7 @@ function handleDropdownKey(e: KeyboardEvent): boolean {
 	if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 		e.preventDefault();
 		postToUi({ type: "UI_KEY", key: e.key });
+		if (iframeNavRows > 0) iframeHasHighlight = true;
 		return true;
 	}
 	if (e.key === "Escape") {

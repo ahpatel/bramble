@@ -17,8 +17,9 @@ import {
 // handshake (and every render post) and the fallback silently took over on every page.
 //
 // These pages are served plainly, so the iframe is the renderer under test. Between them they cover
-// every message the bridge carries in each direction: RENDER_MATCHES / RENDER_LOCKED / UI_KEY out,
-// READY / UI_RESIZE / UI_PICK / UI_POPOUT / UI_HIGHLIGHT / UI_USE_SUGGESTED / UI_REGENERATE back.
+// the READY / UI_CONNECT hand-over on the window and every message the port then carries in each
+// direction: RENDER_MATCHES / RENDER_LOCKED / UI_KEY out, UI_CONNECTED / UI_RESIZE / UI_PICK /
+// UI_POPOUT / UI_USE_SUGGESTED / UI_REGENERATE back.
 
 const LOGIN = `<!doctype html><html><head><title>login</title></head><body>
 	<form>
@@ -93,6 +94,26 @@ const PAYMENT_MODAL = `<!doctype html><html><head><title>Add Payment Method</tit
 </body></html>`;
 
 const STRONG_CHARS = /^[A-Za-z0-9!@#$%^&*()_+\-=[\]{}|;:,.<>?]{20}$/;
+
+// The page script from GHSA-mvjj-4qqq-xr7h. It takes the picker's window off whatever the picker
+// posts it, races the content script for the port, and drives the picker with keys every way it can.
+const HOSTILE_LOGIN = LOGIN.replace(
+	"</body>",
+	`<script>
+	window.__drove = 0;
+	window.addEventListener("message", (e) => {
+		if (!e.source || e.source === window) return;
+		const ui = e.source;
+		const { port1, port2 } = new MessageChannel();
+		ui.postMessage({ type: "UI_CONNECT" }, "*", [port2]);
+		for (const key of ["ArrowDown", "Enter"]) {
+			ui.postMessage({ type: "UI_KEY", key }, "*");
+			port1.postMessage({ type: "UI_KEY", key });
+		}
+		window.__drove++;
+	});
+</script></body>`,
+);
 
 async function serve(page: Page, html: string): Promise<void> {
 	await page
@@ -229,8 +250,8 @@ test("keyboard nav drives the iframe: Down highlights, Enter fills, Escape dismi
 	context,
 	extensionId,
 }) => {
-	// UI_KEY is posted TO the frame and UI_HIGHLIGHT comes back: both directions of the bridge, and
-	// the highlight is what gates Enter (without one, Enter must fall through to the form).
+	// UI_KEY is posted TO the frame and the pick comes back. Enter is ours only once an arrow has
+	// highlighted a row; without one it must fall through to the form.
 	const popup = await context.newPage();
 	await createVault(popup, extensionId);
 	await openPopup(popup, extensionId);
@@ -258,6 +279,36 @@ test("keyboard nav drives the iframe: Down highlights, Enter fills, Escape dismi
 	await page.keyboard.press("Enter");
 	await expect(page.locator("#user")).toHaveValue("alice@example.com", { timeout: 10_000 });
 	await expect(page.locator("#pass")).toHaveValue("s3cr3t-pw-01");
+});
+
+test("a page cannot drive the picker: it shares the window, not the port", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+
+	const page = await context.newPage();
+	await serve(page, HOSTILE_LOGIN);
+	await page.goto("https://example.com/");
+
+	// No click: script focus is a trusted focusin, and it opens the picker.
+	await expect(async () => {
+		await page.evaluate(() => {
+			(document.activeElement as HTMLElement | null)?.blur();
+			document.getElementById("user")?.focus();
+		});
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await expect
+		.poll(() => page.evaluate(() => (window as unknown as { __drove: number }).__drove))
+		.toBeGreaterThan(0);
+
+	await page.waitForTimeout(1500);
+	await expect(page.locator("#user")).toHaveValue("");
+	await expect(page.locator("#pass")).toHaveValue("");
 });
 
 test("tabbing off the field re-anchors the picker, then takes it down", async ({
