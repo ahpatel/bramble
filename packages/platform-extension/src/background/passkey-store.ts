@@ -10,7 +10,7 @@ import type { Entry, LoginEntryData } from "@core/hooks/useVault";
 import { decodeEntriesPayload } from "@core/sync";
 import { normalizeEntryData } from "@core/vault/entry-normalize";
 import type { PasskeyPlacement } from "@core/vault/passkey";
-import { type EncryptedEntry, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
+import type { EncryptedEntry, VaultBlob } from "@core/vault-format";
 import { addLoginEntry } from "./autofill-index";
 import { sendToOffscreen } from "./offscreen-client";
 import { requireActiveVaultId } from "./session";
@@ -20,7 +20,7 @@ import {
 	bytesToBase64,
 	readAndDecodeVault,
 	reencryptOuterWithEntryChange,
-	writeVault,
+	writeVaultEntries,
 } from "./vault-io";
 
 // Passkey crypto runs in the offscreen (the WASM core). The background reaches it via
@@ -104,15 +104,11 @@ async function encryptEntry(
 
 async function writeBlob(
 	vaultId: string,
-	base: VaultBlob,
+	_base: VaultBlob,
 	outer: { entriesIv: Uint8Array; entriesCiphertext: Uint8Array; entryCount: number },
 ): Promise<void> {
-	const blob: VaultBlob = {
-		slots: base.slots,
-		entriesIv: outer.entriesIv,
-		entriesCiphertext: outer.entriesCiphertext,
-	};
-	await writeVault(encodeVaultBlob(blob), vaultId);
+	// Format-preserving write: a VLT2 vault keeps its sharing layer.
+	await writeVaultEntries(outer.entriesIv, outer.entriesCiphertext, vaultId);
 }
 
 function hostname(u: string): string {

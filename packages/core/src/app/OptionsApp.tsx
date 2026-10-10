@@ -24,7 +24,7 @@ const ImportShell = lazy(() =>
 // the terminal done screen is shown as before.
 function SetupShell({ onComplete, mobile }: { onComplete?: () => void; mobile?: boolean }) {
 	const { shell } = usePlatform();
-	const { createVault, startJoin, joining, joinError } = useVault();
+	const { createVault, startJoin, startJoinMember, joining, joinError } = useVault();
 	const { vaults } = useVaultRegistry();
 	const adding = vaults.length > 0;
 	const [mode, setMode] = useState<VaultSetupMode>("create");
@@ -115,6 +115,11 @@ function SetupShell({ onComplete, mobile }: { onComplete?: () => void; mobile?: 
 				await startJoin(pairingCode, unlock, undefined, deviceName);
 				if (onComplete) onComplete();
 				else setDone("opened");
+			}}
+			onJoinMember={async (pairingCode, password) => {
+				await startJoinMember(pairingCode, password);
+				if (onComplete) onComplete();
+				else setDone("added");
 			}}
 			joining={joining}
 			joinError={joinError}

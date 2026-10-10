@@ -139,6 +139,27 @@ export async function renameCollection(
 	});
 }
 
+/** Owner-only policy toggle: members' apps conceal this collection's passwords
+ * (detail, list, export) while autofill keeps working. Concealment, not
+ * enforcement — the member's device holds the secrets autofill requires; the
+ * copy says so. Metadata-only: no re-encryption, converges with the region. */
+export async function setCollectionPasswordHidden(
+	_deps: SharingDeps,
+	state: SharingState,
+	collectionId: string,
+	hidden: boolean,
+): Promise<SharingState> {
+	requireOwner(state);
+	const collection = requireCollection(state, collectionId);
+	// The collection key stays in collectionKeys so the rest of the transition
+	// machinery is untouched; only the policy flag moves.
+	return withCollection(state, {
+		...collection,
+		key: state.collectionKeys[collectionId],
+		hidePassword: hidden ? true : undefined,
+	});
+}
+
 /** Share an entry into a collection: wrap its existing DEK under the collection
  * key (ADR-0001 — the payload ciphertext is never re-encrypted). Owner-only.
  * The caller resolves the DEK with resolveEntryDek. */
@@ -290,6 +311,30 @@ export async function addMember(
 			],
 		},
 	};
+}
+
+/** True when this device should keep the entry's password out of view: a member
+ * whose every granting collection carries the hide policy. The owner never
+ * conceals their own entry, and an entry with no wrapper (a private one) is
+ * never concealed.
+ *
+ * POLICY, NOT ENFORCEMENT: the member's device holds the decrypted secret —
+ * autofill requires it — so this hides from casual view in Bramble's UI.
+ * Older member clients strip the flag and show the password; the copy in the
+ * UI must not claim more. See docs/adr/0009. */
+export function passwordConcealed(
+	state: SharingState | null | undefined,
+	entryId: string,
+): boolean {
+	if (state?.performer.role !== "member") return false;
+	const memberId = state.performer.memberId;
+	const grants = state.region.collections.filter(
+		(c) =>
+			state.region.wrappers.some((w) => w.entryId === entryId && w.collectionId === c.id) &&
+			c.memberIds.includes(memberId),
+	);
+	if (grants.length === 0) return false;
+	return grants.every((c) => c.hidePassword === true);
 }
 
 /** Grant a member access to a collection (owner-only): membership plus the

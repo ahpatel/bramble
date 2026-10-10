@@ -94,8 +94,12 @@ export async function loadOwnerSharingState(
 export async function persistOwnerSharingState(
 	deps: Pick<SharingDeps, "encryptWithKey">,
 	state: SharingState,
-	/** The blob's invariant parts (slots + entries payload), from any decode of it. */
-	current: Pick<VaultBlob, "slots" | "entriesIv" | "entriesCiphertext">,
+	/** The blob's invariant parts (slots + entries payload), from any decode of it.
+	 * Member secrets too when present: the region-adoption path runs this on
+	 * member devices as well, and dropping the secrets there erased the member's
+	 * key material on the first synced region update. */
+	current: Pick<VaultBlob, "slots" | "entriesIv" | "entriesCiphertext"> &
+		Partial<Pick<Vlt2Blob, "memberSecretsIv" | "memberSecretsCiphertext">>,
 ): Promise<Uint8Array> {
 	const regionCipher = await deps.encryptWithKey(state.shkB64, JSON.stringify(state.region));
 	const blob: Vlt2Blob = {
@@ -105,6 +109,12 @@ export async function persistOwnerSharingState(
 		sharingWraps: state.sharingWraps,
 		regionIv: base64ToBytes(regionCipher.iv),
 		regionCiphertext: base64ToBytes(regionCipher.ciphertext),
+		...(current.memberSecretsIv && current.memberSecretsCiphertext
+			? {
+					memberSecretsIv: current.memberSecretsIv,
+					memberSecretsCiphertext: current.memberSecretsCiphertext,
+				}
+			: {}),
 	};
 	return VLT2.encode(blob);
 }

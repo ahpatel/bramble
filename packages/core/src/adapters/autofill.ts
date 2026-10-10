@@ -155,6 +155,17 @@ export interface SavePasskeyPrompt extends CornerPromptCommon {
 	rpId: string;
 	rpName?: string;
 	userName?: string;
+	/** get only: the vault holds no passkey that could serve this request (checked
+	 * post-unlock). Drives the "no Bramble passkey here, use another authenticator"
+	 * card instead of a confirm-then-error dead end. See docs/passkey-provider.md. */
+	noMatch?: boolean;
+	/** Render the handoff affordances (the no-match card's primary action, and the note
+	 * saying what a refusal does). Every refusal from a passkey card hands the request to
+	 * the user's other authenticators: Firefox relays natively (origin binding preserved);
+	 * Chrome has no passthrough, so the delivery completes the attempt with the handoff
+	 * message and turns the provider off, making the site's retry native. Carries which,
+	 * so the card can say what will happen. */
+	nativeFallback?: "passthrough" | "disable";
 	/** create only: name of the existing login this passkey will attach to, when one
 	 * covers the rpId unambiguously (resolved only when the vault is already unlocked).
 	 * Drives "Add a passkey to your existing X login" vs "Save a new passkey" copy. */
@@ -174,11 +185,19 @@ export type CornerPromptPayload = SaveLoginPrompt | UpdateLoginPrompt | SavePass
 export interface PasskeyPromptResponse {
 	promptId: string;
 	approved: boolean;
-	/** create picker: the chosen login id, or "new" to create a fresh login. */
+	/** create picker: the chosen login id, or "new" to create a fresh login. The
+	 * no-match card's primary replies with the sentinel "native"; since every refusal
+	 * hands off, the background treats it the same as any declined reply. */
 	choice?: string;
 }
 
-type CornerPromptResponseAction = "save" | "update" | "dismiss" | "never" | "save-unlock-first";
+type CornerPromptResponseAction =
+	| "save"
+	| "save-new"
+	| "update"
+	| "dismiss"
+	| "never"
+	| "save-unlock-first";
 
 export interface CornerPromptResponse {
 	promptId: string;

@@ -127,6 +127,15 @@ export interface ShellAdapter {
 	setAutofillEnabled?(enabled: boolean): Promise<void>;
 	/** Attach/detach the passkey provider at runtime (extension only; paired with the passkeyProvider capability). Persisting the pref is the caller's job; this just applies it now. */
 	setPasskeyProviderEnabled?(enabled: boolean): Promise<void>;
+	/**
+	 * True while a page's passkey request (the provider ceremony) is waiting on this UI,
+	 * typically an unlock the ceremony opened. The unlock screen then steers away from
+	 * WebAuthn-based unlock (security key, platform biometric): Bramble's own WebAuthn
+	 * ceremony would pause the interception layer and kill the very request being served.
+	 * Extension only; absent elsewhere, where nothing can hold a passkey request.
+	 * See docs/passkey-provider.md.
+	 */
+	passkeyCeremonyHoldsWebauthnUnlock?(): Promise<boolean>;
 	/** Subscribe to passkey-provider saves so the UI can confirm them (extension only). Returns an unsubscribe. */
 	onPasskeySaved?(callback: (info: PasskeySavedInfo) => void): () => void;
 	/**
@@ -328,6 +337,11 @@ export interface SyncEvent {
 	/** Inviter, MEMBER join (v2): the updated outer sharing wraps (JSON array, wire
 	 * form) after the host registered the joining member — the UI persists these. */
 	sharingWrapsJson?: string;
+	/** Inviter, MEMBER join (v2): the updated region (JSON) with the joining member
+	 * registered — travels with the wraps, since persisting wraps alone left the
+	 * member invisible. The collection keys are NOT included (the host's copy has
+	 * none); the UI keeps its own. */
+	sharingRegionJson?: string;
 	/** Joiner: a human-readable reason a join failed recoverably (e.g. password mismatch). */
 	message?: string;
 	/** For kind "enroll-approval" (inviter) and "sas" (joiner): the pairing SAS to display. */

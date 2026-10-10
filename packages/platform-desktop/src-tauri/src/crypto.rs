@@ -215,6 +215,21 @@ pub fn crypto_decrypt_with_vek(iv: String, ciphertext: String) -> CmdResult<Stri
     map(vault_crypto::decrypt_with_vek(iv, ciphertext))
 }
 
+/// Binary-safe DEK unwrap: the loaded VEK opens the wrap, the raw 32-byte DEK
+/// returns as base64. decrypt_with_vek cannot carry key material (its result is
+/// a UTF-8 string, and the DEK is random bytes).
+#[tauri::command]
+pub fn crypto_unwrap_dek(wrapped_dek: String, dek_iv: String) -> CmdResult<String> {
+    map(vault_crypto::unwrap_dek(wrapped_dek, dek_iv))
+}
+
+/// The matching binary-safe wrap (see crypto_unwrap_dek): seals the raw DEK
+/// bytes under the loaded key, in the entry format.
+#[tauri::command]
+pub fn crypto_wrap_dek(dek_b64: String) -> CmdResult<vault_crypto::MasterEncrypted> {
+    map(vault_crypto::wrap_dek_core(&dek_b64))
+}
+
 // ---- Foreign-format import ----
 //
 // Both are pure conversions with no VEK involved: the caller encrypts what comes back

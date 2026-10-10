@@ -4,7 +4,7 @@
 // See docs/adr/0001..0005 and vault/sharing-mutations.
 
 import { Trans, useLingui } from "@lingui/react/macro";
-import { FolderPlus, Pencil, Share2, Users } from "lucide-react";
+import { EyeOff, FolderPlus, Pencil, Share2, Users } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useState } from "react";
 import { usePlatform } from "../../../../context/PlatformContext";
@@ -12,6 +12,7 @@ import { usePendingEnrollApproval } from "../../../../hooks/usePendingEnrollAppr
 import { useVault } from "../../../../hooks/useVault";
 import { decryptWithKey } from "../../../../vault/sharing-crypto";
 import {
+	addMemberToCollection,
 	createCollection,
 	removeMember,
 	renameCollection,
@@ -55,14 +56,69 @@ function CollectionLabel({
 	return <span>{label ?? fallback}</span>;
 }
 
+/** Inline picker of collections a member is not yet in. Renders nothing when
+ * every collection already includes them. */
+function MemberCollectionPicker({
+	memberId,
+	onAdd,
+}: {
+	memberId: string;
+	onAdd: (collectionId: string) => void;
+}) {
+	const { sharing } = useVault();
+	const [open, setOpen] = useState(false);
+	const collections = (sharing?.region.collections ?? []).filter(
+		(c) => !c.memberIds.includes(memberId),
+	);
+	if (collections.length === 0) return null;
+	return (
+		<>
+			{open ? (
+				<div className="flex flex-wrap justify-end gap-1.5">
+					{collections.map((c) => (
+						<Button
+							key={c.id}
+							variant="secondary"
+							size="sm"
+							onClick={() => {
+								setOpen(false);
+								onAdd(c.id);
+							}}
+						>
+							<CollectionLabel
+								collectionKey={sharing?.collectionKeys[c.id]}
+								labelIv={c.labelIv}
+								labelCiphertext={c.labelCiphertext}
+								fallback={c.id}
+							/>
+						</Button>
+					))}
+				</div>
+			) : (
+				<Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
+					<Trans>Add to collection</Trans>
+				</Button>
+			)}
+		</>
+	);
+}
+
 export function SharingSection() {
-	const { sharing, runSharingTransition, enableSharing, inviteMember, isLocked } = useVault();
+	const {
+		sharing,
+		runSharingTransition,
+		enableSharing,
+		inviteMember,
+		isLocked,
+		setCollectionPasswordHidden,
+	} = useVault();
 	const { t } = useLingui();
 	const { show } = useToast();
 	const [creating, setCreating] = useState(false);
 	const [name, setName] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [inviteCode, setInviteCode] = useState<string | null>(null);
+	const [memberName, setMemberName] = useState("");
 
 	const act = async (fn: () => Promise<void>) => {
 		setBusy(true);
@@ -87,25 +143,29 @@ export function SharingSection() {
 
 	const invite = () =>
 		act(async () => {
-			if (!sharing) return;
-			const label = window.prompt(t`What should this person be called?`);
-			if (!label?.trim()) return;
+			if (!sharing || !memberName.trim()) return;
 			// The relay comes from the sync settings (the hook resolves the stored one);
 			// the invite reuses whatever relay this device already syncs through.
 			const code = await inviteMember("", undefined, {
 				sharing,
-				memberLabel: label.trim(),
-				persistWraps: async (wrapsJson: string) => {
-					// The host registered the member; adopt its wraps and persist.
+				memberLabel: memberName.trim(),
+				persistWraps: async (wrapsJson: string, regionJson?: string) => {
+					// The host registered the member; adopt its wraps and region. The
+					// collection keys stay ours — the host's copy of the state has none.
 					const { sharingWrapFromWire } = await import("../../../../vault/member-invite");
 					const wraps = JSON.parse(wrapsJson) as Parameters<typeof sharingWrapFromWire>[0][];
+					const region = regionJson
+						? (JSON.parse(regionJson) as typeof sharing.region)
+						: sharing.region;
 					await runSharingTransition(async () => ({
 						...sharing,
 						sharingWraps: wraps.map(sharingWrapFromWire),
+						region,
 					}));
 				},
 			});
 			setInviteCode(code);
+			setMemberName("");
 		});
 
 	// Locked or not sharing-enabled: a single row that turns sharing on.
@@ -192,6 +252,36 @@ export function SharingSection() {
 							variant="ghost"
 							size="sm"
 							disabled={busy}
+							aria-pressed={collection.hidePassword === true}
+							aria-label={
+								collection.hidePassword === true
+									? t`Passwords in this collection are hidden from members. Show them.`
+									: t`Hide passwords in this collection from members.`
+							}
+							title={
+								collection.hidePassword === true
+									? t`Passwords are hidden from members in this collection — autofill still works, but this is a courtesy, not a lock.`
+									: t`Hide passwords in this collection from members. Autofill keeps working; this is a courtesy, not a lock.`
+							}
+							onClick={() =>
+								void act(async () => {
+									await setCollectionPasswordHidden(
+										collection.id,
+										collection.hidePassword !== true,
+									);
+								})
+							}
+						>
+							<EyeOff
+								className={`w-4 h-4 ${
+									collection.hidePassword === true ? "text-foreground" : "text-muted-foreground"
+								}`}
+							/>
+						</Button>
+						<Button
+							variant="ghost"
+							size="sm"
+							disabled={busy}
 							aria-label={t`Rename collection`}
 							onClick={() =>
 								void act(async () => {
@@ -230,22 +320,39 @@ export function SharingSection() {
 						title={member.label ?? member.id.slice(0, 8)}
 						subtitle={t`${sharing.region.collections.filter((c) => c.memberIds.includes(member.id)).length} collection(s)`}
 					>
-						<Button
-							variant="ghost"
-							size="sm"
-							disabled={busy}
-							aria-label={t`Remove member`}
-							onClick={() => {
-								// The honest copy (ADR-0004): removal stops future access;
-								// it is not a remote wipe. The passwords must rotate.
-								if (!window.confirm(REMOVE_COPY)) return;
-								void act(async () => {
-									await runSharingTransition((deps, state) => removeMember(deps, state, member.id));
-								});
-							}}
-						>
-							<Trans>Remove</Trans>
-						</Button>
+						<div className="flex items-center gap-1.5">
+							<MemberCollectionPicker
+								memberId={member.id}
+								onAdd={(cid) => {
+									void act(async () => {
+										await runSharingTransition((deps, state) =>
+											addMemberToCollection(deps, state, {
+												collectionId: cid,
+												memberId: member.id,
+											}),
+										);
+									});
+								}}
+							/>
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={busy}
+								aria-label={t`Remove member`}
+								onClick={() => {
+									// The honest copy (ADR-0004): removal stops future access;
+									// it is not a remote wipe. The passwords must rotate.
+									if (!window.confirm(REMOVE_COPY)) return;
+									void act(async () => {
+										await runSharingTransition((deps, state) =>
+											removeMember(deps, state, member.id),
+										);
+									});
+								}}
+							>
+								<Trans>Remove</Trans>
+							</Button>
+						</div>
 					</Row>
 				))}
 				<Row
@@ -253,9 +360,21 @@ export function SharingSection() {
 					title={t`Invite someone`}
 					subtitle={t`In person: they scan the code, you both confirm the words, and they choose their own password.`}
 				>
-					<Button variant="secondary" size="sm" disabled={busy} onClick={() => void act(invite)}>
-						<Trans>Invite</Trans>
-					</Button>
+					<div className="flex items-center gap-1.5">
+						<TextField
+							label={t`Their name`}
+							value={memberName}
+							onChange={(e) => setMemberName(e.target.value)}
+						/>
+						<Button
+							variant="secondary"
+							size="sm"
+							disabled={busy || !memberName.trim()}
+							onClick={() => void act(invite)}
+						>
+							<Trans>Invite</Trans>
+						</Button>
+					</div>
 				</Row>
 			</RowGroup>
 			{inviteCode && <InvitePanel code={inviteCode} onClose={() => setInviteCode(null)} />}
@@ -273,7 +392,9 @@ function InvitePanel({ code, onClose }: { code: string; onClose: () => void }) {
 			<div className="flex justify-center p-2 bg-white rounded-lg w-fit mx-auto">
 				<QRCodeSVG value={code} size={144} />
 			</div>
-			<p className="text-xs text-muted-foreground break-all font-mono">{code}</p>
+			<p className="text-xs text-muted-foreground break-all font-mono" data-testid="invite-code">
+				{code}
+			</p>
 			{approval ? (
 				<div className="space-y-2">
 					<p className="text-sm">

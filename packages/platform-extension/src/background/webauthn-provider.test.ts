@@ -17,6 +17,16 @@ const h = vi.hoisted(() => ({
 	applied: [] as boolean[],
 	/** Whether the apply hook throws, as a failing attach() does. */
 	hookThrows: false,
+	/** Pref writes, as storage would see them. */
+	prefWrites: [] as boolean[],
+	/** Scripted active-vault id for the unlock-conflict read (null = none). */
+	activeVaultId: null as string | null,
+	/** Scripted slot blob: null password slot means unlock needs a WebAuthn tap. */
+	vaultHasPasswordSlot: true,
+	/** Optional gate: runGetCeremony/runCreateCeremony wait on it before resolving. */
+	ceremonyGate: undefined as Promise<void> | undefined,
+	/** Whether the mocked platform has the Chrome proxy namespace (Firefox = false). */
+	hasWebAuthnProxy: true,
 }));
 
 vi.mock("./prefs", () => ({
@@ -24,6 +34,9 @@ vi.mock("./prefs", () => ({
 		new Promise<boolean>((resolve) => {
 			h.settlePref = resolve;
 		}),
+	setPasskeyProviderEnabled: async (enabled: boolean) => {
+		h.prefWrites.push(enabled);
+	},
 }));
 
 vi.mock("./router", () => ({
@@ -32,6 +45,10 @@ vi.mock("./router", () => ({
 
 vi.mock("../platform-api", () => ({
 	api: {
+		// A getter so one test can be Firefox (namespace absent) without a second mock.
+		get webAuthenticationProxy() {
+			return h.hasWebAuthnProxy ? { attach: async () => {} } : undefined;
+		},
 		runtime: { sendMessage: async () => {} },
 		tabs: { query: async () => [], sendMessage: async () => {} },
 		action: {},
@@ -46,11 +63,33 @@ vi.mock("./passkey-store", () => ({
 	savePlacement: async () => {},
 }));
 
-vi.mock("./session", () => ({ vaultLocked: () => false }));
+vi.mock("./session", () => ({
+	vaultLocked: () => false,
+	getActiveVaultId: () => h.activeVaultId,
+}));
+
+vi.mock("./vault-io", () => ({
+	readAndDecodeVault: async () => ({
+		slots: h.vaultHasPasswordSlot ? [{ kind: "password" }] : [{ kind: "webauthn" }],
+		entriesIv: new Uint8Array(),
+		entriesCiphertext: new Uint8Array(),
+	}),
+}));
+
+vi.mock("@core/vault-format", () => ({
+	findUnlockPasswordSlot: (blob: { slots: { kind: string }[] }) =>
+		blob.slots.find((s) => s.kind === "password") ?? null,
+}));
 
 vi.mock("./webauthn-proxy", () => ({
-	runCreateCeremony: async () => ({ approved: false }),
-	runGetCeremony: async () => ({ approved: false }),
+	runCreateCeremony: vi.fn(async () => {
+		if (h.ceremonyGate) await h.ceremonyGate;
+		return { approved: false };
+	}),
+	runGetCeremony: vi.fn(async () => {
+		if (h.ceremonyGate) await h.ceremonyGate;
+		return { approved: false };
+	}),
 }));
 
 async function load() {
@@ -59,6 +98,11 @@ async function load() {
 	h.settlePref = undefined;
 	h.applied = [];
 	h.hookThrows = false;
+	h.prefWrites = [];
+	h.activeVaultId = null;
+	h.vaultHasPasswordSlot = true;
+	h.ceremonyGate = undefined;
+	h.hasWebAuthnProxy = true;
 	const mod = await import("./webauthn-provider");
 	mod.setProviderApplyHook(async (enabled) => {
 		h.applied.push(enabled);
@@ -127,5 +171,92 @@ describe("the provider enabled flag", () => {
 		h.hookThrows = true;
 		await expect(setEnabled(false)).rejects.toThrow();
 		expect(m.isProviderEnabled()).toBe(true);
+	});
+});
+
+describe("the native-fallback disable (a card's 'use another authenticator' click)", () => {
+	it("turns the flag off, persists the pref off, and applies the hook off", async () => {
+		const m = await load();
+		await setEnabled(true);
+		await m.disableProviderForNativeFallback();
+		expect(m.isProviderEnabled()).toBe(false);
+		expect(h.prefWrites).toEqual([false]); // the Settings toggle's exact write
+		expect(h.applied).toEqual([true, false]); // detach, after the request completed
+	});
+
+	it("keeps the pref off even when the detach hook fails", async () => {
+		// The pref is the durable state; a failed detach self-heals on the next toggle and
+		// the off flag already passes requests through.
+		const m = await load();
+		await setEnabled(true);
+		h.hookThrows = true;
+		await m.disableProviderForNativeFallback();
+		expect(m.isProviderEnabled()).toBe(false);
+		expect(h.prefWrites).toEqual([false]);
+	});
+});
+
+describe("the ceremony state the unlock screen asks about", () => {
+	it("reports inactive while no page ceremony runs", async () => {
+		await load();
+		const res = (await h.handlers.get("PASSKEY_CEREMONY_QUERY")?.({})) as {
+			ok: boolean;
+			data: { active: boolean };
+		};
+		expect(res).toEqual({ ok: true, data: { active: false } });
+	});
+
+	it("reports active for the WHOLE ceremony, including while it awaits the user", async () => {
+		// Regression: the ceremony return used to skip `await`, so the finally block
+		// decremented the depth at the same tick it incremented it, and this query
+		// answered `false` for the entire ceremony. The unlock screen's steer-away
+		// (security key / biometric hidden while a page request waits) keyed off it.
+		const m = await load();
+		let release!: () => void;
+		h.ceremonyGate = new Promise<void>((r) => {
+			release = r;
+		});
+		const deps = m.depsForTab(3); // explicit tab: no activeTabId round-trip needed
+		const done = deps.ceremony({
+			kind: "get",
+			rpId: "example.com",
+			origin: "https://example.com",
+		});
+		const query = async (): Promise<boolean> => {
+			const res = (await h.handlers.get("PASSKEY_CEREMONY_QUERY")?.({})) as
+				| { data?: { active?: boolean } }
+				| undefined;
+			return res?.data?.active === true;
+		};
+		await expect.poll(query, { timeout: 2_000 }).toBe(true); // live mid-ceremony
+		release();
+		expect(await done).toEqual({ approved: false });
+		await expect.poll(query).toBe(false); // and closed out afterwards
+	});
+
+	it("never reports active on Firefox, where an unlock cannot conflict with a ceremony", async () => {
+		// The shim skips the extension's own moz-extension origin, so Bramble's own WebAuthn
+		// unlock there does not touch a waiting page request; the popup keeps its WebAuthn
+		// paths and no steer-away is needed. Pin the gate so a regression that reintroduces
+		// the Chrome-shaped steer on Firefox is caught.
+		const m = await load();
+		h.hasWebAuthnProxy = false; // Firefox: no webAuthenticationProxy namespace
+		let release!: () => void;
+		h.ceremonyGate = new Promise<void>((r) => {
+			release = r;
+		});
+		const deps = m.depsForTab(3, { nativeFallback: "silent" });
+		const done = deps.ceremony({
+			kind: "get",
+			rpId: "example.com",
+			origin: "https://example.com",
+		});
+		await new Promise((r) => setTimeout(r, 50)); // the ceremony is held mid-flight
+		const res = (await h.handlers.get("PASSKEY_CEREMONY_QUERY")?.({})) as {
+			data: { active: boolean };
+		};
+		expect(res.data.active).toBe(false);
+		release();
+		expect(await done).toEqual({ approved: false });
 	});
 });

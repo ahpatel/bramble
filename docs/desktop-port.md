@@ -327,6 +327,14 @@ extension  --native messaging (stdio)-->  bramble-proxy (small spawned binary)
 
 The proxy is a small Rust binary shipped with the app. It needs a native-messaging host manifest per
 browser (file paths on macOS and Linux, registry keys on Windows) listing the allowed extension IDs.
+The manifests are rewritten at every app launch with the proxy's current path and the allowed IDs:
+the published extension's ID (fixed by the manifest key, shared by unpacked dev builds) plus any
+locally configured ones from `~/.config/bramble/native-messaging-ids`, one per line. That file
+exists for locally-built extensions whose manifest had its key stripped — the release bundler does
+— because such a build derives its ID from the folder it is loaded from, which differs per machine
+and per checkout path. Without it Chrome refuses the connection with "Access to the specified
+native messaging host is forbidden". Allowing an ID there only lets that extension ask to pair;
+the pairing code and the SAS confirmation still gate everything it can reach.
 Firefox supports the same mechanism with `allowed_extensions` keyed on the addon ID rather than
 Chrome's `chrome-extension://` origins, so both existing targets are covered `[unverified: exact
 paths and key names]`. Firefox is not in fact wired up on any platform: it reads a different

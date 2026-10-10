@@ -17,6 +17,7 @@ import {
 
 type TransportResult =
 	| { passthrough: true }
+	| { fallback: true }
 	| { error: { name: string; message: string } }
 	| { responseJson: string };
 
@@ -80,8 +81,15 @@ function install(): void {
 			return nativeCreate(options);
 		}
 		if ("passthrough" in result) return nativeCreate(options);
+		// The vault can't serve this request (e.g. no stored passkey for the rpId): relay to
+		// the NATIVE authenticator with the page's own options, so the site behaves exactly
+		// as if Bramble weren't installed. A true passthrough: the options object is the
+		// page's own, so the clientDataJSON origin binds to the page, not to Bramble.
+		if ("fallback" in result) return nativeCreate(options);
 		if ("error" in result) throw new DOMException(result.error.message, result.error.name);
-		// A passkey may already be persisted; do NOT fall back to native here (double-prompt).
+		// Bramble MINTED a passkey here, so the request is served; do not also run the
+		// native authenticator (double-prompt). The `fallback` branch above is different:
+		// nothing was minted, so the native call is the only prompt.
 		try {
 			return buildCreateCredential(JSON.parse(result.responseJson));
 		} catch {
@@ -100,6 +108,10 @@ function install(): void {
 			return nativeGet(options);
 		}
 		if ("passthrough" in result) return nativeGet(options);
+		// As in create(): the vault can't serve this request, so relay to the native
+		// authenticator. On a step-up MFA get() (Cloudflare Access, passkey-password
+		// fallbacks) this is what lets the user's already-registered devices answer.
+		if ("fallback" in result) return nativeGet(options);
 		if ("error" in result) throw new DOMException(result.error.message, result.error.name);
 		try {
 			return buildGetCredential(JSON.parse(result.responseJson));

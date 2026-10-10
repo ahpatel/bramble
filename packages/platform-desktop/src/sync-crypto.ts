@@ -52,6 +52,13 @@ const cryptoSlice = {
 	encrypt_with_vek: (plaintext: string) => desktopCrypto.encryptWithVek(plaintext),
 	decrypt_with_vek: (iv: string, ciphertext: string) =>
 		desktopCrypto.decryptWithVek(iv, ciphertext),
+	// Binary-safe DEK ops: the DEK is random bytes, so the text-returning
+	// decrypt_with_vek / text-input encrypt_with_vek cannot carry it (a UTF-8
+	// coercion error on unwrap; a sealed base64 STRING that no decrypt_entry can
+	// open on wrap). Same commands the extension's offscreen host uses.
+	unwrap_dek: (wrapped_dek: string, dek_iv: string) =>
+		desktopCrypto.decryptEntryDek(dek_iv, wrapped_dek),
+	wrap_dek: (dek_b64: string) => desktopCrypto.wrapEntryDek(dek_b64),
 	verify_password_slot: (
 		password: string,
 		saltB64: string,

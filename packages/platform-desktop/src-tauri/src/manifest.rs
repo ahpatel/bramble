@@ -54,6 +54,74 @@ const HOST_NAME: &str = APP_IDENTIFIER;
 /// different, wrong id.
 const ALLOWED_EXTENSION_IDS: &[&str] = &["kmokhdhoggbdcgoepifeckhgbfakaknm"];
 
+/// Additional extension ids to allow, read at manifest generation time from
+/// `<home>/.config/bramble/native-messaging-ids` (one id per line).
+///
+/// The published id above is fixed by the manifest key, but a locally-built
+/// extension whose manifest had that key stripped (the release bundler does)
+/// derives its id from the folder it is loaded from — different on every machine
+/// and every checkout path, so hardcoding one machine's id leaves every other
+/// setup forbidden. Allowing an id here only lets that extension ASK to pair:
+/// the pairing code and the SAS confirmation still gate everything it can
+/// reach, the same trust decision this manifest already makes for the published
+/// id.
+fn extra_allowed_ids() -> Vec<String> {
+    let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) else {
+        return Vec::new();
+    };
+    let path = std::path::Path::new(&home).join(".config/bramble/native-messaging-ids");
+    extra_allowed_ids_from(&path)
+}
+
+fn extra_allowed_ids_from(path: &std::path::Path) -> Vec<String> {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut seen = Vec::new();
+    contents
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|id| {
+            // An extension id is exactly 32 characters of [a-p]. Anything else is
+            // a typo that would silently disable the whole manifest.
+            let valid = id.len() == 32 && id.chars().all(|c| ('a'..='p').contains(&c));
+            if valid {
+                Some(id.to_string())
+            } else {
+                log::warn!(
+                    "native messaging: ignoring invalid extension id in {}: {id}",
+                    path.display()
+                );
+                None
+            }
+        })
+        .filter(|id| {
+            // A repeated line is at worst noise; keep the manifest clean.
+            if seen.contains(id) {
+                false
+            } else {
+                seen.push(id.clone());
+                true
+            }
+        })
+        .collect()
+}
+
+/// The ids the manifest allows: the published one plus any locally configured.
+fn allowed_ids() -> Vec<String> {
+    let mut ids = ALLOWED_EXTENSION_IDS
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>();
+    for id in extra_allowed_ids() {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
 /// Chromium-family browsers and where they keep their host manifests, relative to the root
 /// `browser_root` resolves. Each entry's PARENT must already exist for us to install into it.
 #[cfg(target_os = "macos")]
@@ -225,10 +293,10 @@ fn manifest_for(proxy: &Path) -> HostManifest {
         description: "Bramble password manager".to_string(),
         path: proxy.display().to_string(),
         kind: "stdio".to_string(),
-        allowed_origins: ALLOWED_EXTENSION_IDS
-            // The trailing slash is not decoration: Chrome matches these as origins and
-            // silently ignores an entry without it.
-            .iter()
+        // The trailing slash is not decoration: Chrome matches these as origins and
+        // silently ignores an entry without it.
+        allowed_origins: allowed_ids()
+            .into_iter()
             .map(|id| format!("chrome-extension://{id}/"))
             .collect(),
     }
@@ -536,6 +604,61 @@ mod tests_common {
                 "{name} is not relative: {relative}"
             );
         }
+    }
+}
+
+mod extra_ids_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn valid_lines_are_kept_and_duplicates_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = dir.path().join("native-messaging-ids");
+        fs::write(
+            &at,
+            "aabbccddeeffgghhiijjkkllmmnnoopp\n\n# a comment\naabbccddeeffgghhiijjkkllmmnnoopp\n",
+        )
+        .unwrap();
+        assert_eq!(
+            extra_allowed_ids_from(&at),
+            vec!["aabbccddeeffgghhiijjkkllmmnnoopp".to_string()]
+        );
+    }
+
+    #[test]
+    fn malformed_lines_are_skipped_not_fatal() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = dir.path().join("native-messaging-ids");
+        fs::write(
+            &at,
+            "not-an-id\naabbccddeeffgghhiijjkkllmmnnoopp\nzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\n",
+        )
+        .unwrap();
+        assert_eq!(
+            extra_allowed_ids_from(&at),
+            vec!["aabbccddeeffgghhiijjkkllmmnnoopp".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_missing_file_means_no_extra_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(extra_allowed_ids_from(&dir.path().join("absent")).is_empty());
+    }
+
+    #[test]
+    fn the_manifest_lists_configured_ids_alongside_the_published_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = dir.path().join("native-messaging-ids");
+        fs::write(&at, "aabbccddeeffgghhiijjkkllmmnnoopp\n").unwrap();
+        let extra = extra_allowed_ids_from(&at);
+        assert!(!extra.contains(&ALLOWED_EXTENSION_IDS[0].to_string()));
+        let ids = [ALLOWED_EXTENSION_IDS[0].to_string()]
+            .into_iter()
+            .chain(extra)
+            .collect::<Vec<_>>();
+        assert_eq!(ids.len(), 2);
     }
 }
 

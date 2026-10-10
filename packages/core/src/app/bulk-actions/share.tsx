@@ -88,19 +88,29 @@ function dialogFor(mode: "share" | "unshare") {
 						)}
 					</p>
 				) : (
-					<div className="space-y-1.5">
-						{list.map((c) => (
-							<Button
-								key={c.id}
-								variant={picked === c.id ? "secondary" : "ghost"}
-								size="sm"
-								className="w-full justify-start"
-								onClick={() => setPicked(c.id)}
-							>
-								<CollectionName collectionId={c.id} fallback={c.id} />
-							</Button>
-						))}
-					</div>
+					<>
+						<div className="space-y-1.5">
+							{list.map((c) => (
+								<Button
+									key={c.id}
+									variant={picked === c.id ? "secondary" : "ghost"}
+									size="sm"
+									className="w-full justify-start"
+									onClick={() => setPicked(c.id)}
+								>
+									<CollectionName collectionId={c.id} fallback={c.id} />
+								</Button>
+							))}
+						</div>
+						{!isShare && (
+							<p className="text-xs text-muted-foreground">
+								<Trans>
+									Sharing stops here. Anyone who already has a copy keeps it — rotate the password
+									if that matters.
+								</Trans>
+							</p>
+						)}
+					</>
 				)}
 				{error && <p className="text-sm text-destructive">{error}</p>}
 			</ConfirmDialog>

@@ -641,6 +641,39 @@ pub fn decrypt_with_vek(iv_b64: String, ciphertext_b64: String) -> Result<String
     })
 }
 
+/// Unwrap a per-entry DEK: the loaded VEK opens the wrap, the raw 32-byte DEK
+/// returns as base64. Binary-safe on purpose — the DEK is random bytes, so the
+/// string-returning decrypt_with_vek cannot carry it (a UTF-8 coercion error is
+/// how an owner's share and a member's localize failed on the wasm platforms).
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn unwrap_dek(wrapped_dek_b64: String, dek_iv_b64: String) -> Result<String, CryptoError> {
+    with_vek(|vek| {
+        let wrapped = b64_decode(&wrapped_dek_b64)?;
+        let dek_iv = iv_from(b64_decode(&dek_iv_b64)?)?;
+        let dek = aes_decrypt(vek, &dek_iv, &wrapped)?;
+        Ok(B64.encode(dek.as_slice()))
+    })
+}
+
+/// Wrap a per-entry DEK under the loaded key — the inverse of `unwrap_dek`.
+/// Binary-safe: the input is base64 of the raw DEK, and the raw bytes are what
+/// gets encrypted, matching the entry format `decrypt_entry` unwraps. The
+/// text-input `encrypt_with_vek` would seal the base64 STRING, producing a wrap
+/// no decrypt_entry can open ("key must be 32 bytes").
+pub fn wrap_dek_core(dek_b64: &str) -> Result<MasterEncrypted, CryptoError> {
+    with_vek(|vek| {
+        let mut iv = [0u8; IV_LEN];
+        random_bytes(&mut iv)?;
+        let dek = b64_decode(dek_b64)?;
+        let wrapped = aes_encrypt(vek, &iv, dek.as_slice())?;
+        Ok(MasterEncrypted {
+            iv: B64.encode(iv),
+            ciphertext: B64.encode(&wrapped),
+        })
+    })
+}
+
 // ---- WASM binding layer ----
 // The struct-returning calls serialize to a JS value; the rest are the shared
 // exports above (wasm-bindgen throws `CryptoError` via its `Into<JsValue>`).
@@ -676,6 +709,15 @@ mod wasm_exports {
     #[wasm_bindgen]
     pub fn encrypt_entry(plaintext_json: String) -> Result<JsValue, CryptoError> {
         let payload = encrypt_entry_core(&plaintext_json)?;
+        serde_wasm_bindgen::to_value(&payload).map_err(|e| err(format!("serialize: {e}")))
+    }
+
+    /// Wrap a per-entry DEK under the loaded key. Binary-safe: the input is
+    /// base64 of the raw DEK and the raw bytes are what get sealed (the entry
+    /// format). The text-input encrypt_with_vek would seal the base64 STRING.
+    #[wasm_bindgen]
+    pub fn wrap_dek(dek_b64: String) -> Result<JsValue, CryptoError> {
+        let payload = wrap_dek_core(&dek_b64)?;
         serde_wasm_bindgen::to_value(&payload).map_err(|e| err(format!("serialize: {e}")))
     }
 
@@ -1097,5 +1139,41 @@ mod portable_vault_tests {
         let opened = open_portable_vault_core("pw", &file, MAGIC).expect("open");
         assert_eq!(opened.as_deref(), Some(ENTRIES));
         assert!(is_locked());
+    }
+}
+
+#[cfg(test)]
+mod dek_roundtrip_tests {
+    use super::*;
+
+    #[test]
+    fn unwrap_dek_roundtrips_encrypt_entry_output() {
+        // generate_vek + encrypt_entry produce a real wrapped DEK (random bytes);
+        // unwrap_dek must return it as base64 without any UTF-8 coercion.
+        generate_vek();
+        let payload = encrypt_entry_core("{\"n\":1}").expect("encrypt");
+        let dek = unwrap_dek(payload.wrapped_dek.clone(), payload.dek_iv.clone()).expect("unwrap");
+        assert_eq!(dek.len(), 44); // base64 of 32 bytes
+        // And the wrap_dek inverse must produce something decrypt_entry can open.
+        let rewrapped = wrap_dek_core(&dek).expect("wrap");
+        let plaintext = decrypt_entry(
+            payload.ciphertext.clone(),
+            payload.iv.clone(),
+            rewrapped.ciphertext.clone(),
+            rewrapped.iv.clone(),
+        )
+        .expect("decrypt with rewrapped dek");
+        assert_eq!(plaintext, "{\"n\":1}");
+    }
+
+    #[test]
+    fn decrypt_with_vek_still_fails_on_binary() {
+        // The old path: feeding a wrapped DEK through decrypt_with_vek must fail
+        // with the utf8 error (this is what the desktop hit before the fix).
+        generate_vek();
+        let payload = encrypt_entry_core("{\"n\":1}").expect("encrypt");
+        let result = decrypt_with_vek(payload.dek_iv.clone(), payload.wrapped_dek.clone());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("utf8"));
     }
 }

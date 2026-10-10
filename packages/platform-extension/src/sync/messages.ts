@@ -166,6 +166,7 @@ export const SyncEventMsgSchema = z.object({
 	roster: RosterPayloadSchema.optional(),
 	entryJson: z.string().optional(),
 	sharingWrapsJson: z.string().optional(),
+	sharingRegionJson: z.string().optional(),
 	message: z.string().optional(),
 	sas: z.string().optional(),
 	sasEmoji: z.array(z.number().int()).optional(),

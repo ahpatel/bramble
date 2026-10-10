@@ -582,7 +582,7 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 			shareWith: {
 				sharing: SharingState;
 				memberLabel: string;
-				persistWraps: (wrapsJson: string) => Promise<void>;
+				persistWraps: (wrapsJson: string, regionJson?: string) => Promise<void>;
 			},
 		): Promise<string> => {
 			const relayUrl = (await storage.getMeta<string>("sync.relay")) ?? "";
@@ -605,7 +605,7 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 				// updated sharing wraps to persist.
 				if (!ev.sharingWrapsJson) return;
 				void shareWith
-					.persistWraps(ev.sharingWrapsJson)
+					.persistWraps(ev.sharingWrapsJson, ev.sharingRegionJson)
 					.then(() => {
 						enrollUnsubRef.current?.();
 						enrollUnsubRef.current = null;

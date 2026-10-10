@@ -34,7 +34,7 @@ import {
 } from "@core/sync/mailbox";
 import { deriveRoomId } from "@core/sync/nostr";
 import { syncKeyFor } from "@core/sync/sync-keys";
-import { decodeVault, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
+import { decodeVault, type VaultBlob } from "@core/vault-format";
 import { api } from "../platform-api";
 import { extensionStorage } from "../storage";
 import {
@@ -72,7 +72,7 @@ import {
 	bytesToBase64,
 	readAndDecodeVault,
 	readVaultBytes,
-	writeVault,
+	writeVaultEntries,
 } from "./vault-io";
 import * as vekStore from "./vek-store";
 
@@ -460,7 +460,6 @@ async function readLocalState(
 // offscreen's VEK); applyRemotePayload owns the order. readLocal runs before
 // writeMerged, so the slots captured there are current.
 function makeVaultSyncPort(ctx: SyncVaultCtx): VaultSyncPort {
-	let slots: VaultBlob["slots"] = [];
 	const localizeCrypto: SyncViewCrypto = {
 		decryptWithVek: async (iv, ciphertext) => {
 			const dec = await sendToOffscreen({
@@ -471,6 +470,30 @@ function makeVaultSyncPort(ctx: SyncVaultCtx): VaultSyncPort {
 			if (!dec.ok || typeof dec.data !== "string")
 				throw new Error(dec.error ?? "outer decrypt failed");
 			return dec.data;
+		},
+		// Binary-safe DEK unwrap: decryptWithVek's UTF-8 result can't carry raw key
+		// material, and the member's localize needs exactly that to re-wrap the
+		// shared entries it adopts.
+		decryptEntryDek: async (dekIv, wrappedDek) => {
+			const dec = await sendToOffscreen({
+				type: "CRYPTO_UNWRAP_DEK",
+				vaultId: ctx.vaultId,
+				payload: { dekIv, wrappedDek },
+			});
+			if (!dec.ok || typeof dec.data !== "string")
+				throw new Error(dec.error ?? "dek unwrap failed");
+			return dec.data;
+		},
+		// The matching binary-safe wrap: seals the raw DEK bytes so decrypt_entry
+		// can open the localized envelope later.
+		wrapEntryDek: async (dekB64): Promise<{ iv: string; ciphertext: string }> => {
+			const enc = await sendToOffscreen({
+				type: "CRYPTO_WRAP_DEK",
+				vaultId: ctx.vaultId,
+				payload: { dekB64 },
+			});
+			if (!enc.ok || !enc.data) throw new Error(enc.error ?? "dek wrap failed");
+			return enc.data as { iv: string; ciphertext: string };
 		},
 		encryptWithVek: async (plaintext) => {
 			const enc = await sendToOffscreen({
@@ -484,9 +507,7 @@ function makeVaultSyncPort(ctx: SyncVaultCtx): VaultSyncPort {
 	};
 	return {
 		async readLocal() {
-			const { blob, payload } = await readLocalState(ctx);
-			slots = blob.slots;
-			return payload;
+			return (await readLocalState(ctx)).payload;
 		},
 		witnessRemote: (stamps) => witnessStamps(stamps),
 		sharingView: async () => {
@@ -504,12 +525,9 @@ function makeVaultSyncPort(ctx: SyncVaultCtx): VaultSyncPort {
 			});
 			if (!enc.ok || !enc.data) throw new Error(enc.error ?? "outer encrypt failed");
 			const { iv, ciphertext } = enc.data as { iv: string; ciphertext: string };
-			const newBlob = encodeVaultBlob({
-				slots,
-				entriesIv: base64ToBytes(iv),
-				entriesCiphertext: base64ToBytes(ciphertext),
-			});
-			await writeVault(newBlob, ctx.vaultId);
+			// Format-preserving write: a VLT2 vault keeps its sharing layer across
+			// merge writes (the sharingView path depends on it surviving).
+			await writeVaultEntries(base64ToBytes(iv), base64ToBytes(ciphertext), ctx.vaultId);
 			await broadcastVaultChanged();
 		},
 	};

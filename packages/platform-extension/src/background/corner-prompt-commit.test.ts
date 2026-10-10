@@ -35,6 +35,17 @@ vi.mock("@core/vault-format", async (importOriginal) => {
 			entriesIv: new Uint8Array(12),
 			entriesCiphertext: new Uint8Array([1]),
 		}),
+		// writeVaultEntries reads the on-disk bytes with a format-tagged decode to
+		// preserve the sharing layer; the fake store's 3 bytes aren't a real blob,
+		// so hand the helper a VLT1-shaped decode.
+		decodeVault: () => ({
+			format: "vlt1",
+			blob: {
+				slots: [{ kind: 99, payload: new Uint8Array() }],
+				entriesIv: new Uint8Array(12),
+				entriesCiphertext: new Uint8Array([1]),
+			},
+		}),
 		encodeVaultBlob: () => new Uint8Array([9, 9, 9]),
 	};
 });
@@ -228,6 +239,40 @@ describe("commit: update an existing login (password rotation)", () => {
 			{ type: "AUTOFILL_FETCH", payload: { entryId: "login1" } },
 			extensionSender,
 		);
+		expect(fetched.resp.data.password).toBe("pw1");
+	});
+});
+
+describe("commit: Save as new on the update card", () => {
+	it("adds a second login instead of rotating the single candidate", async () => {
+		const bg = await unlocked();
+		const cap = await bg.send(
+			{ type: "CORNER_PROMPT_CAPTURE", payload: { username: "bob", password: "SECOND" } },
+			pageSender("example.com", 5),
+		);
+		expect(cap.resp.data.kind).toBe("update-login");
+		expect(cap.resp.data.candidates).toHaveLength(1);
+
+		const res = await bg.send(
+			{
+				type: "CORNER_PROMPT_RESPONSE",
+				payload: { promptId: cap.resp.data.promptId, action: "save-new" },
+			},
+			pageSender("example.com", 5),
+		);
+		expect(res.resp).toEqual({ ok: true, data: null });
+		expect(bg.state.session["capture.pending.example.com"]).toBeUndefined();
+
+		const find = await bg.send(
+			{ type: "AUTOFILL_FIND", payload: { hostname: "example.com", hasLogin: true } },
+			extensionSender,
+		);
+		expect(find.resp.data.logins.map((l: any) => l.secondary).sort()).toEqual(["alice", "bob"]);
+		const fetched = await bg.send(
+			{ type: "AUTOFILL_FETCH", payload: { entryId: "login1" } },
+			extensionSender,
+		);
+		expect(fetched.resp.data.username).toBe("alice");
 		expect(fetched.resp.data.password).toBe("pw1");
 	});
 });

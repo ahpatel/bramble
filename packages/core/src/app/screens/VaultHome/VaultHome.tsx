@@ -40,6 +40,9 @@ export interface VaultListItem {
 	archived: boolean;
 	/** Lowercased tag keys, for the `#tag` filter. Rows themselves don't show tags. */
 	tagKeys?: string[];
+	/** Decrypted names of the collections this entry is shared through, when it
+	 * is shared at all. Drives the row's shared indicator. */
+	sharedVia?: string[];
 }
 
 interface VaultHomeProps {
@@ -60,6 +63,8 @@ interface VaultHomeProps {
 	onUseEntry: (id: string) => void;
 	/** The vault's tag vocabulary, for the search bar's `#` suggestions. */
 	tags: string[];
+	/** Decrypted collection names, for the search bar's `@` suggestions. */
+	collectionNames?: string[];
 	/** Home stats row: collapsed state + toggle, both persisted in prefs. */
 	statsCollapsed: boolean;
 	onToggleStats: () => void;
@@ -83,6 +88,7 @@ export function VaultHome({
 	entries,
 	onUseEntry,
 	tags,
+	collectionNames,
 	statsCollapsed,
 	onToggleStats,
 	reviewNudge,
@@ -163,6 +169,7 @@ export function VaultHome({
 				onChange={onSearchChange}
 				archivedCount={archivedCount}
 				tags={tags}
+				collectionNames={collectionNames}
 				trailing={<AddDropdown onCreate={onCreate} />}
 			/>
 
@@ -321,6 +328,7 @@ export function VaultHome({
 											leaked={item.leaked}
 											passkeys={item.passkeys}
 											copyItems={item.copyItems}
+											sharedVia={item.sharedVia}
 											onSelect={onSelectEntry}
 											onEdit={onEditEntry}
 											onDelete={onDeleteEntry}

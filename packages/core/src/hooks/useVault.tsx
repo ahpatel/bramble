@@ -17,9 +17,11 @@ import {
 	decodeVaultBlob,
 	type EncryptedEntry,
 	encodeVaultBlob,
+	findMemberPasswordSlot,
 	findPasswordSlot,
 	findRecoverySlots,
 	findWebauthnSlots,
+	type MemberPasswordSlot,
 	type PasswordSlot,
 	type RecoverySlot,
 	SLOT_KIND_WEBAUTHN,
@@ -212,6 +214,7 @@ import {
 } from "../vault/build-vault";
 import { createEntryMutations, type VaultEntries } from "../vault/entry-mutations";
 import { entryDataSchema, normalizeEntryData } from "../vault/entry-normalize";
+import { buildMemberSharingState } from "../vault/member-vault";
 import {
 	enableSharing as enableSharingLayer,
 	loadOwnerSharingState,
@@ -226,9 +229,11 @@ import {
 	adoptSharedRegion,
 	createSharingDeps,
 	grantEntry,
+	passwordConcealed,
 	SHARING_REGION_SETTING,
 	type SharingDeps,
 	type SharingState,
+	setCollectionPasswordHidden as setCollectionPasswordHiddenLayer,
 	unshareEntry,
 } from "../vault/sharing-mutations";
 import {
@@ -251,7 +256,7 @@ import {
 	type WebauthnKeyKind,
 } from "../vault/webauthn-ceremony";
 import type { SharingRegion } from "../vault-format";
-import { VLT2 } from "../vault-format";
+import { isMemberVault, VLT2 } from "../vault-format";
 import { type SyncedSettingsAccess, SyncedSettingsContext } from "./synced-settings";
 import { PER_VAULT_PREF_KEYS, PREF_ALIAS_PROVIDER } from "./usePrefs";
 import { useSyncEnrollment } from "./useSyncEnrollment";
@@ -326,6 +331,10 @@ export interface VaultActions {
 	resolveConflict(entryId: string, choice: "winner" | "other"): Promise<void>;
 	/** Remove entries from a collection without deleting them. */
 	unshareEntries(ids: string[], collectionId: string): Promise<void>;
+	/** Owner-only concealment policy for a collection: members' apps hide its
+	 * passwords from view (detail, list, export) while autofill keeps working.
+	 * Policy, not enforcement — see docs/adr/0009. */
+	setCollectionPasswordHidden(collectionId: string, hidden: boolean): Promise<void>;
 	lock(): Promise<void>;
 	/** Creates a new vault (parallel to any existing ones) and returns its initial plaintext recovery code (shown once). */
 	createVault(password: string, label?: string): Promise<string>;
@@ -343,7 +352,8 @@ export interface VaultActions {
 	 * file, unrelated to the master password. Unlike `exportVault` this re-encrypts decrypted
 	 * entries, so it only works unlocked. Rejects where the platform can't save files.
 	 */
-	exportKdbx(password: string): Promise<void>;
+	/** Returns how many concealed passwords were skipped, for the export notice. */
+	exportKdbx(password: string): Promise<number>;
 	/**
 	 * Hand the vault to another app on this device via the OS (FIDO CXP). Like `exportKdbx`
 	 * this reads decrypted entries, so it needs an unlocked vault; unlike it, nothing is
@@ -429,6 +439,8 @@ export interface VaultActions {
 		label?: string,
 		deviceName?: string,
 	): Promise<void>;
+	/** MEMBER JOIN (v2): the setup-shell join-as-family-member flow. See docs/adr/0002. */
+	startJoinMember(pairingCode: string, password: string, label?: string): Promise<void>;
 	/** Revoke a device from the sync group (roster tombstone); propagates over ongoing sync. */
 	removeDevice(deviceId: string): Promise<void>;
 	/** Rename THIS device in the sync roster. Only the owning device can rename itself (the entry
@@ -721,11 +733,21 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		// rather than failing the unlock. See docs/adr/0007.
 		try {
 			const decoded = await readTaggedBlob();
-			if (decoded.format === "vlt2") {
-				const ownerState = await loadOwnerSharingState(sharingDeps, decoded.blob);
-				setSharing(ownerState);
-			} else {
+			if (decoded.format !== "vlt2") {
 				setSharing(null);
+			} else if (isMemberVault(decoded.blob)) {
+				// Member device: the loaded key is the member master key; it decrypts
+				// the member secrets, which open the sharing key seal and the
+				// collection key seals.
+				const mmk = await crypto.exportVek();
+				setSharing(
+					await buildMemberSharingState(sharingDeps, {
+						blob: decoded.blob,
+						memberMasterKeyB64: mmk,
+					}),
+				);
+			} else {
+				setSharing(await loadOwnerSharingState(sharingDeps, decoded.blob));
 			}
 		} catch (e) {
 			console.warn("[vault] sharing layer failed to load:", e);
@@ -852,11 +874,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		async (password: string, vaultId?: string) => {
 			setError(null);
 			// Read failures collapse to one generic message; raw decoder errors leak
-			// format internals and aren't actionable for end users.
-			let slot: PasswordSlot | null;
+			// format internals and aren't actionable for end users. A member slot has
+			// the same fields; only the kind literal differs, so the union is fine.
+			let slot: PasswordSlot | MemberPasswordSlot | null;
 			try {
 				const { blob } = await readDecodedBlob();
-				slot = findPasswordSlot(blob);
+				// A member device's slot is a member slot wrapping the member master
+				// key; the unwrap path is identical. Slots never travel, so only one
+				// kind is ever present.
+				slot = findPasswordSlot(blob) ?? findMemberPasswordSlot(blob);
 			} catch (e) {
 				console.error("[vault] failed to read vault blob:", e);
 				throw new Error(t`Couldn't open this vault. The file may be missing or unreadable.`);
@@ -966,7 +992,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			for (const id of ids) {
 				const envelope = byId.get(id);
 				if (!envelope) throw new Error(`Entry not found: ${id}`);
-				const dekB64 = await crypto.decryptWithVek(envelope.dekIv, envelope.wrappedDek);
+				// Binary-safe unwrap: decryptWithVek returns a UTF-8 string and the
+				// DEK is random bytes (the wasm path fails with a utf8 error there).
+				const dekB64 = await crypto.decryptEntryDek(envelope.dekIv, envelope.wrappedDek);
 				state = await grantEntry(sharingDeps, state, { entryId: id, collectionId, dekB64 });
 			}
 			const bytes = await persistOwnerSharingState(sharingDeps, state, blob);
@@ -994,6 +1022,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			await stampRegionRef.current?.(state);
 		},
 		[sharingDeps, readDecodedBlob, storage],
+	);
+
+	const setCollectionPasswordHidden = useCallback(
+		async (collectionId: string, hidden: boolean): Promise<void> => {
+			await runSharingTransition((deps, state) =>
+				setCollectionPasswordHiddenLayer(deps, state, collectionId, hidden),
+			);
+		},
+		[runSharingTransition],
 	);
 
 	/** Run a get() assertion over the given slots, returning the PRF secret. */
@@ -1216,6 +1253,29 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
 	/** Download an encrypted backup of the vault as a `.bramble` file (the encrypted VLT1
 	 * blob, so it is safe at rest and still needs the master password to open). */
+	// Hide-password policy (docs/adr/0009): a member's plaintext exports (KDBX,
+	// OS transfer) omit the password and its changelog for concealed entries and
+	// report how many were skipped. The encrypted .bramble backup needs no
+	// scrubbing — the policy flag travels inside it, so a restored copy keeps
+	// the same concealment. The fill path in a browser is intentionally
+	// unaffected: this is a courtesy for the vault UI, not a lock.
+	const scrubForExport = useCallback(
+		(source: readonly Entry[]): { entries: Entry[]; hiddenCount: number } => {
+			let hiddenCount = 0;
+			const out = source.map((entry) => {
+				if (!passwordConcealed(sharingRef.current, entry.id)) return entry;
+				hiddenCount += 1;
+				const { password, passwordChangelog, ...rest } = entry as typeof entry & {
+					password?: string;
+					passwordChangelog?: { changedAt: number; value: string }[];
+				};
+				return rest as Entry;
+			});
+			return { entries: out, hiddenCount };
+		},
+		[],
+	);
+
 	const exportVault = useCallback(async () => {
 		if (!shell.exportBytes) throw new Error(t`Export isn't available here.`);
 		const bytes = await storage.readVaultBlob();
@@ -1231,8 +1291,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			if (!shell.exportBytes) throw new Error(t`Export isn't available here.`);
 			if (!crypto.saveKdbx) throw new Error(t`KDBX export isn't available here.`);
 			if (!password) throw new Error(t`Choose a password for the exported file.`);
+			const { entries: exportEntries, hiddenCount } = scrubForExport(latestRef.current.entries);
 			const b64 = await crypto.saveKdbx({
-				entries: toKdbxEntries(latestRef.current.entries),
+				entries: toKdbxEntries(exportEntries),
 				password,
 			});
 			const stamp = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -1241,16 +1302,23 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 				base64ToBytes(b64),
 				"application/octet-stream",
 			);
+			// The caller surfaces how many concealed passwords were left out.
+			return hiddenCount;
 		},
-		[shell, crypto, t],
+		[shell, crypto, t, scrubForExport],
 	);
 
 	/** Send the decrypted entries to another app through the OS. The payload is built inside
 	 * the callback, which the adapter runs only after the user has picked a destination. */
 	const exportToApp = useCallback(async () => {
 		if (!exchange) throw new Error(t`Transferring to another app isn't available here.`);
-		return exportToOs(exchange, latestRef.current.entries, shell.appName);
-	}, [exchange, shell.appName, t]);
+		const { entries: exportEntries, hiddenCount } = scrubForExport(latestRef.current.entries);
+		const warnings = await exportToOs(exchange, exportEntries, shell.appName);
+		if (hiddenCount > 0) {
+			warnings.push(t`${hiddenCount} password(s) hidden by the owner weren't included.`);
+		}
+		return warnings;
+	}, [exchange, shell.appName, t, scrubForExport]);
 
 	/** Re-encrypt all entries with their stamps plus the tombstone list, and write
 	 * a new blob; the slot list is unchanged. Stamps come from the caller so a
@@ -1705,16 +1773,23 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
 	// Device enrollment lives in its own hook; it consumes the shared clock, blob
 	// read, unlock, and entries-payload read from here.
-	const { inviteDevice, inviteMember, joinGroup, removeDevice, renameSelf, ensureOwnEntrySigned } =
-		useSyncEnrollment({
-			storage,
-			syncKey,
-			ensureClock,
-			rotateDeviceId,
-			readDecodedBlob,
-			unlock,
-			readEntriesPayload: mutations.readEntriesPayload,
-		});
+	const {
+		inviteDevice,
+		inviteMember,
+		joinGroup,
+		joinAsMember,
+		removeDevice,
+		renameSelf,
+		ensureOwnEntrySigned,
+	} = useSyncEnrollment({
+		storage,
+		syncKey,
+		ensureClock,
+		rotateDeviceId,
+		readDecodedBlob,
+		unlock,
+		readEntriesPayload: mutations.readEntriesPayload,
+	});
 
 	// Phase-1 migration: a device enrolled before roster signing existed carries an unsigned entry
 	// that nothing else ever re-signs, and the phase-2 flip would drop its updates. Back it off one
@@ -1749,6 +1824,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		targetId: string;
 		/** Roster label for the joining device (see joinGroup); undefined uses the auto label. */
 		deviceName?: string;
+		/** "member" joins the group as a family member (own password, seals). */
+		kind?: "member";
 	} | null>(null);
 	const [joinError, setJoinError] = useState<string | null>(null);
 	const joinResolverRef = useRef<{ resolve: () => void; reject: (e: unknown) => void } | null>(
@@ -1802,6 +1879,45 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		[vaults, storage, createRecord, shell, selectVault],
 	);
 
+	/** Join a group as a FAMILY MEMBER (v2): same deferred-vault dance as startJoin,
+	 * but the deferred step calls joinAsMember — the joiner keeps its own password and
+	 * the bundle carries seals, not the vault key. See docs/adr/0002. */
+	const startJoinMember = useCallback(
+		(pairingCode: string, password: string, label?: string): Promise<void> => {
+			if (joinInFlightRef.current) return joinInFlightRef.current;
+			const run = (async () => {
+				setJoinError(null);
+				const code = decodePairingCode(pairingCode.trim());
+				for (const v of vaults) {
+					const g = await storage.getMeta<{ groupKey?: string }>(syncKeyFor("sync.group", v.id));
+					if (g?.groupKey === code.groupKey) {
+						selectVault(v.id);
+						return;
+					}
+				}
+				const newId = await createRecord(label);
+				await shell.setActiveVault?.(newId);
+				return new Promise<void>((resolve, reject) => {
+					joinResolverRef.current = { resolve, reject };
+					setPendingJoin({
+						code: pairingCode,
+						method: { kind: "password", password },
+						targetId: newId,
+						kind: "member",
+					});
+				});
+			})();
+			joinInFlightRef.current = run;
+			void run
+				.catch(() => {})
+				.finally(() => {
+					joinInFlightRef.current = null;
+				});
+			return run;
+		},
+		[vaults, storage, createRecord, shell, selectVault],
+	);
+
 	// Run the deferred join once the new vault is active (joinGroup is now scoped to it). One-shot.
 	useEffect(() => {
 		if (
@@ -1815,7 +1931,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		const { code, method, deviceName } = pendingJoin;
 		void (async () => {
 			try {
-				await joinGroup(code, method, deviceName); // writes + unlocks the new active vault
+				if (pendingJoin.kind === "member") {
+					await joinAsMember(code, method.password); // writes + unlocks the new active vault
+				} else {
+					await joinGroup(code, method, deviceName); // writes + unlocks the new active vault
+				}
 				setHasVault(true);
 				setPendingJoin(null);
 				joinResolverRef.current?.resolve();
@@ -1829,7 +1949,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 				joinResolverRef.current = null;
 			}
 		})();
-	}, [pendingJoin, activeId, registryReady, joinGroup, dropActiveRecord]);
+	}, [pendingJoin, activeId, registryReady, joinGroup, joinAsMember, dropActiveRecord]);
 
 	const hasWebauthnSlot = webauthnSlots.length > 0;
 	const webauthnKeys = useMemo<WebauthnKeyMeta[]>(
@@ -1965,6 +2085,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			runSharingTransition,
 			shareEntries,
 			unshareEntries,
+			setCollectionPasswordHidden,
 			resolveConflict: (entryId, choice) =>
 				resolveConflictRef.current?.(entryId, choice) ?? Promise.resolve(),
 			createVault,
@@ -2000,6 +2121,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			inviteMember,
 			joinGroup,
 			startJoin,
+			startJoinMember,
 			removeDevice,
 			renameSelf,
 		}),
@@ -2039,12 +2161,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			inviteMember,
 			joinGroup,
 			startJoin,
+			startJoinMember,
 			removeDevice,
 			renameSelf,
 			enableSharing,
 			runSharingTransition,
 			shareEntries,
 			unshareEntries,
+			setCollectionPasswordHidden,
 		],
 	);
 

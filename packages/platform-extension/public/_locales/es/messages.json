@@ -143,6 +143,10 @@
 		"message": "Generar una contraseña diferente",
 		"description": "Accessible label for the regenerate button on the suggested-password row."
 	},
+	"pickerUseKeyboard": {
+		"message": "Pulse ↓ y Enter para rellenar en esta página",
+		"description": "Shown in the autofill dropdown when a click was refused because the browser could not confirm the list is fully visible (something on the page covers or filters it). The arrow-key and Enter path still works."
+	},
 	"aliasUse": {
 		"message": "Usar un nuevo alias de correo electrónico",
 		"description": "Sub-text on the email-alias row in the autofill dropdown; the row creates a fresh forwarding address at the user's alias provider and fills it into a signup form."
@@ -165,5 +169,20 @@
 	},
 	"cardUsedHere": {
 		"message": "Usada aquí"
+	},
+	"passkeyNoneTitle": {
+		"message": "No hay clave de acceso de Bramble para este sitio"
+	},
+	"passkeyNoneNotePassthrough": {
+		"message": "Bramble no tiene ninguna clave de acceso guardada para este sitio. Continúa con otro método de inicio de sesión y la solicitud se pasará a los demás autenticadores de tu dispositivo."
+	},
+	"passkeyNoneNoteDisable": {
+		"message": "Bramble no tiene ninguna clave de acceso guardada para este sitio. Continúa con otro método de inicio de sesión y se desactivará «Usar Bramble para claves de acceso» para que tus demás autenticadores puedan atender la solicitud. Vuelve a intentarlo después."
+	},
+	"passkeyUseOther": {
+		"message": "Usar otro autenticador"
+	},
+	"passkeyDeclineNoteDisable": {
+		"message": "Al rechazar, esta solicitud se pasa a los demás autenticadores de tu dispositivo y se desactiva «Usar Bramble para claves de acceso», de modo que el siguiente intento del sitio los utilice. Reactívala en Ajustes cuando quieras volver a Bramble."
 	}
 }

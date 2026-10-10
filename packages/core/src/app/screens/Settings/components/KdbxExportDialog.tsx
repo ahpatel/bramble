@@ -1,6 +1,7 @@
-import { Trans } from "@lingui/react/macro";
+import { Trans, useLingui } from "@lingui/react/macro";
 import { useVault } from "../../../../hooks/useVault";
 import { FilePasswordDialog } from "../../../components/ui/file-password-dialog";
+import { useToast } from "../../../components/ui/toast";
 
 /**
  * Collects the password for a whole-vault KeePass export. The file is meant to be opened by
@@ -11,6 +12,8 @@ import { FilePasswordDialog } from "../../../components/ui/file-password-dialog"
  */
 export function KdbxExportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
 	const { exportKdbx } = useVault();
+	const { t } = useLingui();
+	const { show } = useToast();
 
 	return (
 		<FilePasswordDialog
@@ -25,7 +28,17 @@ export function KdbxExportDialog({ open, onClose }: { open: boolean; onClose: ()
 			}
 			submitLabel={<Trans>Export</Trans>}
 			busyLabel={<Trans>Exporting…</Trans>}
-			onSubmit={exportKdbx}
+			onSubmit={async (password) => {
+				const hidden = await exportKdbx(password);
+				// Hide-password policy (docs/adr/0009): concealed passwords were left
+				// out of the file. Say so, rather than letting the omission be a surprise.
+				if (hidden > 0) {
+					show({
+						message: t`${hidden} password(s) hidden by the owner weren't included.`,
+						variant: "info",
+					});
+				}
+			}}
 		/>
 	);
 }

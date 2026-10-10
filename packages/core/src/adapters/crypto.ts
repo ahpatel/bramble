@@ -161,6 +161,14 @@ export interface CryptoAdapter {
 	decryptEntries(payloads: EncryptedPayload[]): Promise<string[]>;
 	encryptWithVek(plaintext: string): Promise<VekEncrypted>;
 	decryptWithVek(iv: string, ciphertext: string): Promise<string>;
+	/** Unwrap a per-entry DEK with the loaded key. Binary-safe: the DEK is random
+	 * bytes, so the text-returning decryptWithVek cannot carry it (the wasm's UTF-8
+	 * coercion fails on raw key material). Returns the DEK as base64. */
+	decryptEntryDek(dekIv: string, wrappedDek: string): Promise<string>;
+	/** Wrap a per-entry DEK under the loaded key (the inverse of decryptEntryDek).
+	 * Seals the raw bytes of the base64 DEK, matching the entry format. Same
+	 * {iv, ciphertext} shape as encryptWithVek. */
+	wrapEntryDek(dekB64: string): Promise<{ iv: string; ciphertext: string }>;
 
 	// Passkey provider (authenticator role). Pure crypto: mint generates the key,
 	// assert signs with the stored private key. Neither needs the VEK loaded; the

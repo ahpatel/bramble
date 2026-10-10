@@ -24,6 +24,9 @@ interface VaultSetupProps {
 	 * adding). Resolves when the join completes; the parent drives the terminal screen. Absent
 	 * (no join tab) where per-vault sync isn't supported (mobile, for now). */
 	onJoin?: (pairingCode: string, unlock: JoinUnlock, deviceName?: string) => Promise<void>;
+	/** MEMBER JOIN (v2): join as a family member with the joiner's own password. Absent
+	 * where member join isn't supported; when present the join card offers the choice. */
+	onJoinMember?: (pairingCode: string, password: string) => Promise<void>;
 	/** A setup-flow join is running (new vault created, pairing into it): show the connecting state. */
 	joining?: boolean;
 	/** The last join failure, surfaced in the join form. */
@@ -55,6 +58,7 @@ export function VaultSetup({
 	onModeChange,
 	onCreate,
 	onJoin,
+	onJoinMember,
 	joining,
 	joinError,
 	joinSas,
@@ -158,7 +162,13 @@ export function VaultSetup({
 				{effectiveMode === "restore" && onRestore ? (
 					<RestoreShell embedded onRestored={onRestore} />
 				) : effectiveMode === "join" && onJoin ? (
-					<JoinCard onJoin={onJoin} busy={!!joining} error={joinError ?? null} mobile={mobile} />
+					<JoinCard
+						onJoin={onJoin}
+						onJoinMember={onJoinMember}
+						busy={!!joining}
+						error={joinError ?? null}
+						mobile={mobile}
+					/>
 				) : (
 					<PasswordCard
 						form={form}

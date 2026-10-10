@@ -2,10 +2,13 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import { AlertTriangle, Archive, ArchiveRestore, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePlatform } from "../../../context/PlatformContext";
-import type { Entry } from "../../../hooks/useVault";
+import { useCollectionLabels } from "../../../hooks/useCollectionLabels";
+import { type Entry, useVault } from "../../../hooks/useVault";
 import { formatDateTime } from "../../../util/format-date";
+import { passwordConcealed } from "../../../vault/sharing-mutations";
 import { Button } from "../../components/ui/button";
 import { getEntryMode } from "../../entry-modes";
+import { CollectionsDetail } from "../../entry-modes/collections";
 import { CustomFieldsDetail } from "../../entry-modes/custom-fields";
 import { TagsDetail } from "../../entry-modes/tags";
 
@@ -19,6 +22,8 @@ interface EntryDetailProps {
 	onSelectTag: (tag: string) => void;
 	/** Called after a successful field copy, to record the entry as recently used. */
 	onUse?: () => void;
+	/** Filter the vault list to a collection the entry is shared through. */
+	onSelectCollection: (name: string) => void;
 }
 
 /** Shared chrome for viewing any entry (banner, header, delete/edit footer); the mode supplies the fields. */
@@ -28,6 +33,7 @@ export function EntryDetail({
 	onDelete,
 	onSetArchived,
 	onSelectTag,
+	onSelectCollection,
 	onUse,
 }: EntryDetailProps) {
 	const { clipboard } = usePlatform();
@@ -40,6 +46,17 @@ export function EntryDetail({
 
 	const mode = getEntryMode(entry.type);
 	const { icon: Icon, initials } = mode.row(entry);
+	// Hide-password policy (docs/adr/0009): a member whose granting collections
+	// all conceal keeps the password out of view here — autofill still works.
+	const { sharing } = useVault();
+	const passwordHidden = passwordConcealed(sharing, entry.id);
+	const member = sharing?.performer.role === "member";
+	const collectionLabels = useCollectionLabels(sharing);
+	const sharedCollections = (sharing?.region.wrappers ?? [])
+		.filter((w) => w.entryId === entry.id)
+		.map((w) => w.collectionId)
+		.map((id) => collectionLabels[id])
+		.filter((name) => name !== undefined);
 	const subtitle = mode.detailSubtitle?.(entry);
 	const alert = mode.detailAlert?.(entry) ?? null;
 	const Detail = mode.Detail;
@@ -166,7 +183,7 @@ export function EntryDetail({
 						</div>
 					</div>
 
-					<Detail entry={entry} copied={copied} copy={copy} />
+					<Detail entry={entry} copied={copied} copy={copy} passwordConcealed={passwordHidden} />
 
 					{entry.customFields && entry.customFields.length > 0 && (
 						<CustomFieldsDetail fields={entry.customFields} copied={copied} copy={copy} />
@@ -174,6 +191,15 @@ export function EntryDetail({
 
 					{entry.tags && entry.tags.length > 0 && (
 						<TagsDetail tags={entry.tags} onSelect={onSelectTag} />
+					)}
+
+					{sharedCollections.length > 0 && (
+						<div className="space-y-1.5">
+							<p className="text-xs text-muted-foreground">
+								{member ? <Trans>Shared with you</Trans> : <Trans>Shared in</Trans>}
+							</p>
+							<CollectionsDetail collections={sharedCollections} onSelect={onSelectCollection} />
+						</div>
 					)}
 				</div>
 

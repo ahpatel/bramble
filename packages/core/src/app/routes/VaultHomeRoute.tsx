@@ -3,8 +3,10 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePlatform } from "../../context/PlatformContext";
+import { useCollectionLabels } from "../../hooks/useCollectionLabels";
 import { usePrefs } from "../../hooks/usePrefs";
 import { isLogin, useVault } from "../../hooks/useVault";
+import { passwordConcealed } from "../../vault/sharing-mutations";
 import { allTags } from "../../vault/tags";
 import { ReviewNudgeCard } from "../components/ReviewNudgeCard";
 import { useReviewNudge } from "../hooks/useReviewNudge";
@@ -26,7 +28,8 @@ export function VaultHomeRoute() {
 		}),
 		[raw.q, raw.type, raw.sort, raw.archived],
 	);
-	const { entries, ready, deleteEntry, touchEntry, conflictEntryIds, resolveConflict } = useVault();
+	const { entries, ready, deleteEntry, touchEntry, conflictEntryIds, resolveConflict, sharing } =
+		useVault();
 	const { shell } = usePlatform();
 	const { prefs, update } = usePrefs();
 	// Hide stored breach flags when breach checking is off.
@@ -66,15 +69,41 @@ export function VaultHomeRoute() {
 	// is still one this person put there, which is all the signal is measuring.
 	const reviewNudge = useReviewNudge(entries.length);
 
+	// Decrypted collection labels, one cache for every row and chip.
+	const labels = useCollectionLabels(sharing);
+
 	// The vault's tag vocabulary, for the search bar's `#` suggestions. Taken from ALL
 	// entries, archived included: an archived entry is still tagged, and the archive view
 	// shares the same search box.
 	const tags = useMemo(() => allTags(entries), [entries]);
 
-	// Project each entry into a list row via its mode descriptor (type-agnostic).
+	// The collection vocabulary for `@` suggestions: every collection's decrypted
+	// name, from the sharing region (not from entries — an empty collection is
+	// still a valid filter target).
+	const collectionNames = useMemo(() => {
+		const names = Object.values(labels);
+		return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+	}, [labels]);
+
+	// Project each entry into a list row via its mode descriptor (type-agnostic),
+	// plus the sharing facts the row itself shows: whether a shared-indicator
+	// applies (the collections it grants, by label) and whether the hide-password
+	// policy removes the password from the copy menu.
 	const items = useMemo<VaultListItem[]>(
-		() => entries.map((entry) => toListItem(entry, showBreaches)),
-		[entries, showBreaches],
+		() =>
+			entries.map((entry) => {
+				const via = (sharing?.region.wrappers ?? [])
+					.filter((w) => w.entryId === entry.id)
+					.map((w) => labels[w.collectionId])
+					.filter((label) => label !== undefined);
+				const collectionLabels = via.map((label) => label.toLowerCase());
+				return {
+					...toListItem(entry, showBreaches, passwordConcealed(sharing, entry.id)),
+					sharedVia: via.length > 0 ? via : undefined,
+					collectionLabels: collectionLabels.length > 0 ? collectionLabels : undefined,
+				};
+			}),
+		[entries, showBreaches, sharing, labels],
 	);
 
 	// replace: typing shouldn't stack history entries.
@@ -109,6 +138,7 @@ export function VaultHomeRoute() {
 			items={items}
 			search={search}
 			onSearchChange={onSearchChange}
+			collectionNames={collectionNames}
 			matchedIds={matchedIds}
 			onCreate={(type) => navigate({ to: "/vault/new/$type", params: { type } })}
 			onSelectEntry={onSelectEntry}

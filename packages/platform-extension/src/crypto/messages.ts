@@ -65,6 +65,19 @@ export const CryptoDecryptIndexResultSchema = z.array(
 	z.object({ id: z.string(), plaintext: z.string().nullable() }),
 );
 export const CryptoEncryptOuterSchema = z.object({ plaintext: z.string(), ...vekInject });
+export const CryptoUnwrapDekSchema = z.object({
+	wrappedDek: z.string(),
+	dekIv: z.string(),
+	...vekInject,
+});
+export type CryptoUnwrapDek = z.infer<typeof CryptoUnwrapDekSchema>;
+
+export const CryptoWrapDekSchema = z.object({
+	dekB64: z.string(),
+	...vekInject,
+});
+export type CryptoWrapDek = z.infer<typeof CryptoWrapDekSchema>;
+
 export const CryptoDecryptOuterSchema = z.object({
 	iv: z.string(),
 	ciphertext: z.string(),

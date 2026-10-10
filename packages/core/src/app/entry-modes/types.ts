@@ -15,6 +15,10 @@ export interface EntryDetailBodyProps {
 	// Label of the most recently copied field, or null.
 	copied: string | null;
 	copy: (label: string, value: string) => void;
+	/** Hide-password policy (docs/adr/0009): the member view conceals the
+	 * password field, its reveal/copy actions and the password changelog.
+	 * Autofill and TOTP are unaffected. The owner never conceals. */
+	passwordConcealed?: boolean;
 }
 
 /** One entry in the row's copy menu. `value` may be a thunk, resolved on click: the projection is
@@ -22,6 +26,10 @@ export interface EntryDetailBodyProps {
 export interface CopyItem {
 	label: string;
 	value: string | (() => string);
+	/** Marks sensitive classes the sharing layer may need to filter: the
+	 * password copy is dropped from list rows for entries whose collection
+	 * carries the hide-password policy. See docs/adr/0009. */
+	kind?: "password";
 }
 
 /** How a mode projects an entry into a vault-list row, keeping the list type-agnostic. */

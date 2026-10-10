@@ -142,6 +142,34 @@ describe("handleCreate", () => {
 		expect(d.crypto.passkeyMakeCredential).not.toHaveBeenCalled();
 	});
 
+	it("carries the ceremony's decline detail into the site's DOMException message", async () => {
+		const d = deps({
+			ceremony: vi.fn(async () => ({
+				approved: false,
+				detail: "a site-visible reason",
+			})) as unknown as CeremonyFn,
+		});
+		const res = await handleCreate(d, 1, createJson(), "https://github.com");
+		expect(res.error).toEqual({ name: "NotAllowedError", message: "a site-visible reason" });
+	});
+
+	it("maps the native-fallback decision to a flagged NotAllowedError completion", async () => {
+		const d = deps({
+			ceremony: vi.fn(async () => ({
+				approved: false,
+				nativeFallback: true,
+			})) as unknown as CeremonyFn,
+		});
+		const res = await handleCreate(d, 1, createJson(), "https://github.com");
+		expect(res.error?.name).toBe("NotAllowedError");
+		expect(res.error?.message).toBe(
+			"No Bramble passkey can serve this request. Continue with another authenticator.",
+		);
+		expect(res.nativeFallback).toBe(true);
+		expect(d.crypto.passkeyMakeCredential).not.toHaveBeenCalled();
+		expect(d.savePlacement).not.toHaveBeenCalled();
+	});
+
 	it("attaches to the login the ceremony picked", async () => {
 		const d = deps({
 			loadEntries: vi.fn(async () => githubEntries),
@@ -239,6 +267,19 @@ describe("handleGet", () => {
 		expect(res.error?.name).toBe("NotAllowedError");
 	});
 
+	it("maps the native-fallback decision to a flagged completion, never a cold dead end", async () => {
+		const d = deps({
+			ceremony: vi.fn(async () => ({
+				approved: false,
+				nativeFallback: true,
+			})) as unknown as CeremonyFn,
+		});
+		const res = await handleGet(d, 1, getJson(), "https://github.com");
+		expect(res.nativeFallback).toBe(true);
+		expect(res.error?.name).toBe("NotAllowedError");
+		expect(d.crypto.passkeyGetAssertion).not.toHaveBeenCalled();
+	});
+
 	it("rejects a cross-origin rpId with SecurityError", async () => {
 		const res = await handleGet(deps(), 1, getJson(), "https://evil.com");
 		expect(res.error?.name).toBe("SecurityError");
@@ -263,13 +304,17 @@ describe("runCreateCeremony", () => {
 		unlockOk?: boolean;
 		entries?: Entry[];
 		replies?: CardReply[];
+		nativeFallback?: "silent" | "card";
+		unlockNeedsWebauthn?: () => Promise<boolean>;
 	}) {
-		const cards: { existingLoginName?: string; candidates?: { id: string }[] }[] = [];
+		const cards: Parameters<CeremonyHost["showCard"]>[0][] = [];
 		let i = 0;
 		const h: CeremonyHost = {
 			isLocked: () => opts.locked ?? false,
 			ensureUnlocked: async () => opts.unlockOk ?? true,
 			loadEntries: async () => opts.entries ?? [],
+			nativeFallback: opts.nativeFallback,
+			...(opts.unlockNeedsWebauthn ? { unlockNeedsWebauthn: opts.unlockNeedsWebauthn } : {}),
 			showCard: async (o) => {
 				cards.push(o);
 				return opts.replies?.[i++] ?? { approved: true };
@@ -335,13 +380,14 @@ describe("runCreateCeremony", () => {
 		const unlock = vi.fn(async () => true);
 		const { h } = host({ locked: true, replies: [{ approved: false }] });
 		h.ensureUnlocked = unlock;
-		expect(await runCreateCeremony(req, h)).toEqual({ approved: false });
+		// A refusal is the handoff ("Bramble, step aside"), never a bare decline.
+		expect(await runCreateCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
 		expect(unlock).not.toHaveBeenCalled();
 	});
 
 	it("failed unlock aborts", async () => {
 		const { h } = host({ locked: true, unlockOk: false });
-		expect(await runCreateCeremony(req, h)).toEqual({ approved: false });
+		expect(await runCreateCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
 	});
 
 	it("declining the picker aborts", async () => {
@@ -349,7 +395,52 @@ describe("runCreateCeremony", () => {
 		const { h } = host({ entries: five, replies: [{ approved: false }] });
 		expect(await runCreateCeremony({ ...req, userName: "nomatch" }, h)).toEqual({
 			approved: false,
+			nativeFallback: true,
 		});
+	});
+
+	it("the native handoff on the generic card aborts into the fallback decision", async () => {
+		const { h, cards } = host({
+			entries: [],
+			nativeFallback: "card",
+			replies: [{ approved: false, choice: "native" }],
+		});
+		expect(await runCreateCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
+		expect(cards[0]?.nativeFallback).toBe("disable"); // Chrome: the card must say what happens
+	});
+
+	it("the native handoff is offered on the picker too", async () => {
+		const five = ["a", "b", "c", "d", "e"].map((u, i) => ghLogin(`gh-${i}`, u));
+		const { h, cards } = host({
+			entries: five,
+			nativeFallback: "card",
+			replies: [{ approved: false, choice: "native" }],
+		});
+		expect(await runCreateCeremony({ ...req, userName: "nomatch" }, h)).toEqual({
+			approved: false,
+			nativeFallback: true,
+		});
+		expect(cards[0]?.candidates).toHaveLength(5);
+	});
+
+	it("the native handoff labels itself passthrough where the delivery can relay", async () => {
+		const { h, cards } = host({
+			entries: [],
+			nativeFallback: "silent",
+			replies: [{ approved: false, choice: "native" }],
+		});
+		expect(await runCreateCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
+		expect(cards[0]?.nativeFallback).toBe("passthrough"); // Firefox: relays, no state change
+	});
+
+	it("a locked vault that needs a WebAuthn tap fails early with guidance", async () => {
+		const { h, cards } = host({
+			locked: true,
+			unlockNeedsWebauthn: async () => true,
+		});
+		const d = await runCreateCeremony(req, h);
+		expect(d).toMatchObject({ approved: false, detail: expect.stringContaining("security key") });
+		expect(cards).toHaveLength(0); // no card, no unlock popup: never walk into the abort
 	});
 });
 
@@ -383,13 +474,17 @@ describe("runGetCeremony", () => {
 		unlockOk?: boolean;
 		entries?: Entry[];
 		replies?: CardReply[];
+		nativeFallback?: "silent" | "card";
+		unlockNeedsWebauthn?: () => Promise<boolean>;
 	}) {
-		const cards: { passkeyChoices?: { credentialId: string; label: string }[] }[] = [];
+		const cards: Parameters<CeremonyHost["showCard"]>[0][] = [];
 		let i = 0;
 		const h: CeremonyHost = {
 			isLocked: () => opts.locked ?? false,
 			ensureUnlocked: async () => opts.unlockOk ?? true,
 			loadEntries: async () => opts.entries ?? [],
+			nativeFallback: opts.nativeFallback,
+			...(opts.unlockNeedsWebauthn ? { unlockNeedsWebauthn: opts.unlockNeedsWebauthn } : {}),
 			showCard: async (o) => {
 				cards.push(o);
 				return opts.replies?.[i++] ?? { approved: true };
@@ -405,13 +500,26 @@ describe("runGetCeremony", () => {
 		expect(cards[0]?.passkeyChoices?.map((c) => c.label)).toEqual(["octocat"]); // account shown
 	});
 
-	it("no match -> approved with no credentialId (handleGet maps to NotAllowedError)", async () => {
-		const { h } = host({ entries: [] });
-		expect(await runGetCeremony(req, h)).toEqual({
-			approved: true,
-			userVerified: true,
-			credentialId: undefined,
+	it("no match, silent handoff -> native fallback with no card (Firefox behaves as if not installed)", async () => {
+		const { h, cards } = host({ entries: [], nativeFallback: "silent" });
+		expect(await runGetCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
+		expect(cards).toHaveLength(0);
+	});
+
+	it("no match, card handoff -> 'no Bramble passkey' card; the native action opts into the handoff", async () => {
+		const { h, cards } = host({
+			entries: [],
+			nativeFallback: "card",
+			replies: [{ approved: false, choice: "native" }],
 		});
+		expect(await runGetCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
+		expect(cards[0]?.noMatch).toBe(true);
+		expect(cards[0]?.nativeFallback).toBe("disable");
+	});
+
+	it("no match, card dismissed ('Not now' / x) -> the handoff, exactly like the primary", async () => {
+		const { h } = host({ entries: [], nativeFallback: "card", replies: [{ approved: false }] });
+		expect(await runGetCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
 	});
 
 	it("multiple matches -> picker; chosen credentialId returned", async () => {
@@ -425,7 +533,7 @@ describe("runGetCeremony", () => {
 	it("declining the picker aborts", async () => {
 		const entries = [pk("AAA", "octocat"), pk("BBB", "octocat2")];
 		const { h } = host({ entries, replies: [{ approved: false }] });
-		expect(await runGetCeremony(req, h)).toEqual({ approved: false });
+		expect(await runGetCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
 	});
 
 	it("locked -> confirm + unlock then picker for multiple", async () => {
@@ -440,12 +548,33 @@ describe("runGetCeremony", () => {
 		expect(d).toMatchObject({ credentialId: "AAA" });
 	});
 
-	it("decline first card / failed unlock -> aborted", async () => {
+	it("declining the no-match card / failing the unlock -> aborted with the reason", async () => {
+		// Unlocked, empty vault: the reply lands on the no-match card.
 		expect(await runGetCeremony(req, host({ replies: [{ approved: false }] }).h)).toEqual({
 			approved: false,
+			nativeFallback: true,
 		});
+		// Locked: the reply is the unlock-confirm; the unlock itself then fails.
 		expect(await runGetCeremony(req, host({ locked: true, unlockOk: false }).h)).toEqual({
 			approved: false,
+			nativeFallback: true,
 		});
+	});
+
+	it("a locked vault that needs a WebAuthn tap fails early with guidance, before any card", async () => {
+		const { h, cards } = host({ locked: true, unlockNeedsWebauthn: async () => true });
+		const d = await runGetCeremony(req, h);
+		expect(d).toMatchObject({ approved: false, detail: expect.stringContaining("security key") });
+		expect(cards).toHaveLength(0);
+	});
+
+	it("the locked card also offers the native handoff (a YubiKey user need not unlock first)", async () => {
+		const { h, cards } = host({
+			locked: true,
+			nativeFallback: "card",
+			replies: [{ approved: false, choice: "native" }],
+		});
+		expect(await runGetCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
+		expect(cards[0]?.nativeFallback).toBe("disable");
 	});
 });

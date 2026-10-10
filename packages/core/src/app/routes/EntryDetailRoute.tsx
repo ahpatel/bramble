@@ -53,6 +53,8 @@ export function EntryDetailRoute() {
 				// The tag filter lives in `q`, so picking a tag is just a search: one source of
 				// truth, and the resulting URL is the same one typing `#tag` would produce.
 				onSelectTag={(tag) => navigate({ to: "/vault", search: { q: `#${tag}` } })}
+				// Same for the `@collection` filter: the chip is just a search shortcut.
+				onSelectCollection={(name) => navigate({ to: "/vault", search: { q: `@${name}` } })}
 				onUse={() => void touchEntry(entryId)}
 			/>
 		</div>

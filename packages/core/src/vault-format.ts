@@ -372,6 +372,13 @@ const RegionCollectionSchema = z.object({
 	labelCiphertext: z.string(),
 	memberIds: z.array(z.string().min(1)),
 	keyWraps: z.array(RegionKeyWrapSchema),
+	/** Owner's concealment policy: members' Bramble apps keep this collection's
+	 * passwords out of view (detail, list, export) while autofill keeps working.
+	 * POLICY, NOT ENFORCEMENT — the member's device necessarily holds the secrets
+	 * autofill requires, so this hides from casual view; the copy says so. Older
+	 * clients strip the field silently, so concealment holds only on updated
+	 * members. See docs/adr/0009. */
+	hidePassword: z.literal(true).optional(),
 });
 export type RegionCollection = z.infer<typeof RegionCollectionSchema>;
 

@@ -7,6 +7,7 @@ import {
 	type LucideIcon,
 	Search,
 	Tag,
+	Users,
 } from "lucide-react";
 import {
 	type KeyboardEvent,
@@ -22,9 +23,11 @@ import { Button } from "../../components/ui/button";
 import { ScrollEdgeFades, useScrollEdges } from "../../components/ui/scroll-edges";
 import { TextField } from "../../components/ui/text-field";
 import {
+	completeCollectionFragment,
 	completeTagFragment,
 	type SortKey,
 	type TypeFilter,
+	trailingCollectionFragment,
 	trailingTagFragment,
 	type VaultSearch,
 } from "./vault-search";
@@ -41,6 +44,8 @@ interface VaultSearchBarProps {
 	archivedCount: number;
 	/** The vault's tag vocabulary, offered while the user is typing a `#` token. */
 	tags: string[];
+	/** Decrypted collection names, for the `@` suggestions (same pattern as tags). */
+	collectionNames?: string[];
 	/** Rendered to the right of the search input (the add-entry control). */
 	trailing?: ReactNode;
 }
@@ -101,6 +106,7 @@ export function VaultSearchBar({
 	onChange,
 	archivedCount,
 	tags,
+	collectionNames,
 	trailing,
 }: VaultSearchBarProps) {
 	const { t } = useLingui();
@@ -151,7 +157,22 @@ export function VaultSearchBar({
 			fragment === null ? [] : tags.filter((tag) => tagKey(tag).startsWith(fragment)).slice(0, 8),
 		[fragment, tags],
 	);
-	const menuOpen = tagSuggestions.length > 0 && !dismissed;
+	// The `@` twin: collections, suggested while the caret is inside an `@` token.
+	const collectionFragment = trailingCollectionFragment(search.q);
+	const collectionSuggestions = useMemo(
+		() =>
+			collectionFragment === null
+				? []
+				: (collectionNames ?? [])
+						.filter((name) => name.toLowerCase().startsWith(collectionFragment))
+						.slice(0, 8),
+		[collectionFragment, collectionNames],
+	);
+	const suggestions = [
+		...tagSuggestions.map((tag) => ({ kind: "tag" as const, value: tag })),
+		...collectionSuggestions.map((name) => ({ kind: "collection" as const, value: name })),
+	];
+	const menuOpen = suggestions.length > 0 && !dismissed;
 
 	// Escape and an outside click put the menu away without touching the query, so a user
 	// who wants to keep typing `#wo` as literal text is not fighting a panel.
@@ -164,8 +185,13 @@ export function VaultSearchBar({
 		return () => document.removeEventListener("mousedown", onPointer);
 	}, [menuOpen]);
 
-	const pick = (tag: string) => {
-		onChange({ q: completeTagFragment(search.q, tag) });
+	const pick = (kind: "tag" | "collection", value: string) => {
+		onChange({
+			q:
+				kind === "tag"
+					? completeTagFragment(search.q, value)
+					: completeCollectionFragment(search.q, value),
+		});
 		inputRef.current?.focus();
 	};
 
@@ -231,26 +257,30 @@ export function VaultSearchBar({
 						<div
 							id={menuId}
 							role="menu"
-							aria-label={t`Matching tags`}
+							aria-label={t`Matching tags and collections`}
 							className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-border/50 bg-card shadow-xl shadow-black/10"
 						>
 							{/* Capped and scrolled on the inner element so the panel keeps its
 							    rounded corners while the list clips. */}
 							<div className="max-h-[125px] overflow-y-auto overscroll-contain">
-								{tagSuggestions.map((tag, index) => (
+								{suggestions.map((suggestion, index) => (
 									<button
-										key={tagKey(tag)}
+										key={`${suggestion.kind}-${suggestion.value}`}
 										ref={(el) => {
 											itemRefs.current[index] = el;
 										}}
 										type="button"
 										role="menuitem"
-										onClick={() => pick(tag)}
+										onClick={() => pick(suggestion.kind, suggestion.value)}
 										onKeyDown={(e) => onItemKeyDown(e, index)}
 										className="flex w-full items-center gap-2 border-b border-border/30 px-3 py-2 text-left text-xs transition-colors last:border-b-0 hover:bg-primary/5 focus-visible:bg-primary/5 focus-visible:outline-none"
 									>
-										<Tag className="w-3 h-3 shrink-0 text-muted-foreground" />
-										{tag}
+										{suggestion.kind === "tag" ? (
+											<Tag className="w-3 h-3 shrink-0 text-muted-foreground" />
+										) : (
+											<Users className="w-3 h-3 shrink-0 text-muted-foreground" />
+										)}
+										{suggestion.value}
 									</button>
 								))}
 							</div>

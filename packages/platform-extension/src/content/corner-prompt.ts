@@ -150,9 +150,8 @@ function handleCornerCardClick(e: Event): void {
 		return;
 	}
 	if (action === "save-new") {
-		// Keep existing entries, add captured credential as a separate login;
-		// same backend path as a fresh save-login.
-		sendCornerResponse("save");
+		// Its own action: a plain "save" re-runs dedupe, which folds a single match back into an update.
+		sendCornerResponse("save-new");
 		removeCornerPrompt();
 		return;
 	}
@@ -184,6 +183,13 @@ function handleCornerCardClick(e: Event): void {
 	if (action === "passkey-pick") {
 		// Clicking an account row acts immediately (sign in / attach) with that choice.
 		sendPasskeyResponse(true, actionEl.dataset.tpValue);
+		removeCornerPrompt();
+		return;
+	}
+	if (action === "passkey-native") {
+		// "Use another authenticator": hands the request to the user's other authenticators
+		// (Firefox relays natively; Chrome turns the provider off so the retry goes native).
+		sendPasskeyResponse(false, "native");
 		removeCornerPrompt();
 		return;
 	}
@@ -244,6 +250,8 @@ export function handleCornerPromptShow(payload: CornerPromptPayload): void {
 			passkeyChoices: payload.passkeyChoices,
 			primaryLabel: label,
 			locked: payload.locked,
+			noMatch: payload.noMatch,
+			nativeFallback: payload.nativeFallback,
 		});
 	}
 	// The card's box styling lives on the inner .tp-card (not :host) so a host

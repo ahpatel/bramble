@@ -137,6 +137,12 @@ export function buildCryptoAdapter(
 		async decryptWithVek(iv, ciphertext) {
 			return (await getWasm()).decrypt_with_vek(iv, ciphertext);
 		},
+		async decryptEntryDek(dekIv, wrappedDek) {
+			return (await getWasm()).unwrap_dek(wrappedDek, dekIv);
+		},
+		async wrapEntryDek(dekB64) {
+			return (await getWasm()).wrap_dek(dekB64);
+		},
 
 		async passkeyMakeCredential(rpId, userVerified) {
 			return (await getWasm()).passkey_make_credential(rpId, userVerified);
