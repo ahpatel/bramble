@@ -3,13 +3,16 @@ import { Check, QrCode, Users } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { useCan, usePlatform } from "../../../../context/PlatformContext";
 import type { JoinUnlock } from "../../../../hooks/useVault";
+import { defaultDeviceLabel } from "../../../../util/device-label";
 import { Button } from "../../../components/ui/button";
 import { PasswordField } from "../../../components/ui/password-field";
+import { TextField } from "../../../components/ui/text-field";
 
 interface JoinCardProps {
 	/** Create a new vault by joining the group behind this pairing code. Rejects on a bad code /
-	 * password mismatch (surfaced inline). */
-	onJoin: (pairingCode: string, unlock: JoinUnlock) => Promise<void>;
+	 * password mismatch (surfaced inline). `deviceName` names this device in the sync roster
+	 * (undefined = the auto platform label). */
+	onJoin: (pairingCode: string, unlock: JoinUnlock, deviceName?: string) => Promise<void>;
 	busy: boolean;
 	/** A join failure reported by the async join effect (password mismatch, transfer error). */
 	error: string | null;
@@ -25,6 +28,10 @@ export function JoinCard({ onJoin, busy, error, mobile }: JoinCardProps) {
 	const canScan = useCan("cameraScan");
 	const [code, setCode] = useState("");
 	const [password, setPassword] = useState("");
+	// The name this device introduces itself with. Empty = the auto platform label, shown in the
+	// hint so the choice is explicit rather than a surprise on the other device's list.
+	const [deviceName, setDeviceName] = useState("");
+	const autoLabel = shell.deviceLabel?.() ?? defaultDeviceLabel();
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [submitting, setSubmitting] = useState(false);
 	const [scanning, setScanning] = useState(false);
@@ -58,7 +65,7 @@ export function JoinCard({ onJoin, busy, error, mobile }: JoinCardProps) {
 		}
 		setSubmitting(true);
 		try {
-			await onJoin(code.trim(), { kind: "password", password });
+			await onJoin(code.trim(), { kind: "password", password }, deviceName.trim() || undefined);
 		} catch (err) {
 			setLocalError((err as Error).message);
 		} finally {
@@ -156,6 +163,17 @@ export function JoinCard({ onJoin, busy, error, mobile }: JoinCardProps) {
 						value={password}
 						onChange={(e) => setPassword(e.target.value)}
 					/>
+					<div>
+						<TextField
+							label={t`Device name`}
+							value={deviceName}
+							maxLength={60}
+							onChange={(e) => setDeviceName(e.target.value)}
+						/>
+						<p className="mt-1.5 text-xs text-muted-foreground">
+							<Trans>What your other devices will list. Empty uses “{autoLabel}”.</Trans>
+						</p>
+					</div>
 					<div className="rounded-md p-3 bg-muted/40 border border-border/50 text-xs text-muted-foreground">
 						<Trans>
 							This creates a new vault on this device and syncs it from your other device. Use the

@@ -545,10 +545,22 @@ Source of truth is the persisted `sync.group` roster.
   `sig` (TOFU id↔key binding) and, for a non-initial device, an `admission` from a member's
   password-derived key. Verify-if-present today; enforced in a later release. See
   docs/p2p-sync-revocation-hardening.md.
-- **Rename** (edit `label`, propagate via the roster CRDT) is still TODO.
+- **Rename, built — self-service only.** A pencil on the "this device" row opens a rename dialog
+  (`SyncConnectSection` → `useVault.renameSelf` in `useSyncEnrollment`): the entry is re-stamped
+  with a fresh `hlc` (after `clock.witness` — the same clock-ahead guard the signature backfill
+  uses), re-signed with this device's `sigKey`, and merged with a compare-and-swap re-read so a
+  concurrent backfill or admission-key write on the same entry is not reverted. Ordinary roster
+  gossip carries it to peers within one rebroadcast tick (`fetchLocalRoster` re-reads storage each
+  time). Only the owner can rename itself: winning the merge takes a fresh stamp, the stamp is
+  inside `canonicalRosterEntry`, and only the owner holds the signing key — a peer-authored rename
+  would fail signature verification and be dropped. There is deliberately no "rename another device
+  from here"; the key fingerprint stays displayed as the identity anchor either way.
 - **Device labels.** New enrollments self-label by platform (`defaultDeviceLabel`: "Android device",
   "Firefox on Mac", …) instead of a generic "This device"; the UI marks the current device by
-  public-key match, so a label collision is only cosmetic.
+  public-key match, so a label collision is only cosmetic. A joiner can also name itself at join
+  time — an optional "Device name" field on the join form (`JoinCard` → `joinGroup`'s
+  `deviceName`) — which is what the inviter's approval dialog then shows; an empty field keeps the
+  auto label.
 - **Secure storage, done.** The device keypair (and group key) now live in Keychain/Keystore on
   mobile and `chrome.storage` on the extension (the earlier plaintext-`Preferences` note is
   resolved).

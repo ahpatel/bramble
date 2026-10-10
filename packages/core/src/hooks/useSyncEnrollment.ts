@@ -91,7 +91,9 @@ type SyncEnrollment = Pick<UseVault, "inviteDevice" | "joinGroup" | "removeDevic
 	inviteMember: UseVault["inviteMember"];
 	/** MEMBER JOIN (v2): join a shared vault as a family member with this device's own
 	 * password and key material. See docs/adr/0002 and the member invite module. */
-	joinAsMember: (pairingCode: string, password: string) => Promise<void>;
+	joinAsMember: (pairingCode: string, password: string, deviceName?: string) => Promise<void>;
+	/** Rename THIS device in the roster. Only the owner can: see renameSelf. */
+	renameSelf: (deviceName: string) => Promise<void>;
 	/** Phase-1 migration backfill; internal, not part of the public vault API. */
 	ensureOwnEntrySigned: () => Promise<void>;
 };
@@ -347,7 +349,7 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 	// vault around the shared VEK, then hands back the (VEK-wrapped) blob. We add
 	// this device to the roster, write the blob, and unlock with the new password.
 	const joinGroup = useCallback(
-		async (pairingCode: string, method: JoinUnlock): Promise<void> => {
+		async (pairingCode: string, method: JoinUnlock, deviceName?: string): Promise<void> => {
 			const code = decodePairingCode(pairingCode.trim()); // validate before any prompt
 			// Refuse a stale code up front, before a security-key tap or a device-id rotation. The
 			// inviter has already torn its side down by now, so proceeding would just hang.
@@ -362,10 +364,13 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 			const ownPub = await shell.syncDevicePublicKey();
 			const clock = await ensureClock();
 			const hlc = clock.send();
+			// The name the user typed on the join form wins; an auto label is only a fallback. This
+			// label is what peers list and what the inviter's approval dialog shows, so a joiner can
+			// introduce itself as something identifiable instead of another "Chrome on Mac".
 			const ownEntry = await signOwnEntry(shell, {
 				id: hlc.node,
 				publicKey: ownPub,
-				label: shell.deviceLabel?.() ?? defaultDeviceLabel(),
+				label: deviceName?.trim() || shell.deviceLabel?.() || defaultDeviceLabel(),
 				addedAt: Date.now(),
 				hlc,
 			});
@@ -423,7 +428,7 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 	// device's new password, member secrets, sharing layer, shared entries), and the
 	// post-join steps are identical to a device join.
 	const joinAsMember = useCallback(
-		async (pairingCode: string, password: string): Promise<void> => {
+		async (pairingCode: string, password: string, deviceName?: string): Promise<void> => {
 			const code = decodePairingCode(pairingCode.trim());
 			if (pairingCodeExpired(code)) {
 				throw new Error("That pairing code has expired. Generate a new one and try again.");
@@ -435,7 +440,7 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 			const ownEntry = await signOwnEntry(shell, {
 				id: hlc.node,
 				publicKey: ownPub,
-				label: shell.deviceLabel?.() ?? defaultDeviceLabel(),
+				label: deviceName?.trim() || shell.deviceLabel?.() || defaultDeviceLabel(),
 				addedAt: Date.now(),
 				hlc,
 			});
@@ -509,6 +514,60 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 			});
 		},
 		[storage, syncKey, ensureClock],
+	);
+
+	/**
+	 * Rename THIS device in the roster (the "Rename" TODO in docs/p2p-sync.md). Only the owning
+	 * device can rename itself: winning the last-writer-wins merge takes a freshly stamped entry,
+	 * the stamp is inside the signed canonical, and only the owner holds its `sigKey` — so a peer
+	 * cannot forge the re-sign, and there is deliberately no "rename another device from here".
+	 * The new entry propagates through the ordinary roster gossip (`fetchLocalRoster` re-reads
+	 * storage on every rebroadcast tick).
+	 */
+	const renameSelf = useCallback(
+		async (deviceName: string): Promise<void> => {
+			const name = deviceName.trim();
+			if (!name) throw new Error("Device name cannot be empty.");
+			const readGroup = () =>
+				storage.getMeta<{ groupKey: string; roster: RosterPayload }>(syncKey("sync.group"));
+			// Resolved after the group check, like the backfill: asking the host for the device key
+			// GENERATES AND PERSISTS a Noise keypair when there is none, so a vault that never syncs
+			// must not be asked at all. The key (not the label) identifies this device by design.
+			let pub: string | null = null;
+			for (let attempt = 0; attempt < 2; attempt++) {
+				const group = await readGroup();
+				if (!group) return; // not enrolled: nothing to rename
+				pub ??= await shell.syncDevicePublicKey();
+				const own = group.roster.devices.find((d) => d.publicKey === pub);
+				if (!own) return; // not a member of this group (yet?)
+				if (own.label === name) return; // already named that: don't churn the roster
+				// Witness before stamping: the clock only ever sees ENTRY stamps (useVault
+				// loadEntries), never roster ones, so on a device whose wall clock ran ahead when it
+				// enrolled, a fresh send() can land BEHIND its own entry. The merge is
+				// last-writer-wins, so the rename would silently lose it (same trap the signature
+				// backfill guards against).
+				const clock = await ensureClock();
+				clock.witness(own.hlc);
+				const renamed = await signOwnEntry(shell, { ...own, label: name, hlc: clock.send() });
+				// Compare-and-swap over the signing round trip: while we waited for the host to sign,
+				// this same entry can change underneath (the signature backfill or an admission-key
+				// publish). Writing our stale body back would revert their work and win the merge,
+				// since per-entry convergence is last-writer-wins and ours is fresher-stamped. Only
+				// commit if what we signed is still what is there; otherwise retry once on the newer
+				// version. Matches ensureOwnEntrySigned's structure for the same reason.
+				const fresh = await readGroup();
+				const current = fresh?.roster.devices.find((d) => d.publicKey === pub);
+				if (!fresh || !current) return;
+				if (canonicalRosterEntry(current) === canonicalRosterEntry(own)) {
+					await storage.setMeta(syncKey("sync.group"), {
+						groupKey: fresh.groupKey,
+						roster: addDevice(fresh.roster, renamed),
+					});
+					return;
+				}
+			}
+		},
+		[shell, storage, syncKey, ensureClock],
 	);
 
 	// Invite a MEMBER (v2): like inviteDevice, but the bundle carries seals to the
@@ -590,6 +649,7 @@ export function useSyncEnrollment(deps: SyncEnrollmentDeps): SyncEnrollment {
 		joinAsMember,
 		inviteMember,
 		removeDevice,
+		renameSelf,
 		ensureOwnEntrySigned,
 	};
 }

@@ -1119,6 +1119,11 @@ msgstr "Cassaforte desktop"
 msgid "Details"
 msgstr "Dettagli"
 
+#: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
+#: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
+msgid "Device name"
+msgstr "Nome del dispositivo"
+
 #: packages/core/src/app/screens/Settings/components/BiometricSection.tsx
 msgid "Device passcode"
 msgstr "Codice di accesso del dispositivo"
@@ -2539,6 +2544,10 @@ msgstr "Rimosso il tag {removed}. {0} tag."
 msgid "Removing…"
 msgstr "Rimozione…"
 
+#: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
+msgid "Rename this device"
+msgstr "Rinomina questo dispositivo"
+
 #. placeholder {0}: formatDateTimeExact(change.changedAt)
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Replaced {0}"
@@ -2903,6 +2912,10 @@ msgstr "Mostra questa voce nel menu a tendina dell'autocompletamento. Disattivat
 #: packages/core/src/app/entry-modes/custom-fields.tsx
 msgid "Show value"
 msgstr "Mostra valore"
+
+#: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
+msgid "Shown in the device list on every synced device. The key fingerprint stays as the identity check."
+msgstr "Mostrato nell'elenco dispositivi su ogni dispositivo sincronizzato. L'impronta della chiave resta come verifica dell'identità."
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Sign in and Bramble stores encrypted backups in its own {name} app folder. Only ciphertext is uploaded, so {name} can't read anything in your vault."
@@ -3747,6 +3760,11 @@ msgstr "Settimanale"
 #: packages/core/src/app/screens/Auth/Auth.tsx
 msgid "Welcome to {appName}"
 msgstr "Benvenuto in {appName}"
+
+#. placeholder {0}: autoLabel
+#: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
+msgid "What your other devices will list. Empty uses “{autoLabel}”."
+msgstr "Ciò che gli altri tuoi dispositivi mostreranno. Se vuoto viene usato «{autoLabel}»."
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Wipe copied passwords after"

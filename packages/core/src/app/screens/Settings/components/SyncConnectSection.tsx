@@ -1,6 +1,6 @@
 import { i18n } from "@lingui/core";
 import { Plural, Trans, useLingui } from "@lingui/react/macro";
-import { Plus, Trash2, Unplug, Wifi, X } from "lucide-react";
+import { Pencil, Plus, Trash2, Unplug, Wifi, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCan, usePlatform } from "../../../../context/PlatformContext";
@@ -61,7 +61,7 @@ const relativeTime = (ms: number): string => {
  */
 export function SyncConnectSection() {
 	const { shell, storage } = usePlatform();
-	const { inviteDevice, removeDevice, verifyMasterPassword } = useVaultActions();
+	const { inviteDevice, removeDevice, renameSelf, verifyMasterPassword } = useVaultActions();
 	const { hasPasswordSlot } = useVault();
 	const { syncKey } = useVaultRegistry();
 	const canPerVaultSync = useCan("perVaultSync");
@@ -87,6 +87,12 @@ export function SyncConnectSection() {
 	const [attemptNote, setAttemptNote] = useState<string | null>(null);
 	const [confirmDisconnect, setConfirmDisconnect] = useState(false);
 	const [removingId, setRemovingId] = useState<string | null>(null);
+	// Rename THIS device (the only device it can rename: the roster entry must be re-signed with
+	// this device's key, so a peer's entry is not editable from here). Pre-filled from the roster.
+	const [renameOpen, setRenameOpen] = useState(false);
+	const [renameValue, setRenameValue] = useState("");
+	const [renameBusy, setRenameBusy] = useState(false);
+	const [renameError, setRenameError] = useState<string | null>(null);
 	// Master-password gate before adding a device: the re-entered password admission-signs the new
 	// device (Item A). Open only for a password vault; a security-key-only vault skips it (no password
 	// to derive an admission key from, so the joiner is enrolled unsigned). See docs/p2p-sync-revocation-hardening.md.
@@ -326,6 +332,27 @@ export function SyncConnectSection() {
 			note("✅ Disconnected — this device is now offline-only.");
 		});
 
+	const startRename = () => {
+		const self = devices.find((d) => d.publicKey === myPub);
+		setRenameValue(self?.label ?? "");
+		setRenameError(null);
+		setRenameOpen(true);
+	};
+
+	const saveRename = async () => {
+		setRenameBusy(true);
+		setRenameError(null);
+		try {
+			await renameSelf(renameValue);
+			setRenameOpen(false);
+			await refreshGroup();
+		} catch (e) {
+			setRenameError((e as Error).message);
+		} finally {
+			setRenameBusy(false);
+		}
+	};
+
 	return (
 		<Section icon={<Wifi className="w-4 h-4 text-primary" />} title={t`Device sync`}>
 			{/* Live transport status log (offer sent / answer applied / ice connected /
@@ -400,35 +427,44 @@ export function SyncConnectSection() {
 										</Trans>
 									</div>
 								</div>
-								{d.publicKey !== myPub &&
-									(removingId === d.id ? (
-										<span className="flex shrink-0 items-center gap-2">
-											<button
-												type="button"
-												onClick={() => void remove(d)}
-												className="text-xs text-red-500 hover:underline"
-											>
-												<Trans>Remove</Trans>
-											</button>
-											<button
-												type="button"
-												onClick={() => setRemovingId(null)}
-												className="text-xs text-muted-foreground hover:underline"
-											>
-												<Trans>Cancel</Trans>
-											</button>
-										</span>
-									) : (
-										<Button
-											variant="link"
-											size="none"
-											onClick={() => setRemovingId(d.id)}
-											aria-label={t`Remove ${d.label || "device"}`}
-											className="shrink-0 p-1 hover:text-red-500 transition-colors"
+								{d.publicKey === myPub ? (
+									<Button
+										variant="link"
+										size="none"
+										onClick={startRename}
+										aria-label={t`Rename this device`}
+										className="shrink-0 p-1 hover:text-primary transition-colors"
+									>
+										<Pencil className="w-4 h-4" />
+									</Button>
+								) : removingId === d.id ? (
+									<span className="flex shrink-0 items-center gap-2">
+										<button
+											type="button"
+											onClick={() => void remove(d)}
+											className="text-xs text-red-500 hover:underline"
 										>
-											<Trash2 className="w-4 h-4" />
-										</Button>
-									))}
+											<Trans>Remove</Trans>
+										</button>
+										<button
+											type="button"
+											onClick={() => setRemovingId(null)}
+											className="text-xs text-muted-foreground hover:underline"
+										>
+											<Trans>Cancel</Trans>
+										</button>
+									</span>
+								) : (
+									<Button
+										variant="link"
+										size="none"
+										onClick={() => setRemovingId(d.id)}
+										aria-label={t`Remove ${d.label || "device"}`}
+										className="shrink-0 p-1 hover:text-red-500 transition-colors"
+									>
+										<Trash2 className="w-4 h-4" />
+									</Button>
+								)}
 							</div>
 						))}
 					</div>
@@ -552,6 +588,66 @@ export function SyncConnectSection() {
 							disabled={!gatePassword || gateBusy}
 						>
 							<Trans>Continue</Trans>
+						</Button>
+					</div>
+				</form>
+			</Modal>
+
+			{/* Rename this device. The entry is re-signed with this device's key and gossiped to the
+			    other members by ongoing sync, so the change shows up in their lists within seconds. */}
+			<Modal
+				open={renameOpen}
+				onClose={() => {
+					setRenameOpen(false);
+					setRenameValue("");
+				}}
+				className="max-w-sm"
+			>
+				<form
+					className="p-5 space-y-4"
+					onSubmit={(e) => {
+						e.preventDefault();
+						void saveRename();
+					}}
+				>
+					<h2 className="text-base font-medium">
+						<Trans>Rename this device</Trans>
+					</h2>
+					<p className="text-xs text-muted-foreground">
+						<Trans>
+							Shown in the device list on every synced device. The key fingerprint stays as the
+							identity check.
+						</Trans>
+					</p>
+					<TextField
+						label={t`Device name`}
+						value={renameValue}
+						maxLength={60}
+						autoFocus
+						onChange={(e) => {
+							setRenameValue(e.target.value);
+							setRenameError(null);
+						}}
+						error={renameError ?? undefined}
+					/>
+					<div className="flex justify-end gap-2">
+						<Button
+							variant="secondary"
+							size="sm"
+							onClick={() => {
+								setRenameOpen(false);
+								setRenameValue("");
+							}}
+						>
+							<Trans>Cancel</Trans>
+						</Button>
+						<Button
+							type="submit"
+							variant="secondary"
+							size="sm"
+							disabled={!renameValue.trim() || renameBusy}
+						>
+							<Trans>Save</Trans>
 						</Button>
 					</div>
 				</form>

@@ -23,7 +23,7 @@ interface VaultSetupProps {
 	/** Create a new vault by pairing to another device with its invite code (both first-run and
 	 * adding). Resolves when the join completes; the parent drives the terminal screen. Absent
 	 * (no join tab) where per-vault sync isn't supported (mobile, for now). */
-	onJoin?: (pairingCode: string, unlock: JoinUnlock) => Promise<void>;
+	onJoin?: (pairingCode: string, unlock: JoinUnlock, deviceName?: string) => Promise<void>;
 	/** A setup-flow join is running (new vault created, pairing into it): show the connecting state. */
 	joining?: boolean;
 	/** The last join failure, surfaced in the join form. */

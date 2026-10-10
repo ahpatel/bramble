@@ -1119,6 +1119,11 @@ msgstr "Coffre du bureau"
 msgid "Details"
 msgstr "Détails"
 
+#: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
+#: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
+msgid "Device name"
+msgstr "Nom de l'appareil"
+
 #: packages/core/src/app/screens/Settings/components/BiometricSection.tsx
 msgid "Device passcode"
 msgstr "Code d’accès de l’appareil"
@@ -2539,6 +2544,10 @@ msgstr "Tag supprimé : {removed}. {0} tags."
 msgid "Removing…"
 msgstr "Retrait…"
 
+#: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
+msgid "Rename this device"
+msgstr "Renommer cet appareil"
+
 #. placeholder {0}: formatDateTimeExact(change.changedAt)
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Replaced {0}"
@@ -2903,6 +2912,10 @@ msgstr "Afficher cette entrée dans le menu déroulant d'autocomplétion. Si ell
 #: packages/core/src/app/entry-modes/custom-fields.tsx
 msgid "Show value"
 msgstr "Afficher la valeur"
+
+#: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
+msgid "Shown in the device list on every synced device. The key fingerprint stays as the identity check."
+msgstr "Affiché dans la liste des appareils sur chaque appareil synchronisé. L'empreinte de la clé reste comme vérification d'identité."
 
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Sign in and Bramble stores encrypted backups in its own {name} app folder. Only ciphertext is uploaded, so {name} can't read anything in your vault."
@@ -3747,6 +3760,11 @@ msgstr "Hebdomadairement"
 #: packages/core/src/app/screens/Auth/Auth.tsx
 msgid "Welcome to {appName}"
 msgstr "Bienvenue dans {appName}"
+
+#. placeholder {0}: autoLabel
+#: packages/core/src/app/screens/VaultSetup/components/JoinCard.tsx
+msgid "What your other devices will list. Empty uses “{autoLabel}”."
+msgstr "Ce que vos autres appareils afficheront. Vide, utilise « {autoLabel} »."
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Wipe copied passwords after"

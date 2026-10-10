@@ -415,14 +415,26 @@ export interface VaultActions {
 			persistWraps: (wrapsJson: string) => Promise<void>;
 		},
 	): Promise<string>;
-	/** Join an existing group from a pairing code; rebuilds this device's vault under the chosen unlock method. */
-	joinGroup(pairingCode: string, unlock: JoinUnlock): Promise<void>;
+	/** Join an existing group from a pairing code; rebuilds this device's vault under the chosen unlock method.
+	 * `deviceName` overrides the auto-generated roster label ("Chrome on Mac"): it is what peers show
+	 * in their device list and what the inviter's approval dialog displays. */
+	joinGroup(pairingCode: string, unlock: JoinUnlock, deviceName?: string): Promise<void>;
 	/** Setup-flow join: create a NEW vault from a pairing code (dedups to an existing vault if already
 	 * a member), then run the join in that vault's context and unlock into it. Resolves when the join
-	 * completes. Drives `joining` / `joinError`. See docs/multiple-vaults.md. */
-	startJoin(pairingCode: string, unlock: JoinUnlock, label?: string): Promise<void>;
+	 * completes. Drives `joining` / `joinError`. `label` names the vault record; `deviceName` names
+	 * this device in the sync roster (see joinGroup). See docs/multiple-vaults.md. */
+	startJoin(
+		pairingCode: string,
+		unlock: JoinUnlock,
+		label?: string,
+		deviceName?: string,
+	): Promise<void>;
 	/** Revoke a device from the sync group (roster tombstone); propagates over ongoing sync. */
 	removeDevice(deviceId: string): Promise<void>;
+	/** Rename THIS device in the sync roster. Only the owning device can rename itself (the entry
+	 * must be re-signed over its fresh stamp, and only it holds the signing key); the rename
+	 * propagates to every peer through normal roster gossip. See docs/p2p-sync.md. */
+	renameSelf(deviceName: string): Promise<void>;
 }
 
 /** The full vault API: reactive state plus actions. */
@@ -1693,7 +1705,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
 	// Device enrollment lives in its own hook; it consumes the shared clock, blob
 	// read, unlock, and entries-payload read from here.
-	const { inviteDevice, inviteMember, joinGroup, removeDevice, ensureOwnEntrySigned } =
+	const { inviteDevice, inviteMember, joinGroup, removeDevice, renameSelf, ensureOwnEntrySigned } =
 		useSyncEnrollment({
 			storage,
 			syncKey,
@@ -1735,6 +1747,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		code: string;
 		method: JoinUnlock;
 		targetId: string;
+		/** Roster label for the joining device (see joinGroup); undefined uses the auto label. */
+		deviceName?: string;
 	} | null>(null);
 	const [joinError, setJoinError] = useState<string | null>(null);
 	const joinResolverRef = useRef<{ resolve: () => void; reject: (e: unknown) => void } | null>(
@@ -1750,7 +1764,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	// can only ever fire for the newest attempt. Assigned before the first await, so a double tap
 	// rides the in-flight join instead. See docs/multiple-vaults.md.
 	const startJoin = useCallback(
-		(pairingCode: string, method: JoinUnlock, label?: string): Promise<void> => {
+		(
+			pairingCode: string,
+			method: JoinUnlock,
+			label?: string,
+			deviceName?: string,
+		): Promise<void> => {
 			if (joinInFlightRef.current) return joinInFlightRef.current;
 			const run = (async () => {
 				setJoinError(null);
@@ -1769,7 +1788,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 				await shell.setActiveVault?.(newId);
 				return new Promise<void>((resolve, reject) => {
 					joinResolverRef.current = { resolve, reject };
-					setPendingJoin({ code: pairingCode, method, targetId: newId });
+					setPendingJoin({ code: pairingCode, method, targetId: newId, deviceName });
 				});
 			})();
 			joinInFlightRef.current = run;
@@ -1793,10 +1812,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		)
 			return;
 		joinRunningRef.current = true;
-		const { code, method } = pendingJoin;
+		const { code, method, deviceName } = pendingJoin;
 		void (async () => {
 			try {
-				await joinGroup(code, method); // writes + unlocks the new active vault
+				await joinGroup(code, method, deviceName); // writes + unlocks the new active vault
 				setHasVault(true);
 				setPendingJoin(null);
 				joinResolverRef.current?.resolve();
@@ -1982,6 +2001,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			joinGroup,
 			startJoin,
 			removeDevice,
+			renameSelf,
 		}),
 		[
 			unlock,
@@ -2020,6 +2040,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			joinGroup,
 			startJoin,
 			removeDevice,
+			renameSelf,
 			enableSharing,
 			runSharingTransition,
 			shareEntries,
