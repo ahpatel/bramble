@@ -271,3 +271,20 @@ export async function configureAliasProvider(page: Page, apiKey = "test-key-not-
 	// write landed rather than a timeout.
 	await expect(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
 }
+
+/** Add a login through the real create-entry UI. */
+export async function addLogin(page: Page, name: string): Promise<void> {
+	await page.getByRole("button", { name: /Add New/i }).click();
+	await page
+		.getByRole("button", { name: /^Login/ })
+		.first()
+		.click();
+	await page.getByLabel(/^Name$/).fill(name);
+	await page.getByLabel(/Username or email/i).fill("octocat@example.com");
+	await page
+		.getByLabel(/^Password$/)
+		.first()
+		.fill("hunter2-c0rrect-h0rse");
+	await page.getByRole("button", { name: /Save Login/i }).click();
+	await expect(page.getByText(name)).toBeVisible();
+}

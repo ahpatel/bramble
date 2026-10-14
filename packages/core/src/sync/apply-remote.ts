@@ -3,8 +3,11 @@
 // supplies decrypt/encrypt/persist via VaultSyncPort, so this stays free of
 // platform APIs and crypto. See docs/p2p-sync.md.
 
+import type { CryptoAdapter } from "../adapters/crypto";
 import type { EntriesBlobStore } from "../vault/entries-blob";
+import type { EncryptedEntry } from "../vault-format";
 import { type EntriesPayload, sanitizeRemoteEntriesPayload } from "./entries-payload";
+import { entryVersionKey } from "./entry-version";
 import { compareHlc, type Hlc } from "./hlc";
 import {
 	filterRemoteForView,
@@ -31,6 +34,8 @@ export interface VaultSyncPort {
 	/** The localization crypto (same shapes as the sharing module's). Optional:
 	 * absent means no localization, for hosts that predate sharing. */
 	localizeDeps?: LocalizeDeps;
+	/** Whether each entry decrypts under this vault's key; only the verdict leaves the crypto host. */
+	openable(entries: EncryptedEntry[]): Promise<boolean[]>;
 }
 
 /** Every stamp the remote has observed (winners and losers), for clock witnessing. */
@@ -77,14 +82,40 @@ export function payloadsEquivalent(a: EntriesPayload, b: EntriesPayload): boolea
 	);
 }
 
+/** Drop incoming entries that would win the merge but don't decrypt here: a peer can't plant another vault's entries. */
+async function admit(
+	port: VaultSyncPort,
+	local: EntriesPayload,
+	remote: EntriesPayload,
+	rejected: Set<string>,
+): Promise<EntriesPayload> {
+	const mine = new Map(local.entries.map((e) => [e.id, e.hlc]));
+	const candidates = remote.entries.filter((e) => {
+		if (rejected.has(entryVersionKey(e))) return false;
+		const have = mine.get(e.id);
+		return have === undefined || compareHlc(e.hlc, have) > 0;
+	});
+	if (candidates.length > 0) {
+		const verdicts = await port.openable(candidates);
+		const refused = candidates.filter((_, i) => !verdicts[i]);
+		for (const e of refused) rejected.add(entryVersionKey(e));
+		if (refused.length > 0) {
+			console.warn(`[sync] refused ${refused.length} entries that don't decrypt in this vault`);
+		}
+	}
+	return { ...remote, entries: remote.entries.filter((e) => !rejected.has(entryVersionKey(e))) };
+}
+
 /**
  * Merge an incoming remote payload into the local vault. Writes (and so triggers
  * a re-broadcast in a mesh) only when the merge changed local state, which keeps
- * gossip from looping forever once peers converge.
+ * gossip from looping forever once peers converge. `rejected` remembers refused entry
+ * versions across calls, so a peer's rebroadcast isn't re-checked every few seconds.
  */
 export async function applyRemotePayload(
 	port: VaultSyncPort,
 	remote: EntriesPayload,
+	{ rejected = new Set<string>() }: { rejected?: Set<string> } = {},
 ): Promise<ApplyResult> {
 	// A peer's payload is untrusted: drop any future-dated (poisoned) stamps before merge or
 	// witness, so a member can't pin an un-deletable entry by stamping it years ahead.
@@ -93,15 +124,19 @@ export async function applyRemotePayload(
 	// Member-aware convergence: filter the remote to what this device may adopt,
 	// merge, then localize adopted envelopes into locally-openable form. With no
 	// sharing view (or no localize deps) this is the plain merge it always was.
+	// Filtering runs before admission so a policy-refused entry never enters the
+	// `rejected` cache: a member added to a collection adopts it on the next sync.
 	const view = (await port.sharingView?.()) ?? null;
 	const localizeDeps = port.localizeDeps ?? null;
 	const filtered = view && localizeDeps ? filterRemoteForView(view, safe, local) : safe;
-	const merged = mergeEntriesPayload(local, filtered);
+	const admitted = await admit(port, local, filtered, rejected);
+	const merged = mergeEntriesPayload(local, admitted);
 	const localized =
 		view && localizeDeps ? await localizePayload(localizeDeps, view, merged) : merged;
 	const changed = !payloadsEquivalent(local, localized);
 	if (changed) {
-		await port.witnessRemote(remoteStamps(safe));
+		// Only admitted stamps: a refused entry must not advance this device's clock.
+		await port.witnessRemote(remoteStamps(admitted));
 		await port.writeMerged(localized);
 	}
 	return { payload: localized, changed };
@@ -114,6 +149,7 @@ export async function applyRemotePayload(
  */
 export function createVaultSyncPort(deps: {
 	store: EntriesBlobStore;
+	crypto: Pick<CryptoAdapter, "decryptEntries">;
 	witnessRemote: (stamps: Hlc[]) => Promise<void>;
 	onChanged?: () => void | Promise<void>;
 	/** The device's sharing view for member-aware merges. Absent/null = plain merge. */
@@ -130,5 +166,16 @@ export function createVaultSyncPort(deps: {
 			await deps.store.writeEntriesBlob(merged);
 			await deps.onChanged?.();
 		},
+		openable: async (entries) =>
+			(
+				await deps.crypto.decryptEntries(
+					entries.map(({ ciphertext, iv, wrappedDek, dekIv }) => ({
+						ciphertext,
+						iv,
+						wrappedDek,
+						dekIv,
+					})),
+				)
+			).map((p) => p != null),
 	};
 }

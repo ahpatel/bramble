@@ -1,9 +1,13 @@
 package app.bramble.mobile
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import androidx.annotation.RequiresApi
 import java.security.MessageDigest
+import java.util.Base64
 
 // A curated allow-list of browsers we trust to vouch for a web page's origin. An autofill
 // request's `webDomain` is attacker-controllable (any app can set it on a virtual view
@@ -59,6 +63,25 @@ object TrustedBrowsers {
             setOf("06:66:53:58:EF:D8:BA:05:BE:23:6A:47:A1:2C:B0:95:8D:7D:75:DD:93:9D:77:C2:B3:1F:53:98:53:7E:BD:C5"),
     )
 
+    /** A browser of any kind (allow-listed, or a caller that can VIEW arbitrary web
+     * pages, like ROLE_BROWSER's VIEW + BROWSABLE check): a package association would make
+     * every page in such a caller match. Errs toward "browser", which only costs the prompt. */
+    fun isBrowserApp(context: Context, packageName: String?): Boolean {
+        val pkg = packageName ?: return false
+        if (BROWSERS.containsKey(pkg)) return true
+        return try {
+            listOf("http", "https").any { scheme ->
+                val probe = Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://bramble.invalid/"))
+                    .addCategory(Intent.CATEGORY_BROWSABLE)
+                // MATCH_ALL: without it a web-intent query keeps only the default browser.
+                context.packageManager.queryIntentActivities(probe, PackageManager.MATCH_ALL)
+                    .any { it.activityInfo?.packageName == pkg }
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     /** True iff `packageName` is an allow-listed browser AND its real signing cert matches. */
     fun isTrustedBrowser(context: Context, packageName: String?): Boolean {
         val pkg = packageName ?: return false
@@ -89,23 +112,37 @@ object TrustedBrowsers {
         return digest.joinToString(":") { "%02X".format(it) }
     }
 
-    /** The SHA-256 fingerprints of a package's current signing certificates (uppercase,
-     * colon-separated). Empty if the package is absent or unreadable. Shared with the Digital
-     * Asset Links check. */
-    internal fun signingFingerprints(pm: PackageManager, pkg: String): Set<String> =
+    /** The hash `android://<hash>@<package>` pins carry (Google Password Manager /
+     * Chrome app ids): base64url, padded, of the signing certificate's SHA-512, per
+     * Chromium's affiliation_utils.h. java.util.Base64 is API 26, as is every caller. */
+    @RequiresApi(Build.VERSION_CODES.O)
+    internal fun facetCertHash(der: ByteArray): String =
+        Base64.getUrlEncoder().encodeToString(MessageDigest.getInstance("SHA-512").digest(der))
+
+    /** DER bytes of a package's current signing certificates; empty if absent or unreadable. */
+    private fun signingCerts(pm: PackageManager, pkg: String): List<ByteArray> =
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 val info = pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES)
-                (info.signingInfo?.apkContentsSigners ?: emptyArray())
-                    .map { certFingerprint(it.toByteArray()) }
-                    .toSet()
+                (info.signingInfo?.apkContentsSigners ?: emptyArray()).map { it.toByteArray() }
             } else {
                 @Suppress("DEPRECATION")
                 val info = pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES)
                 @Suppress("DEPRECATION")
-                (info.signatures ?: emptyArray()).map { certFingerprint(it.toByteArray()) }.toSet()
+                (info.signatures ?: emptyArray()).map { it.toByteArray() }
             }
         } catch (e: Exception) {
-            emptySet()
+            emptyList()
         }
+
+    /** The SHA-256 fingerprints of a package's current signing certificates (uppercase,
+     * colon-separated). Empty if the package is absent or unreadable. Shared with the Digital
+     * Asset Links check. */
+    internal fun signingFingerprints(pm: PackageManager, pkg: String): Set<String> =
+        signingCerts(pm, pkg).map { certFingerprint(it) }.toSet()
+
+    /** facetCertHash of a package's current signing certificates. */
+    @RequiresApi(Build.VERSION_CODES.O)
+    internal fun signingCertHashes(pm: PackageManager, pkg: String): Set<String> =
+        signingCerts(pm, pkg).map { facetCertHash(it) }.toSet()
 }

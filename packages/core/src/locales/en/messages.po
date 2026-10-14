@@ -559,6 +559,14 @@ msgstr "Book"
 msgid "Bramble {version} is available. Updating downloads it and restarts the app. Your vault is not touched."
 msgstr "Bramble {version} is available. Updating downloads it and restarts the app. Your vault is not touched."
 
+#: packages/core/src/app/components/CryptoErrorText.tsx
+msgid "Bramble couldn't open this vault right now. Please report this error in <0>our issue tracker</0>."
+msgstr "Bramble couldn't open this vault right now. Please report this error in <0>our issue tracker</0>."
+
+#: packages/core/src/hooks/useCryptoErrorMessage.tsx
+msgid "Bramble couldn't open this vault right now. Please report this error in our issue tracker."
+msgstr "Bramble couldn't open this vault right now. Please report this error in our issue tracker."
+
 #: packages/core/src/hooks/useCryptoErrorMessage.tsx
 msgid "Bramble couldn't safely update this device's key storage, so the vault stayed locked. Try again."
 msgstr "Bramble couldn't safely update this device's key storage, so the vault stayed locked. Try again."
@@ -711,6 +719,10 @@ msgstr "Check"
 #: packages/core/src/app/screens/Settings/components/UpdatesSection.tsx
 msgid "Check for updates"
 msgstr "Check for updates"
+
+#: packages/core/src/app/screens/Settings/components/UpdatesSection.tsx
+msgid "Check for updates when Bramble opens"
+msgstr "Check for updates when Bramble opens"
 
 #: packages/core/src/app/screens/Settings/components/AliasSection.tsx
 msgid "Check key"
@@ -1483,6 +1495,10 @@ msgstr "Fair"
 #: packages/core/src/app/screens/Settings/components/SharingSection.tsx
 msgid "Family sharing"
 msgstr "Family sharing"
+
+#: packages/core/src/app/screens/Settings/components/UpdatesSection.tsx
+msgid "Fetches the latest version number from bramble.sh. Nothing from your vault is sent."
+msgstr "Fetches the latest version number from bramble.sh. Nothing from your vault is sent."
 
 #: packages/core/src/app/entry-modes/custom-fields.tsx
 msgid "Field name"
@@ -2411,7 +2427,7 @@ msgstr "Paperclip"
 msgid "Passkey added to {0}"
 msgstr "Passkey added to {0}"
 
-#: packages/core/src/hooks/usePendingPasskeys.tsx
+#: packages/core/src/hooks/usePendingHandoffs.tsx
 msgid "Passkey added to {loginName}"
 msgstr "Passkey added to {loginName}"
 
@@ -2420,7 +2436,7 @@ msgstr "Passkey added to {loginName}"
 msgid "Passkey saved as {0}"
 msgstr "Passkey saved as {0}"
 
-#: packages/core/src/hooks/usePendingPasskeys.tsx
+#: packages/core/src/hooks/usePendingHandoffs.tsx
 msgid "Passkey saved as {loginName}"
 msgstr "Passkey saved as {loginName}"
 
@@ -2865,6 +2881,12 @@ msgstr "Save to a new login"
 msgid "Save your recovery code"
 msgstr "Save your recovery code"
 
+#. placeholder {0}: u.label
+#. placeholder {1}: u.entryName
+#: packages/core/src/hooks/usePendingHandoffs.tsx
+msgid "Saved {0} to {1}"
+msgstr "Saved {0} to {1}"
+
 #: packages/core/src/app/screens/CreateEntry/EntryForm.tsx
 #: packages/core/src/app/screens/Settings/components/MasterPasswordSection.tsx
 msgid "Saving…"
@@ -2909,6 +2931,14 @@ msgstr "Scheduled backups only run while Bramble is running. Start it at login a
 #: packages/core/src/app/components/SasDisplay.tsx
 msgid "Scissors"
 msgstr "Scissors"
+
+#: packages/core/src/app/components/ui/scroll-edges.tsx
+msgid "Scroll left"
+msgstr "Scroll left"
+
+#: packages/core/src/app/components/ui/scroll-edges.tsx
+msgid "Scroll right"
+msgstr "Scroll right"
 
 #: packages/core/src/app/screens/TotpSetup/TotpSetup.tsx
 msgid "Search logins"
@@ -3154,6 +3184,10 @@ msgstr "Something went wrong"
 #: packages/core/src/app/screens/Settings/components/SharingSection.tsx
 msgid "Something went wrong."
 msgstr "Something went wrong."
+
+#: packages/core/src/hooks/useCryptoErrorMessage.tsx
+msgid "Something went wrong. Please try again."
+msgstr "Something went wrong. Please try again."
 
 #: packages/core/src/app/screens/VaultHome/VaultSearchBar.tsx
 msgid "Sort"

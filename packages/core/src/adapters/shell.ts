@@ -11,6 +11,16 @@ interface CurrentTabLogin {
 	subdomainMatch?: SubdomainMatchMode;
 }
 
+/** One app/site association a confirmed "fill and save" pick handed over. */
+export interface PendingAssociation {
+	entryId: string;
+	/** `androidapp://<package>` for a native-app caller, `https://<host>` for a web one. */
+	url: string;
+	/** The friendly name the prompt showed; `url` when the device couldn't resolve one. */
+	label?: string;
+	vaultId: string;
+}
+
 /** State carried from the originating popup into a freshly-opened detached window so the pop-out lands on the same route. */
 export interface PopOutHandoff {
 	/** Router href to restore, e.g. "/vault/new/card". */
@@ -151,6 +161,8 @@ export interface ShellAdapter {
 	 * there's no native provider. See docs/passkey-provider.md.
 	 */
 	consumePendingPasskeys?(): Promise<PasskeyCredential[]>;
+	/** Mobile only: drain the confirmed "fill and save" associations (cleared on read). */
+	consumePendingAssociations?(): Promise<PendingAssociation[]>;
 	/**
 	 * Capture the active page and decode a single QR code, returning the decoded text (typically `otpauth://`) or null.
 	 * Used to import a TOTP key off a site's 2FA setup page.
@@ -195,6 +207,13 @@ export interface ShellAdapter {
 		 * content length, and undefined when nothing is running. Returns an unsubscribe.
 		 */
 		onProgress(callback: (fraction: number | null | undefined) => void): () => void;
+		/**
+		 * Whether the app looks for a new version by itself when it opens. On unless the user turned
+		 * it off: it is the one request Bramble makes without being asked, so the privacy policy
+		 * names it and this is how it is refused. Asking from Settings or the menu works either way.
+		 */
+		checkOnLaunch?(): Promise<boolean>;
+		setCheckOnLaunch?(on: boolean): Promise<void>;
 	};
 	/**
 	 * Ask the OS to present its own rating prompt.
@@ -247,6 +266,8 @@ export interface ShellAdapter {
 	 * background sees it before it kicks off sync on unlock. Optional: single-context hosts (mobile)
 	 * read the active vault directly and can omit it. See docs/multiple-vaults.md (Sync). */
 	setActiveVault?(vaultId: string | null): void | Promise<void>;
+	/** This vault's entries loaded after an unlock. Hosts start sync here, not at unwrap. */
+	notifyVaultOpened?(vaultId: string): void | Promise<void>;
 	/** Read back the active/unlocked vault id (whatever setActiveVault stored), so a reopened UI
 	 * can restore the unlocked vault and skip the picker. Optional; mobile omits it (it locks on
 	 * background, so a reopen is always locked). See docs/multiple-vaults.md (Sync). */

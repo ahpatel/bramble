@@ -559,6 +559,14 @@ msgstr "Livre"
 msgid "Bramble {version} is available. Updating downloads it and restarts the app. Your vault is not touched."
 msgstr "Bramble {version} est disponible. La mise à jour la télécharge et redémarre l’application. Votre coffre-fort reste inchangé."
 
+#: packages/core/src/app/components/CryptoErrorText.tsx
+msgid "Bramble couldn't open this vault right now. Please report this error in <0>our issue tracker</0>."
+msgstr "Bramble n’a pas pu ouvrir ce coffre pour l’instant. Veuillez signaler cette erreur dans <0>notre suivi des problèmes</0>."
+
+#: packages/core/src/hooks/useCryptoErrorMessage.tsx
+msgid "Bramble couldn't open this vault right now. Please report this error in our issue tracker."
+msgstr "Bramble n’a pas pu ouvrir ce coffre pour l’instant. Veuillez signaler cette erreur dans notre suivi des problèmes."
+
 #: packages/core/src/hooks/useCryptoErrorMessage.tsx
 msgid "Bramble couldn't safely update this device's key storage, so the vault stayed locked. Try again."
 msgstr "Bramble n'a pas pu mettre à jour en toute sécurité le stockage des clés de cet appareil, le coffre-fort est donc resté verrouillé. Réessayez."
@@ -711,6 +719,10 @@ msgstr "Vérifier"
 #: packages/core/src/app/screens/Settings/components/UpdatesSection.tsx
 msgid "Check for updates"
 msgstr "Rechercher les mises à jour"
+
+#: packages/core/src/app/screens/Settings/components/UpdatesSection.tsx
+msgid "Check for updates when Bramble opens"
+msgstr "Rechercher des mises à jour à l’ouverture de Bramble"
 
 #: packages/core/src/app/screens/Settings/components/AliasSection.tsx
 msgid "Check key"
@@ -1483,6 +1495,10 @@ msgstr "Moyen"
 #: packages/core/src/app/screens/Settings/components/SharingSection.tsx
 msgid "Family sharing"
 msgstr "Partage familial"
+
+#: packages/core/src/app/screens/Settings/components/UpdatesSection.tsx
+msgid "Fetches the latest version number from bramble.sh. Nothing from your vault is sent."
+msgstr "Récupère le dernier numéro de version depuis bramble.sh. Rien de votre coffre n’est envoyé."
 
 #: packages/core/src/app/entry-modes/custom-fields.tsx
 msgid "Field name"
@@ -2411,7 +2427,7 @@ msgstr "Trombone"
 msgid "Passkey added to {0}"
 msgstr "Clé de passe ajoutée à {0}"
 
-#: packages/core/src/hooks/usePendingPasskeys.tsx
+#: packages/core/src/hooks/usePendingHandoffs.tsx
 msgid "Passkey added to {loginName}"
 msgstr "Clé de passe ajoutée à {loginName}"
 
@@ -2420,7 +2436,7 @@ msgstr "Clé de passe ajoutée à {loginName}"
 msgid "Passkey saved as {0}"
 msgstr "Clé de passe enregistrée sous {0}"
 
-#: packages/core/src/hooks/usePendingPasskeys.tsx
+#: packages/core/src/hooks/usePendingHandoffs.tsx
 msgid "Passkey saved as {loginName}"
 msgstr "Clé de passe enregistrée sous {loginName}"
 
@@ -2865,6 +2881,12 @@ msgstr "Enregistrer dans un nouvel identifiant"
 msgid "Save your recovery code"
 msgstr "Sauvegardez votre code de récupération"
 
+#. placeholder {0}: u.label
+#. placeholder {1}: u.entryName
+#: packages/core/src/hooks/usePendingHandoffs.tsx
+msgid "Saved {0} to {1}"
+msgstr "{0} enregistré dans {1}"
+
 #: packages/core/src/app/screens/CreateEntry/EntryForm.tsx
 #: packages/core/src/app/screens/Settings/components/MasterPasswordSection.tsx
 msgid "Saving…"
@@ -2909,6 +2931,14 @@ msgstr "Les sauvegardes planifiées ne s’exécutent que lorsque Bramble est en
 #: packages/core/src/app/components/SasDisplay.tsx
 msgid "Scissors"
 msgstr "Ciseaux"
+
+#: packages/core/src/app/components/ui/scroll-edges.tsx
+msgid "Scroll left"
+msgstr "Défiler vers la gauche"
+
+#: packages/core/src/app/components/ui/scroll-edges.tsx
+msgid "Scroll right"
+msgstr "Défiler vers la droite"
 
 #: packages/core/src/app/screens/TotpSetup/TotpSetup.tsx
 msgid "Search logins"
@@ -3154,6 +3184,10 @@ msgstr "Une erreur est survenue"
 #: packages/core/src/app/screens/Settings/components/SharingSection.tsx
 msgid "Something went wrong."
 msgstr "Quelque chose s'est mal passé."
+
+#: packages/core/src/hooks/useCryptoErrorMessage.tsx
+msgid "Something went wrong. Please try again."
+msgstr "Une erreur s’est produite. Réessayez."
 
 #: packages/core/src/app/screens/VaultHome/VaultSearchBar.tsx
 msgid "Sort"
