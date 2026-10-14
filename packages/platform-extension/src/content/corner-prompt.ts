@@ -110,6 +110,10 @@ function closeOverflowMenu(): void {
 
 /** Delegated click handler for all action buttons inside the corner-prompt card. */
 function handleCornerCardClick(e: Event): void {
+	// Real input only: a page script must never act on the card. The closed shadow root
+	// hides these buttons from page script; this keeps that true if the card ever moves
+	// out of one.
+	if (!e.isTrusted) return;
 	const target = e.target;
 	if (!(target instanceof HTMLElement)) return;
 	const actionEl = target.closest<HTMLElement>("[data-tp-action]");

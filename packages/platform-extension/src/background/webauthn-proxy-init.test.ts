@@ -17,6 +17,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // looks like. Nothing persists them.
 
 const PAUSE_PORT = "tp-passkey-pause";
+// The origin the module derives from runtime.getURL; makePort's senders must claim it.
+// Https-shaped on purpose: Node's URL parses non-special schemes (chrome-extension://)
+// to the opaque-origin serialization "null", where browsers give the real origin.
+const EXTENSION_ORIGIN = "https://ext.test";
 
 const h = vi.hoisted(() => ({
 	attachCalls: 0,
@@ -91,9 +95,10 @@ const proxy = {
 
 /** A fake runtime port: the browser-side contract is connect -> onConnect, death ->
  *  onDisconnect (guaranteed), postMessage for the pause ack. */
-function makePort(name: string) {
+function makePort(name: string, senderOrigin: string = EXTENSION_ORIGIN) {
 	const p: {
 		name: string;
+		sender: { origin: string };
 		sent: unknown[];
 		disconnectCbs: Array<() => void>;
 		messageCbs: Array<(m: unknown) => void>;
@@ -104,6 +109,7 @@ function makePort(name: string) {
 		close: () => void;
 	} = {
 		name,
+		sender: { origin: senderOrigin },
 		sent: [],
 		disconnectCbs: [],
 		messageCbs: [],
@@ -120,8 +126,8 @@ function makePort(name: string) {
 }
 
 /** Connect a pause port, as the pauser in shell.ts does. */
-function connectPausePort(name = PAUSE_PORT) {
-	const port = makePort(name);
+function connectPausePort(name = PAUSE_PORT, senderOrigin = EXTENSION_ORIGIN) {
+	const port = makePort(name, senderOrigin);
 	for (const cb of h.portListeners) cb(port);
 	return port;
 }
@@ -134,6 +140,8 @@ vi.mock("../platform-api", () => ({
 		},
 		tabs: { query: async () => [{ id: 1, url: "https://example.com/page" }] },
 		runtime: {
+			// Must match EXTENSION_ORIGIN above; the pause port accepts only this origin.
+			getURL: (p: string) => `https://ext.test/${p}`,
 			onConnect: {
 				addListener: (cb: (port: unknown) => void) => h.portListeners.push(cb),
 			},
@@ -267,6 +275,19 @@ describe("pause and resume (a runtime port, F2)", () => {
 		connectPausePort("some-other-port").close();
 		await settle();
 		expect(h.detachCalls).toBe(0);
+	});
+
+	it("rejects a pause connection from a web page's context", async () => {
+		// A content script is the context a compromised page reaches through our relay; it
+		// must not be able to pause (or strand) the provider by holding the port.
+		const m = await load();
+		await m.initWebauthnProxy();
+		const port = connectPausePort(PAUSE_PORT, "https://evil.example");
+		await settle();
+		expect(port.sent).toEqual([]); // no ack: nothing was paused
+		port.close(); // dropping it must not resume anything either
+		expect(h.detachCalls).toBe(0);
+		expect(h.attachCalls).toBe(1);
 	});
 
 	it("detaches for the ceremony and re-attaches when its port closes", async () => {

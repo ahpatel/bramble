@@ -74,8 +74,15 @@ async function resumeAfterCeremony(): Promise<void> {
 	}
 }
 
+// The extension pages' origin; only connections from here may hold the pause port.
+const EXTENSION_ORIGIN = new URL(api.runtime.getURL("")).origin;
+
 api.runtime.onConnect.addListener((port) => {
 	if (port.name !== PASSKEY_PAUSE_PORT) return;
+	// Only extension views (popup/options) may hold the pause: a content script is the
+	// context a web page reaches through our own relay, so it must not be able to pause
+	// or strand the provider. Fails closed: a rejected connection holds nothing.
+	if (port.sender?.origin !== EXTENSION_ORIGIN) return;
 	void (async () => {
 		await pauseForCeremony();
 		// The pauser awaits this ack before its own navigator.credentials call, so the pause
