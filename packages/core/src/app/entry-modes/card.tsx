@@ -12,6 +12,8 @@ import {
 	cardExpMonthIssue,
 	cardExpYearIssue,
 	cardNumberIssue,
+	cardNumberToCopy,
+	formatCardNumber,
 } from "../../util/card";
 import { Button } from "../components/ui/button";
 import { TextArea } from "../components/ui/text-area";
@@ -205,7 +207,7 @@ function CardDetail({ entry, copied, copy }: EntryDetailBodyProps) {
 				label={t`Card number`}
 				copied={copied}
 				copyName="card number"
-				onCopy={() => copy("card number", card.number)}
+				onCopy={() => copy("card number", cardNumberToCopy(card.number))}
 				extraAction={
 					<Button
 						variant="ghost"
@@ -219,7 +221,7 @@ function CardDetail({ entry, copied, copy }: EntryDetailBodyProps) {
 				}
 			>
 				<DetailValue mono wrap={showNumber}>
-					{showNumber ? card.number : `•••• ${lastFour(card.number)}`}
+					{showNumber ? formatCardNumber(card.number) : `•••• ${lastFour(card.number)}`}
 				</DetailValue>
 			</DetailField>
 
@@ -329,7 +331,9 @@ export const cardMode: EntryMode = {
 			secondary: cardSubtitle(card) || i18n._(msg`Payment card`),
 			// Each is omitted when empty rather than offering a row that copies nothing.
 			copyItems: [
-				...(card.number ? [{ label: i18n._(msg`card number`), value: card.number }] : []),
+				...(card.number
+					? [{ label: i18n._(msg`card number`), value: cardNumberToCopy(card.number) }]
+					: []),
 				...(cardExpiry(card) ? [{ label: i18n._(msg`expiry`), value: cardExpiry(card) }] : []),
 				...(card.cvv ? [{ label: i18n._(msg`CVV`), value: card.cvv }] : []),
 			],

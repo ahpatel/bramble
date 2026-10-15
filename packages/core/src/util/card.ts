@@ -13,9 +13,34 @@ export function cardBrand(number: string): string | undefined {
 	return undefined;
 }
 
+/** How people write a card number: digits, grouped with spaces or dashes. */
+const WRITTEN_CARD_NUMBER = /^[\d\s-]+$/;
+
 /** Digits only. Card numbers are commonly written, and pasted, in groups. */
 export function cardDigits(number: string): string {
 	return number.replace(/\D/g, "");
+}
+
+/**
+ * A card number grouped for reading: Amex 4-6-5 as printed, anything else in fours. Display
+ * only, since the stored number is kept as the user wrote it. A value that isn't digits,
+ * spaces and dashes is returned unchanged rather than guessed at.
+ */
+export function formatCardNumber(number: string): string {
+	if (!WRITTEN_CARD_NUMBER.test(number)) return number;
+	const digits = cardDigits(number);
+	if (cardBrand(digits) === "Amex" && digits.length === 15) {
+		return `${digits.slice(0, 4)} ${digits.slice(4, 10)} ${digits.slice(10)}`;
+	}
+	return digits.replace(/(\d{4})(?=\d)/g, "$1 ");
+}
+
+/**
+ * A card number for the clipboard: the bare digits, which is what a payment form's
+ * box takes. A value that isn't digits, spaces and dashes is returned unchanged.
+ */
+export function cardNumberToCopy(number: string): string {
+	return WRITTEN_CARD_NUMBER.test(number) ? cardDigits(number) : number;
 }
 
 // ISO/IEC 7812 allows up to 19; nothing in circulation as a payment card is
