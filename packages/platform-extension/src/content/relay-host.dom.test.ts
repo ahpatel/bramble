@@ -98,6 +98,21 @@ describe("hosting a descendant's picker", () => {
 		expect(hostEl()!.style.transform).toBe("translate3d(24px, 434px, 0)");
 	});
 
+	it("tells the UI each time it moves the host, and not when it stays put", () => {
+		// The UI holds clicks until the picker has sat still, and only this frame sees it move.
+		showRelayHost(ANCHOR);
+		const sent: unknown[] = [];
+		// jsdom gives a frame inside a shadow root no window of its own.
+		Object.defineProperty(frameOf(), "contentWindow", {
+			value: { postMessage: (m: unknown) => sent.push(m) },
+		});
+
+		showRelayHost({ relayId: "relay-1", rect: { ...ANCHOR.rect, y: 400 } });
+		showRelayHost({ relayId: "relay-1", rect: { ...ANCHOR.rect, y: 400 } });
+
+		expect(sent).toEqual([{ type: "UI_MOVED" }]);
+	});
+
 	it("replaces the host when a different relay takes over", () => {
 		showRelayHost(ANCHOR);
 		const first = hostEl();

@@ -96,6 +96,10 @@ export interface QueryResult {
 	 * vault is locked, or from a background that predates the feature. Says only that the row may
 	 * appear: no provider is contacted to answer it. */
 	aliasReady?: boolean;
+	/** The asking frame is the same site as its tab's top page, so the top page may host its login
+	 * picker (hosted there, the top page can read the picker's presence and height). Extension
+	 * only; absent from an older background, which reads as no. */
+	sameSiteAsTop?: boolean;
 }
 
 /** What to fill for a chosen entry, discriminated by kind. */

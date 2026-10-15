@@ -348,6 +348,25 @@ function senderHostname(sender: chrome.runtime.MessageSender): string {
 	return "";
 }
 
+/**
+ * Whether the sending frame is the same site as its tab's top page, which may then host its
+ * picker: hosted there, the top page can read the picker's presence and height off its own DOM.
+ * From the browser's account of the sender; false whenever that account is incomplete.
+ */
+function sameSiteAsTop(sender: chrome.runtime.MessageSender): boolean {
+	if (sender.frameId === 0) return true;
+	try {
+		const frame = new URL(sender.origin ?? sender.url ?? "");
+		const top = new URL(sender.tab?.url ?? "");
+		return (
+			frame.protocol === top.protocol &&
+			registrableDomain(frame.hostname) === registrableDomain(top.hostname)
+		);
+	} catch {
+		return false;
+	}
+}
+
 /** Content-script-only requests must have a browser-verified page sender. */
 function pageSenderHostname(sender: chrome.runtime.MessageSender): string | null {
 	if (isExtensionSender(sender) || sender.tab?.id === undefined) return null;
@@ -673,6 +692,7 @@ async function autofillQuery(
 		const hasCard = message.hasCard === true;
 		const hasOtp = message.hasOtp === true;
 		const result = queryResult(hostname, hasLogin, hasCard, hasOtp);
+		result.sameSiteAsTop = sameSiteAsTop(sender);
 		if (hasCard && !result.locked) {
 			// Only ever an id this very response already carries, so the page learns nothing it
 			// could not read off `cards` itself.

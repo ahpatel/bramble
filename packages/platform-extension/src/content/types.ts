@@ -36,6 +36,9 @@ export interface QueryResult {
 	// An alias provider is configured for the active vault, so the alias row may be offered.
 	// Absent when there is none, when the vault is locked, or from an older background.
 	aliasReady?: boolean;
+	// This frame is the same site as the tab's top page, so the top page may host its login
+	// picker. Absent from an older background, which reads as no.
+	sameSiteAsTop?: boolean;
 }
 
 /** Fill instruction from the background, discriminated by `kind`. `isAuto` echoes whether the fill was user-initiated. */

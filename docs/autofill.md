@@ -553,7 +553,7 @@ root). This blocks a clickjacking page that hides/moves/overlays the picker to
 coax a real click - the case that matters being cards, which are offered on every
 site.
 
-### Relayed placement: hosted-fields checkouts
+### Relayed placement: pickers for fields in frames
 
 A card input on a hosted-fields checkout (Shopify, Stripe Elements, Braintree,
 Adyen) lives in a cross-origin iframe sized to the input itself; Shopify's is 47px
@@ -561,6 +561,16 @@ tall with `scrolling="no"`. A picker mounted in that document is positioned belo
 the field, and therefore below the frame's viewport, and an iframe cannot paint
 outside its own box. The field was always detected; there was simply nowhere to
 draw, so nothing appeared at all.
+
+A frame with room had a quieter version of the same problem. Zoom embeds Zuora's
+hosted payment page in a 548x332 frame; a picker drawn inside it inherits whatever
+Zoom does around that frame, and any opacity or filter there costs it the
+browser's visibility vouch and with it every click (see the threat model). It also
+never heard a click on Zoom's page, and focus leaving the frame for that page
+looks the same as focus leaving the window, which keeps a picker up on purpose, so
+it stayed open while the user went on scrolling. Both come from the picker living
+in the frame, so card pickers are now hosted by the top frame from **every**
+frame, whatever its size.
 
 The fix splits **who owns the element** from **who owns the conversation**:
 
@@ -619,6 +629,47 @@ through the top frame, `pickIsTrustworthy()` cannot run at pick time, so
 destroys the host the moment it stops being legible. That is prevention rather than
 detection, and the page cannot suppress it: the verdict comes from computed style
 the top frame reads itself, not from any message.
+
+#### Which frames relay, and what keeps a frame from abusing it
+
+`placement()` in `content.ts` decides, per field:
+
+- **Cards relay from every frame.** Cards are offered on every site, so the top
+  page learns nothing from a hosted card picker beyond how many cards there are
+  and whether the vault is locked.
+- **Logins relay only from a same-site frame.** The top page can read a picker it
+  hosts off its own DOM (it appears, it has a height), which for a sign-in frame
+  from another site would say whether the user has logins saved for that site.
+  Same-site is decided by the background from the browser's account of the sender
+  (`sameSiteAsTop`, eTLD+1 including the private PSL section, and the scheme), never
+  by the content script. A cross-site sign-in frame keeps its picker inside it,
+  even when that frame is too short to show it.
+- **No host upstairs falls back here.** If the top frame never brings the UI up
+  (COEP blocks it there, or no content script runs there) within two seconds, the
+  frame stops asking for the rest of the page's life and draws its own picker,
+  when it has room for one.
+
+Hosting a frame's picker in the top page lets that frame reach outside its own
+box, so three more rules apply to the relayed path:
+
+- **An anchor stays inside the frame it came from.** Each hop clamps the rect to
+  the content box of the frame element it arrived through and drops one that misses
+  that box, so a frame can only have the picker drawn against its own edge.
+- **A relay belongs to the frame that opened it.** The UI announces its relay id to
+  every frame in the tab, so any frame can learn it; each hop binds a relay id to
+  the child frame element that opened it and ignores anchors and withdrawals for it
+  from anywhere else.
+- **Clicks wait for the picker to sit still.** The pick goes straight from the UI to
+  the field's frame, past the content script's early-click guard, so the UI keeps it:
+  a click counts only 500 ms after the last render or move. The host frame reports
+  every move it makes (`UI_MOVED`), forged ones included; a forged report only ever
+  delays a click.
+
+And a click on an embedding page dismisses: each frame tells its child frames
+(`tp-relay-dismiss`, carrying nothing) when a trusted mousedown lands in its own
+document, a frame takes that only from its parent, and the top frame drops a
+picker it hosts at once. This reaches the in-frame pickers of cross-site sign-in
+frames too. Scrolling alone does not dismiss, as with every other picker.
 
 Keyboard nav works without moving focus off the page field: when the iframe is
 open, the content script forwards only Up/Down/Enter/Escape to it as `UI_KEY`
@@ -712,7 +763,8 @@ focused field) are deliberate and skip both:
 - **Early clicks.** A click is dropped until the picker has sat still for 500 ms,
   and the clock restarts whenever it appears, un-hides or moves. A page that can
   open the picker (script focus) or move its field can otherwise put it under a
-  click the user is already making, a double-click lure being the classic.
+  click the user is already making, a double-click lure being the classic. On the
+  relayed path the UI applies it, from the host frame's move reports.
 - **Browser-vouched visibility (Chromium).** Hit testing skips an overlay with
   `pointer-events: none`, so a decoy painted over the picker passes
   `elementFromPoint` while the user's click goes straight through it to a row.

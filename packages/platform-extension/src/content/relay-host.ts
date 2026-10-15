@@ -67,8 +67,15 @@ function position(h: Hosted): void {
 	const offset = hostOffset(h.host);
 	const x = h.rect.x + offset.x;
 	const y = h.rect.y + h.rect.height + offset.y + 2;
-	h.host.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-	h.host.style.width = `${pickerWidth(h.rect.width)}px`;
+	const transform = `translate3d(${x}px, ${y}px, 0)`;
+	const width = `${pickerWidth(h.rect.width)}px`;
+	if (h.host.style.transform === transform && h.host.style.width === width) return;
+	const moved = h.host.style.transform !== "";
+	h.host.style.transform = transform;
+	h.host.style.width = width;
+	// The UI holds clicks until the picker has sat still; it cannot see the move itself. Carries
+	// nothing, so "*" is fine, and a forged one only ever delays a click.
+	if (moved) h.frame.contentWindow?.postMessage({ type: "UI_MOVED" }, "*");
 }
 
 function stopWatchdog(): void {
@@ -129,6 +136,11 @@ export function showRelayHost(anchor: RelayedAnchor): void {
 	hosted = { relayId: anchor.relayId, host, frame, rect: anchor.rect };
 	position(hosted);
 	startWatchdog();
+}
+
+/** True when `node` is the hosted picker or inside it (its closed shadow retargets to the host). */
+export function relayHostContains(node: Node): boolean {
+	return !!hosted && hosted.host.contains(node);
 }
 
 /** Test seam: the hosted UI frame, which otherwise sits behind a closed shadow root. */
