@@ -2,6 +2,7 @@
 
 import { api } from "./content-api";
 import { anchorIsLive } from "./detection";
+import { hostOffset } from "./host-offset";
 import { type AliasRowState, dropdownAlias } from "./html/dropdown-alias";
 import { dropdownItem } from "./html/dropdown-item";
 import { dropdownLocked } from "./html/dropdown-locked";
@@ -179,8 +180,9 @@ function pickerWidth(fieldWidth: number): number {
 /** Anchor a host below `field` via a compositor-friendly transform (no layout). */
 function positionHostElement(el: HTMLElement, field: HTMLInputElement): void {
 	const rect = field.getBoundingClientRect();
-	const x = rect.left + window.scrollX;
-	const y = rect.bottom + window.scrollY + 2;
+	const offset = hostOffset(el);
+	const x = rect.left + offset.x;
+	const y = rect.bottom + offset.y + 2;
 	const width = `${pickerWidth(rect.width)}px`;
 	// translate (compositor-only) instead of top/left (layout) so the per-frame
 	// tracker doesn't thrash layout; write only on change.
@@ -245,8 +247,9 @@ function startPositionTracking(): void {
 			removeActiveUi();
 			return;
 		}
-		const x = rect.left + window.scrollX;
-		const y = rect.bottom + window.scrollY + 2;
+		const offset = hostOffset(host);
+		const x = rect.left + offset.x;
+		const y = rect.bottom + offset.y + 2;
 		const width = pickerWidth(rect.width);
 		// New field or first frame: re-baseline without treating it as a scroll.
 		const rebaseline = Number.isNaN(lastX) || anchorField !== lastAnchor;

@@ -78,6 +78,18 @@ describe("hosting a descendant's picker", () => {
 		expect(hostEl()!.style.transform).toBe("translate3d(24px, 354px, 0)");
 	});
 
+	it("parks from the containing block's origin, not the document's", () => {
+		// Angular CDK's scroll-block: <html> is position:fixed at top:-441px and
+		// window.scrollY reads 0, so the host's coordinates start 441px above the viewport.
+		const origin = vi
+			.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+			.mockReturnValue(new DOMRect(0, -441, 0, 0));
+		showRelayHost(ANCHOR);
+		origin.mockRestore();
+
+		expect(hostEl()!.style.transform).toBe("translate3d(24px, 795px, 0)");
+	});
+
 	it("re-parks rather than stacking a second host on repeat anchors", () => {
 		showRelayHost(ANCHOR);
 		showRelayHost({ relayId: "relay-1", rect: { ...ANCHOR.rect, y: 400 } });

@@ -15,6 +15,7 @@
 import { api } from "./content-api";
 import { isExtensionOrigin } from "./ext-origin";
 import type { RelayedAnchor, RelayRect } from "./frame-relay";
+import { hostOffset } from "./host-offset";
 import { onTeardown } from "./lifecycle";
 
 const AUTOFILL_UI_URL = api.runtime.getURL("autofill-ui.html");
@@ -57,14 +58,15 @@ function isTrustworthy(host: HTMLElement): boolean {
 
 /**
  * A relayed rect is in this frame's VIEWPORT coordinates, but the host is
- * position:absolute, so it is placed in DOCUMENT coordinates. Without the scroll
- * offset the picker is drawn scrollY pixels too high, which on a checkout you had to
- * scroll down to reach puts it off-screen entirely, and the watchdog below then
- * destroys it for being illegible. Matches positionHostElement in picker.ts.
+ * position:absolute, so it is placed relative to its containing block. Placed in
+ * viewport coordinates, the picker lands off-screen on a scrolled checkout or one
+ * whose dialog has blocked the page's scroll, and the watchdog below then destroys it
+ * for being illegible. Matches positionHostElement in picker.ts.
  */
 function position(h: Hosted): void {
-	const x = h.rect.x + window.scrollX;
-	const y = h.rect.y + h.rect.height + window.scrollY + 2;
+	const offset = hostOffset(h.host);
+	const x = h.rect.x + offset.x;
+	const y = h.rect.y + h.rect.height + offset.y + 2;
 	h.host.style.transform = `translate3d(${x}px, ${y}px, 0)`;
 	h.host.style.width = `${pickerWidth(h.rect.width)}px`;
 }

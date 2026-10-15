@@ -415,3 +415,45 @@ test("anchors correctly when the picker opens on an already-scrolled page", asyn
 	expect(Math.abs((host?.y ?? 0) - ((field?.y ?? 0) + (field?.height ?? 0)))).toBeLessThan(20);
 	expect(host?.y ?? -1).toBeGreaterThan(0);
 });
+
+// Angular Material's payment dialog (nannyservices.ca/buy): the card frame sits in a fixed dialog,
+// and CDK's scroll-block pins <html> as position:fixed at top:-scrollY, so window.scrollY reads 0
+// and <html>, not the initial containing block, is the host's containing block.
+const SCROLL_BLOCKED_CHECKOUT = `<!doctype html><html><head><title>Checkout</title>
+<style>.scrollblock { position: fixed; width: 100%; overflow-y: scroll; }</style></head>
+<body style="margin:0">
+	<div style="height:2000px">Plans</div>
+	<div style="position:fixed;top:150px;left:200px;width:480px;padding:24px;background:#fff">
+		<label for="cardframe">Card</label>
+		<iframe id="cardframe" src="${PCI}/number" frameborder="0" scrolling="no"
+			style="height:47px;width:432px;border:0;display:block"></iframe>
+	</div>
+</body></html>`;
+
+test("anchors under the field while the page's scroll is blocked by a modal", async ({
+	context,
+	extensionId,
+}) => {
+	await setUp(context, extensionId);
+	const page = await context.newPage();
+	await serve(page, { topHtml: SCROLL_BLOCKED_CHECKOUT });
+	await page.goto(`${MERCHANT}/`);
+
+	// What CDK's BlockScrollStrategy.enable() does.
+	await page.evaluate(() => {
+		window.scrollTo(0, 441);
+		const root = document.documentElement;
+		root.style.left = `${-window.scrollX}px`;
+		root.style.top = `${-window.scrollY}px`;
+		root.classList.add("scrollblock");
+	});
+	expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+	const ui = await openPicker(page);
+	expect(ui.parentFrame()).toBe(page.mainFrame());
+
+	const field = await cardFrame(page).locator("#number").boundingBox();
+	const host = await page.locator('div[id^="tp-"]').boundingBox();
+	expect(Math.abs((host?.y ?? 0) - ((field?.y ?? 0) + (field?.height ?? 0)))).toBeLessThan(20);
+	expect(Math.abs((host?.x ?? 0) - (field?.x ?? 0))).toBeLessThan(20);
+});

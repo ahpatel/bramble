@@ -306,6 +306,24 @@ route change when nothing scrolled.
 picker restored on the return trip would be showing a match set - and a lock
 state - from before the trip.
 
+### Where the host's coordinates start
+
+Every picker host (local, shadow fallback, relayed) is a `position: absolute` child
+of `<body>` placed by a translate, and a field's rect is in viewport coordinates.
+The translate counts from the host's **containing block**, which is usually the
+document, so adding `window.scrollX/Y` used to be enough. It is not when the page
+positions `<html>` or `<body>`. Angular CDK's scroll-block does exactly that while
+a Material dialog is open: `<html>` becomes `position: fixed` at `top: -scrollY`
+and `window.scrollY` reads 0. On nannyservices.ca's Stripe payment dialog that
+drew the relayed card picker 441px above the field, and the relay watchdog then
+removed it as illegible, so nothing showed.
+
+`host-offset.ts` measures the origin instead of assuming it: a zero-size,
+untranslated probe beside the host shares its containing block, so its rect is
+that origin exactly. Reading the host's own rect back and subtracting the
+translate would also work, but the read-back translate is rounded, and the
+tracking loop would see that noise as the field moving.
+
 ## Writing a value into a field
 
 `fill.ts` writes through the native `value` setter (so React's value tracker sees
