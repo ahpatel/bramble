@@ -13,6 +13,20 @@ export function cardBrand(number: string): string | undefined {
 	return undefined;
 }
 
+const NAMED_BRANDS = new Map([
+	["visa", "Visa"],
+	["mastercard", "Mastercard"],
+	["master card", "Mastercard"],
+	["amex", "Amex"],
+	["american express", "Amex"],
+	["discover", "Discover"],
+]);
+
+/** The brand an export's free-text card type names ("American Express"), if it names one. */
+export function cardBrandNamed(type: string): string | undefined {
+	return NAMED_BRANDS.get(type.trim().toLowerCase());
+}
+
 /** How people write a card number: digits, grouped with spaces or dashes. */
 const WRITTEN_CARD_NUMBER = /^[\d\s-]+$/;
 

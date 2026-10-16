@@ -1,5 +1,7 @@
+import { parseAliasVault } from "./aliasvault";
 import { parseBitwarden } from "./bitwarden";
 import { parseApplePasswords, parseGooglePasswords } from "./csv";
+import { parseEnpass } from "./enpass";
 import { parseKeePass } from "./keepass";
 import { parseLastPass } from "./lastpass";
 import { parseOnePassword } from "./onepassword";
@@ -10,8 +12,10 @@ export { kdbxEntriesToResult } from "./kdbx";
 export { tallyByType } from "./shared";
 export type { ImportParserContext, ImportProvider, ImportResult } from "./types";
 export {
+	parseAliasVault,
 	parseApplePasswords,
 	parseBitwarden,
+	parseEnpass,
 	parseGooglePasswords,
 	parseKeePass,
 	parseLastPass,
@@ -25,6 +29,8 @@ const PARSERS: Record<ImportProvider, ImportParser> = {
 	protonpass: parseProtonPass,
 	keepass: parseKeePass,
 	lastpass: parseLastPass,
+	enpass: parseEnpass,
+	aliasvault: parseAliasVault,
 	apple: parseApplePasswords,
 	google: parseGooglePasswords,
 };
@@ -94,6 +100,21 @@ export const IMPORT_PROVIDERS: readonly ImportProviderInfo[] = [
 		id: "lastpass",
 		label: "LastPass",
 		blurb: "Unencrypted .csv export",
+		accept: ".csv,text/csv",
+		reads: "text",
+	},
+	{
+		id: "enpass",
+		label: "Enpass",
+		blurb: "Unencrypted .json export",
+		accept: ".json,application/json",
+		reads: "text",
+	},
+	{
+		id: "aliasvault",
+		label: "AliasVault",
+		// AliasVault's own wording, and its own caveat: the CSV is its lossy export.
+		blurb: "Import / Export → Export to CSV (no passkeys or attachments)",
 		accept: ".csv,text/csv",
 		reads: "text",
 	},

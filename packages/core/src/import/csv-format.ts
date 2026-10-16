@@ -1,6 +1,6 @@
 // Which flat-CSV export a file actually is, decided from its header row alone. Shared by the
-// Apple/Google reader and the LastPass one, so a mis-picked file can be named instead of
-// silently half-imported. See docs/lastpass-import.md.
+// Apple/Google reader, the LastPass one and the AliasVault one, so a mis-picked file can be
+// named instead of silently half-imported. See docs/lastpass-import.md.
 
 /** A CSV export identified by its header row. */
 export interface CsvFormat {
@@ -36,7 +36,15 @@ export const LASTPASS_CSV: CsvFormat = {
 	signature: ["url", "username", "password", "extra", "name", "grouping"],
 };
 
-const ALL: readonly CsvFormat[] = [APPLE_CSV, GOOGLE_CSV, LASTPASS_CSV];
+// AliasVault: `ServiceName,FolderPath,ServiceUrl,Username,CurrentPassword,…`. Older exports lack
+// the card columns and carry an AliasNickName one, so only the two oldest, distinctive columns
+// are the signature.
+export const ALIASVAULT_CSV: CsvFormat = {
+	label: "AliasVault",
+	signature: ["servicename", "currentpassword"],
+};
+
+const ALL: readonly CsvFormat[] = [APPLE_CSV, GOOGLE_CSV, LASTPASS_CSV, ALIASVAULT_CSV];
 
 /** A header row reduced to lower-cased, trimmed labels. */
 export function headerLabels(row: readonly string[] | undefined): string[] {

@@ -4,7 +4,7 @@
 // rather than line by line. docs/lastpass-import.md records the format and the evidence for it.
 
 import type { EntryData } from "../hooks/useVault";
-import { cardBrand } from "../util/card";
+import { cardBrand, cardBrandNamed } from "../util/card";
 import { deriveKeyType } from "../util/ssh";
 import { normalizeTags } from "../vault/tags";
 import { assertFormat, headerLabels, LASTPASS_CSV } from "./csv-format";
@@ -263,20 +263,6 @@ function splitExpiry(value: string): { expMonth: string; expYear: string } {
 	return { expMonth: month === -1 ? "" : String(month + 1), expYear: year ?? "" };
 }
 
-const BRANDS = new Map([
-	["visa", "Visa"],
-	["mastercard", "Mastercard"],
-	["master card", "Mastercard"],
-	["amex", "Amex"],
-	["american express", "Amex"],
-	["discover", "Discover"],
-]);
-
-/** A card's `Type` is free text (a real export carries `CC`), so the number decides where it can. */
-function brandOf(number: string, type: string): string | undefined {
-	return cardBrand(number) ?? BRANDS.get(type.trim().toLowerCase());
-}
-
 /** Template fields the entry type has no home for, kept so nothing is silently lost. */
 function leftovers(fields: Map<string, string>, used: readonly string[]): RawField[] {
 	const skip = new Set(used);
@@ -299,10 +285,11 @@ function fromNoteBlock(block: NoteBlock, name: string, tags: string[] | undefine
 	if (block.noteType === "Credit Card") {
 		const number = f.get("Number") ?? "";
 		const type = f.get("Type") ?? "";
-		const brand = brandOf(number, type);
+		// `Type` is free text (a real export carries `CC`), so the number decides where it can.
+		const named = cardBrandNamed(type);
+		const brand = cardBrand(number) ?? named;
 		// A `Type` that named no brand would otherwise be dropped on the floor.
-		const used =
-			brand && BRANDS.has(type.trim().toLowerCase()) ? [...CARD_FIELDS, "Type"] : CARD_FIELDS;
+		const used = named ? [...CARD_FIELDS, "Type"] : CARD_FIELDS;
 		return {
 			type: "card",
 			name,
