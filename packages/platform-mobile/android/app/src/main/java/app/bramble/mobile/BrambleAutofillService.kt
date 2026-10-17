@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentSender
 import android.os.Build
 import android.os.CancellationSignal
+import android.os.SystemClock
 import android.service.autofill.AutofillService
 import android.service.autofill.Dataset
 import android.service.autofill.FillCallback
@@ -18,6 +19,7 @@ import android.service.autofill.SaveRequest
 import android.util.Log
 import android.widget.inline.InlinePresentationSpec
 import androidx.annotation.RequiresApi
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import uniffi.vault_crypto.isLocked
 import uniffi.vault_crypto.lock
@@ -36,23 +38,45 @@ class BrambleAutofillService : AutofillService() {
 
     private val requestCode = AtomicInteger(1)
 
+    private companion object {
+        // Off the main looper, which also runs the system-timed bind/unbind callbacks (#56). One at
+        // a time; 8 MB like the main thread, as AssistStructure unparcels each view level recursively.
+        val worker = AutofillWorker(
+            Executors.newSingleThreadExecutor { r ->
+                Thread(null, r, "BrambleAutofill", 8L shl 20).apply { isDaemon = true }
+            },
+        ) { e -> Log.e(BrambleAutofill.LOG_TAG, "autofill request failed", e) }
+    }
+
     override fun onFillRequest(
         request: FillRequest,
         cancellationSignal: CancellationSignal,
         callback: FillCallback,
     ) {
+        val isCancelled = { cancellationSignal.isCanceled }
+        worker.run(isCancelled, work = { fill(request, isCancelled) }, reply = { callback.onSuccess(it) })
+    }
+
+    private fun fill(request: FillRequest, isCancelled: () -> Boolean): FillResponse? {
+        val started = SystemClock.elapsedRealtime()
         // Whether the keyboard asked for inline suggestions (diagnostic log only).
         val inlineRequested =
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && request.inlineSuggestionsRequest != null
 
         val structure = request.fillContexts.lastOrNull()?.structure
-        if (structure == null || isOwnApp(structure) || !VaultReader.hasVault(this)) {
-            // Never autofill into Bramble's own UI (its webview fields are served from
-            // localhost): no "Unlock to autofill" on the master-password or entry forms.
-            callback.onSuccess(null)
-            return
+        // Never autofill into Bramble's own UI (its webview fields are served from
+        // localhost): no "Unlock to autofill" on the master-password or entry forms.
+        if (structure == null || isOwnApp(structure) || !VaultReader.hasVault(this)) return null
+        val parsed = StructureParser.parse(structure, isCancelled) ?: return null
+        // Most requests (a chat, a feed) have nothing to fill: answer before any lookup.
+        if (!parsed.hasFields || parsed.packageName == packageName) {
+            Log.d(
+                BrambleAutofill.LOG_TAG,
+                "onFillRequest no fields pkg=${parsed.packageName} nodes=${parsed.nodeCount} " +
+                    "truncated=${parsed.truncated} ms=${SystemClock.elapsedRealtime() - started}",
+            )
+            return null
         }
-        val parsed = StructureParser.parse(structure)
         // Resolve the hosts we may auto-match: a verified browser vouches for its webDomain; a
         // native app is matched only to domains it is proven to own via Digital Asset Links (its
         // spoofable webDomain and package name are never trusted). Either may be empty, leaving the
@@ -73,19 +97,16 @@ class BrambleAutofillService : AutofillService() {
             BrambleAutofill.LOG_TAG,
             "onFillRequest user=${parsed.usernameIds.size} pass=${parsed.passwordIds.size} " +
                 "otp=${parsed.otpIds.size} pkg=${parsed.packageName} browser=$trustedBrowser " +
-                "browserApp=$browserApp hosts=$hosts inlineReqByKeyboard=$inlineRequested",
+                "browserApp=$browserApp hosts=$hosts inlineReqByKeyboard=$inlineRequested " +
+                "nodes=${parsed.nodeCount} truncated=${parsed.truncated} ms=${SystemClock.elapsedRealtime() - started}",
         )
-        if (!parsed.hasFields || parsed.packageName == packageName) {
-            callback.onSuccess(null)
-            return
-        }
-        val response = try {
+        if (isCancelled()) return null
+        return try {
             buildResponse(request, parsed, hosts, matchPackage, callerCerts, association)
         } catch (e: Exception) {
             Log.e(BrambleAutofill.LOG_TAG, "onFillRequest failed", e)
             null
         }
-        callback.onSuccess(response)
     }
 
     private fun buildResponse(
@@ -314,10 +335,14 @@ class BrambleAutofillService : AutofillService() {
     // hand them to the main app, which saves through its proven entry-creation path. We do
     // not write the encrypted vault from here (no re-implemented blob/entry crypto).
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
+        worker.run(work = { save(request) }, reply = { callback.onSuccess() })
+    }
+
+    private fun save(request: SaveRequest) {
         try {
             val structure = request.fillContexts.lastOrNull()?.structure
             if (structure != null && !isOwnApp(structure)) {
-                val parsed = StructureParser.parse(structure)
+                val parsed = StructureParser.parse(structure) ?: return
                 val password = parsed.password ?: ""
                 if (password.isNotEmpty() && parsed.packageName != packageName) {
                     PendingSave.write(this, saveLabel(parsed), parsed.username ?: "", password)
@@ -329,7 +354,6 @@ class BrambleAutofillService : AutofillService() {
         } catch (e: Exception) {
             Log.e(BrambleAutofill.LOG_TAG, "onSaveRequest failed", e)
         }
-        callback.onSuccess()
     }
 }
 
