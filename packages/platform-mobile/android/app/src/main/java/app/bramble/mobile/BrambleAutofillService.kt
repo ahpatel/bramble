@@ -140,15 +140,17 @@ class BrambleAutofillService : AutofillService() {
             val logins = CoreSession.borrow(vekB64) { VaultReader.readLogins(this) }
             KeepUnlockedStore.save(this, vekB64) // slide the window forward
 
-            val matches = logins.filter { VaultReader.matches(it, hosts, matchPackage, callerCerts) }
             val now = System.currentTimeMillis()
+            // Filtered before the loop so a login with nothing for this form takes no inline slot.
+            val matches = logins.filter {
+                VaultReader.matches(it, hosts, matchPackage, callerCerts) &&
+                    Datasets.canFill(it, parsed.usernameIds.isNotEmpty(), parsed.passwordIds.isNotEmpty(), parsed.otpIds.isNotEmpty(), now)
+            }
             for (login in matches) {
-                builder.addDataset(
-                    Datasets.fillDataset(
-                        this, login, parsed.usernameIds, parsed.passwordIds, parsed.otpIds, now,
-                        inline?.next(login.displayTitle(this), login.username),
-                    )
-                )
+                Datasets.fillDataset(
+                    this, login, parsed.usernameIds, parsed.passwordIds, parsed.otpIds, now,
+                    inline?.next(login.displayTitle(this), login.username),
+                )?.let { builder.addDataset(it) }
             }
             builder.addDataset(showAllDataset(parsed, hosts, matchPackage, callerCerts, association, inline))
             true

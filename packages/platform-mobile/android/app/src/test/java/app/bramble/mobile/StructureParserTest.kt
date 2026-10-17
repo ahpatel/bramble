@@ -196,6 +196,26 @@ class StructureParserTest {
     }
 
     @Test
+    fun `a code-only page from chromium is found by its one-time-code hint`() {
+        // #47: the signals Vanadium sent for otto.de's code field, read on device. The autocomplete
+        // token arrives as a hint, and htmlInfo carries no autocomplete attribute.
+        val code = FieldSignals(
+            autofillHints = listOf("one-time-code"),
+            htmlTag = "input",
+            htmlAttributes = listOf(
+                "name" to "code", "type" to "text", "label" to "Code aus der Authenticator-App",
+                "ua-autofill-hints" to "", "id" to "fti-ci-input-code",
+                "crowdsourcing-autofill-hints" to "NO_SERVER_DATA",
+                "computed-autofill-hints" to "HTML_TYPE_ONE_TIME_CODE", "visibility" to "visible", "maxlength" to "6",
+            ),
+        )
+        assertEquals(Kind.OTP, StructureScan.classify(code))
+        val result = scan(Node(webDomain = "www.otto.de", children = listOf(Node("code", code))))
+        assertEquals(listOf("code"), result.otps.map { it.name })
+        assertTrue(result.usernames.isEmpty() && result.passwords.isEmpty())
+    }
+
+    @Test
     fun `only the start of a long label is read`() {
         val filler = "a".repeat(StructureScan.MAX_SIGNAL_CHARS)
         assertNull(StructureScan.classify(FieldSignals(contentDescription = "$filler password")))

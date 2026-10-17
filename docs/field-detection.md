@@ -210,7 +210,11 @@ alone is a loyalty tier, so the term only counts glued to the code, and
 `presale` joins the negatives for ticketing's "VIP presale code".
 
 Android's `StructureParser.kt` holds its own copy of these heuristics and is
-**not** kept in sync automatically.
+**not** kept in sync automatically. It also sees a page differently: a
+Chromium-based browser hands the `autocomplete` token over as the field's
+autofill hint, verbatim (`one-time-code`), and leaves it out of `htmlInfo`, so
+rung 1 has to be read from the hints there (#47). Gecko (Firefox, IronFox)
+opens no autofill session at all for a code-only page.
 
 Rung 1 is the strongest and also the most brittle, because it rests on a single
 attribute: anything that removes `one-time-code` from a box removes that box from

@@ -154,9 +154,11 @@ internal object StructureScan {
     fun classify(signals: FieldSignals): Kind? {
         for (raw in signals.autofillHints) {
             val h = raw.lowercase()
+            // Chromium hands a page's autocomplete token over as a hint, verbatim: `one-time-code`.
+            val token = h.replace("-", "").replace("_", "")
             when {
                 h.contains("password") -> return Kind.PASSWORD
-                h.contains("otp") || h.contains("2fa") || h.contains("one_time") || h.contains("onetime") -> return Kind.OTP
+                token.contains("otp") || token.contains("2fa") || token.contains("onetime") -> return Kind.OTP
                 h.contains("username") || h.contains("email") || h == View.AUTOFILL_HINT_USERNAME -> return Kind.USERNAME
             }
         }

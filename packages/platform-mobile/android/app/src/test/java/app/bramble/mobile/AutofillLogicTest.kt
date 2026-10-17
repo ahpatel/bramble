@@ -221,6 +221,19 @@ class AutofillLogicTest {
     }
 
     @Test
+    fun aCodeOnlyFormIsFilledOnlyFromALoginWithAKey() {
+        // #47: Dataset.Builder.build() throws on a dataset with no value, so a login with nothing
+        // for the form's fields must be skipped rather than built.
+        val withKey = AutofillLogin("a", "otto", "me@example.com", "pw", rfcSecretB32, listOf("otto.de"))
+        val withoutKey = AutofillLogin("b", "otto", "me@example.com", "pw", null, listOf("otto.de"))
+        val noUsername = AutofillLogin("c", "otto", "", "pw", null, listOf("otto.de"))
+        assertTrue(Datasets.canFill(withKey, hasUsername = false, hasPassword = false, hasOtp = true, nowMillis = 59_000L))
+        assertFalse(Datasets.canFill(withoutKey, hasUsername = false, hasPassword = false, hasOtp = true, nowMillis = 59_000L))
+        assertTrue(Datasets.canFill(withoutKey, hasUsername = false, hasPassword = true, hasOtp = true, nowMillis = 59_000L))
+        assertFalse(Datasets.canFill(noUsername, hasUsername = true, hasPassword = false, hasOtp = false, nowMillis = 59_000L))
+    }
+
+    @Test
     fun totpRejectsGarbageAndBlanks() {
         assertEquals(null, Totp.generate(null, 59_000L))
         assertEquals(null, Totp.generate("", 59_000L))

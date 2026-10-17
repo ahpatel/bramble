@@ -24,7 +24,7 @@ object Datasets {
         return views
     }
 
-    /** Fill a login into the form's fields (username, password, and the live TOTP code). */
+    /** Fill a login into the form's fields (username, password, and the live TOTP code); null when it has nothing for them. */
     @Suppress("DEPRECATION")
     fun fillDataset(
         context: Context,
@@ -34,7 +34,8 @@ object Datasets {
         otpIds: List<AutofillId>,
         nowMillis: Long,
         inline: InlinePresentation? = null,
-    ): Dataset {
+    ): Dataset? {
+        if (!canFill(login, usernameIds.isNotEmpty(), passwordIds.isNotEmpty(), otpIds.isNotEmpty(), nowMillis)) return null
         val pres = presentation(context, login.displayTitle(context), login.username)
         val builder = Dataset.Builder(pres)
         fun put(id: AutofillId, value: String) {
@@ -51,6 +52,12 @@ object Datasets {
         }
         return builder.build()
     }
+
+    /** Whether [fillDataset] has a value for any of the form's fields; Dataset.Builder.build() throws on none. */
+    fun canFill(login: AutofillLogin, hasUsername: Boolean, hasPassword: Boolean, hasOtp: Boolean, nowMillis: Long): Boolean =
+        hasPassword ||
+            (hasUsername && login.username.isNotEmpty()) ||
+            (hasOtp && Totp.generate(login.totp, nowMillis) != null)
 }
 
 fun AutofillLogin.displayTitle(context: Context): String =
