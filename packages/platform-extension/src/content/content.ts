@@ -461,6 +461,7 @@ function applySelectResponse(
 		data.payload.username,
 		data.payload.password,
 		data.isAuto,
+		intent.target,
 	);
 	fillCustomFields(data.payload.customFields, data.isAuto);
 	fillOtp(data.payload.totp);
@@ -1125,7 +1126,7 @@ api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		cancelFill();
 		picker.remove();
 		dropRelayed();
-		fillForm(fill.username ?? "", fill.password, false);
+		fillForm(fill.username ?? "", fill.password, false, into);
 		if (fill.totp) fillOtp(fill.totp);
 		sendResponse({ ok: true });
 		return false;

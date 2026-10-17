@@ -91,6 +91,17 @@ in one call where it exists; the walk up the ancestors is for engines without it
 (jsdom), because an element inside a `display:none` subtree still reports its own
 declared `display`.
 
+The model is still a guess, so a login pick fills the password field it **came
+from**, not whichever one the model chose (`loginFieldsFor`), with the username
+paired to that field. `kindOf` claims every `type=password` field as login, so the
+picker opens on a password box the model passed over; before this, the pick then
+wrote into the model's field instead. doctolib.de's Keycloak sign-in is the case that
+showed it (issue #47): the form keeps its own `password` input, hidden, ahead of the
+visible React field, and filling that twin left the visible box empty. The visibility
+preference above already finds the right field there; a twin hidden by clipping
+instead of `display:none` is still CSS-visible, and only the anchor gets that one
+right. Auto-submit still requires the filled field to be the model's password.
+
 ## Card fields
 
 `detectCardFields` is token-first: it prefers proper `autocomplete="cc-*"` tokens
@@ -387,6 +398,12 @@ iframe that is the whole of gog.com's sign-in UI. It carries the class rules tha
 hide one of the two forms in a `<style>` block, since jsdom loads no external CSS,
 and it drives the swap in both directions: activate the register box instead and
 the detectors follow it.
+
+`doctolib-login-username` and `doctolib-login-password` are the two steps of
+doctolib.de's sign-in. React's `useId` puts colons in every id (`input_:r0:`), so
+the label rung reaches the identifier through an escaped `label[for]` once the
+picker has suppressed its `autocomplete="username"`; the password step carries the
+hidden Keycloak twin. `e2e/extension/doctolib-login.spec.ts` runs both in a browser.
 
 `semafone-card-frame` is the unlabelled-card-field case: a cross-origin PCI
 capture iframe whose number box is a bare `name="pan"` with no label, placeholder,

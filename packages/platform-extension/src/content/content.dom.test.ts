@@ -874,7 +874,33 @@ describe("content: direct select response binding", () => {
 				sessionGeneration: 0,
 			},
 		});
-		expect(fillForm).toHaveBeenCalledWith("me", "secret", false);
+		expect(fillForm).toHaveBeenCalledWith("me", "secret", false, user);
+	});
+
+	it("aims the fill at the password field the pick came from", () => {
+		// A second password field the model passed over; kindOf still claims it as login.
+		document.body.insertAdjacentHTML(
+			"beforeend",
+			`<form><input id="other-pass" type="password" name="password" /></form>`,
+		);
+		invalidatePageFields();
+		const other = document.getElementById("other-pass") as HTMLInputElement;
+		other.focus();
+		send({
+			type: "AUTOFILL_MATCHES",
+			payload: result({ logins: [{ id: "1", name: "Example", secondary: "me" }] }),
+		});
+		pickCb?.("1", false);
+		replySelect({
+			ok: true,
+			data: {
+				payload: { kind: "login", username: "me", password: "secret" },
+				isAuto: false,
+				otpOnly: false,
+				sessionGeneration: 0,
+			},
+		});
+		expect(fillForm).toHaveBeenCalledWith("me", "secret", false, other);
 	});
 
 	it("makes a late direct response inert after the anchor is replaced", () => {
