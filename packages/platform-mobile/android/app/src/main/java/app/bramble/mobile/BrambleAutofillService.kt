@@ -21,9 +21,6 @@ import android.widget.inline.InlinePresentationSpec
 import androidx.annotation.RequiresApi
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
-import uniffi.vault_crypto.isLocked
-import uniffi.vault_crypto.lock
-import uniffi.vault_crypto.unlockWithVek
 
 // Bramble's classic AOSP AutofillService. Runs in our own package (a dedicated :autofill
 // process), reads the real encrypted vault directly, and authenticates itself before any
@@ -140,10 +137,7 @@ class BrambleAutofillService : AutofillService() {
         inline: InlineContext?,
     ): Boolean {
         return try {
-            val wasLocked = isLocked()
-            unlockWithVek(vekB64)
-            val logins = VaultReader.readLogins(this)
-            if (wasLocked) lock()
+            val logins = CoreSession.borrow(vekB64) { VaultReader.readLogins(this) }
             KeepUnlockedStore.save(this, vekB64) // slide the window forward
 
             val matches = logins.filter { VaultReader.matches(it, hosts, matchPackage, callerCerts) }
