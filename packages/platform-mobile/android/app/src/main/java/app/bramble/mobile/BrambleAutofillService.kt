@@ -224,7 +224,7 @@ class BrambleAutofillService : AutofillService() {
     }
 
     private fun offerToSaveEnabled(): Boolean {
-        val prefs = getSharedPreferences(BrambleAutofill.CAPACITOR_PREFS, Context.MODE_PRIVATE)
+        val prefs = BrambleAutofill.appPrefs(this, BrambleAutofill.CAPACITOR_PREFS)
         // Default true (DEFAULT_OFFER_TO_SAVE): absent means on.
         return prefs.getString(BrambleAutofill.PREF_OFFER_TO_SAVE, null)?.trim() != "false"
     }
@@ -281,7 +281,7 @@ class BrambleAutofillService : AutofillService() {
     }
 
     private fun quickTypeEnabled(): Boolean {
-        val prefs = getSharedPreferences(BrambleAutofill.CAPACITOR_PREFS, Context.MODE_PRIVATE)
+        val prefs = BrambleAutofill.appPrefs(this, BrambleAutofill.CAPACITOR_PREFS)
         return prefs.getString(BrambleAutofill.PREF_AUTOFILL_QUICKTYPE, null)?.trim() == "true"
     }
 
