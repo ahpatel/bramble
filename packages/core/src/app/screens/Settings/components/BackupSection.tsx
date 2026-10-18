@@ -548,6 +548,12 @@ export function BackupSection() {
 
 	const [modal, setModal] = useState<ModalState | null>(null);
 	const [saving, setSaving] = useState(false);
+	// A failed Reconnect or Back up now; per-target run failures already show on their card.
+	const [actionError, setActionError] = useState<string | null>(null);
+	const surface = (action: Promise<unknown>) => {
+		setActionError(null);
+		action.catch((e) => setActionError((e as Error).message));
+	};
 
 	// Form fields for the add/edit modal.
 	const [endpoint, setEndpoint] = useState("");
@@ -746,8 +752,7 @@ export function BackupSection() {
 									onEdit={() => editTarget(target)}
 									onReconnect={
 										oauthId
-											? () =>
-													void backup.connectOAuth(oauthId, { targetId: target.id }).catch(() => {})
+											? () => surface(backup.connectOAuth(oauthId, { targetId: target.id }))
 											: undefined
 									}
 									onRemove={() => void backup.removeTarget(target.id)}
@@ -769,7 +774,7 @@ export function BackupSection() {
 						<Button
 							variant="secondary"
 							size="sm"
-							onClick={() => void backup.backupNow().catch(() => {})}
+							onClick={() => surface(backup.backupNow())}
 							disabled={runningIds.size > 0}
 						>
 							<Trans>Back up now</Trans>
@@ -780,6 +785,11 @@ export function BackupSection() {
 							</span>
 						)}
 					</div>
+					{actionError && (
+						<p className="text-xs text-red-500 break-words" title={actionError}>
+							{actionError}
+						</p>
+					)}
 
 					<p className="text-xs text-muted-foreground">
 						<Trans>

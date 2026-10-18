@@ -888,6 +888,12 @@ background (service worker on Chrome, event page on Firefox), so it's browser-ag
 Dropbox needs `token_access_type=offline` on the authorize request to return a refresh
 token.
 
+**Errors and limits.** A failed call carries Dropbox's own words: its `user_message`
+(written for end users) when present, else its `error_summary` tag, so a target card reads
+`Dropbox upload failed (409: path/insufficient_space)` rather than a bare status. A 429 waits
+out `Retry-After`, or 1s, 2s, 4s without one, at most three times; a longer wait is left to
+the next scheduled run.
+
 **Why Dropbox is the only OAuth tile.** Google Drive and OneDrive were both evaluated
 and dropped, because neither offers Dropbox's true-public-client experience:
 

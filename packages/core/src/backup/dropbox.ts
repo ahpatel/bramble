@@ -4,6 +4,37 @@ import type { BackupObject, BackupTarget, DropboxConfig } from "./types";
 const CONTENT = "https://content.dropboxapi.com/2";
 const API = "https://api.dropboxapi.com/2";
 
+// A 429 waits out Retry-After (seconds), or backs off 1s, 2s, 4s without one. A wait past the cap
+// is left to the next scheduled run rather than holding this one open.
+const RATE_LIMIT_RETRIES = 3;
+const MAX_RETRY_WAIT_MS = 30_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function retryDelayMs(res: Response, attempt: number): number {
+	const seconds = Number(res.headers.get("Retry-After"));
+	return seconds > 0 ? seconds * 1000 : 1000 * 2 ** attempt;
+}
+
+/** Dropbox's own account of a failure: user_message is meant for end users, error_summary is its tag. */
+async function failure(what: string, res: Response): Promise<Error> {
+	const text = await res.text().catch(() => "");
+	let detail = text.trim().slice(0, 200);
+	try {
+		const body = JSON.parse(text) as {
+			user_message?: { text?: unknown } | string;
+			error_summary?: unknown;
+		};
+		const userText =
+			typeof body.user_message === "string" ? body.user_message : body.user_message?.text;
+		if (typeof userText === "string" && userText) detail = userText;
+		// error_summary is padded with a random run of trailing dots; it is a prefix, not a value.
+		else if (typeof body.error_summary === "string")
+			detail = body.error_summary.replace(/[./]+$/, "");
+	} catch {}
+	return new Error(`Dropbox ${what} failed (${detail ? `${res.status}: ${detail}` : res.status})`);
+}
+
 /** Normalize an optional subfolder to a Dropbox path segment: "" or "/Sub/Folder". */
 function folderPrefix(path?: string): string {
 	const trimmed = (path ?? "").replace(/^\/+|\/+$/g, "");
@@ -29,7 +60,12 @@ export function createDropboxTarget(cfg: DropboxConfig): BackupTarget {
 	}
 
 	// Authorize + send; on a 401 drop the cached token and retry once with a fresh one.
-	async function call(url: string, init: RequestInit, retry = true): Promise<Response> {
+	async function call(
+		url: string,
+		init: RequestInit,
+		retry = true,
+		attempt = 0,
+	): Promise<Response> {
 		const res = await fetch(url, {
 			...init,
 			headers: {
@@ -39,7 +75,14 @@ export function createDropboxTarget(cfg: DropboxConfig): BackupTarget {
 		});
 		if (res.status === 401 && retry) {
 			accessToken = "";
-			return call(url, init, false);
+			return call(url, init, false, attempt);
+		}
+		if (res.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+			const wait = retryDelayMs(res, attempt);
+			if (wait <= MAX_RETRY_WAIT_MS) {
+				await sleep(wait);
+				return call(url, init, retry, attempt + 1);
+			}
 		}
 		return res;
 	}
@@ -55,14 +98,14 @@ export function createDropboxTarget(cfg: DropboxConfig): BackupTarget {
 				},
 				body: body as BodyInit,
 			});
-			if (!res.ok) throw new Error(`Dropbox upload failed (${res.status})`);
+			if (!res.ok) throw await failure("upload", res);
 		},
 		async get(key) {
 			const res = await call(`${CONTENT}/files/download`, {
 				method: "POST",
 				headers: { "Dropbox-API-Arg": JSON.stringify({ path: fullPath(key) }) },
 			});
-			if (!res.ok) throw new Error(`Dropbox download failed (${res.status})`);
+			if (!res.ok) throw await failure("download", res);
 			return new Uint8Array(await res.arrayBuffer());
 		},
 		async list(prefixArg) {
@@ -75,7 +118,7 @@ export function createDropboxTarget(cfg: DropboxConfig): BackupTarget {
 			});
 			// 409 = path/not_found: the folder simply doesn't exist yet.
 			if (res.status === 409) return [];
-			if (!res.ok) throw new Error(`Dropbox list failed (${res.status})`);
+			if (!res.ok) throw await failure("list", res);
 			const json = (await res.json()) as {
 				entries?: { ".tag"?: string; name?: string; size?: number; server_modified?: string }[];
 			};
@@ -96,7 +139,7 @@ export function createDropboxTarget(cfg: DropboxConfig): BackupTarget {
 				body: JSON.stringify({ path: fullPath(key) }),
 			});
 			// 409 = path_lookup/not_found: already gone, which is fine (delete is idempotent).
-			if (!res.ok && res.status !== 409) throw new Error(`Dropbox delete failed (${res.status})`);
+			if (!res.ok && res.status !== 409) throw await failure("delete", res);
 		},
 	};
 }
