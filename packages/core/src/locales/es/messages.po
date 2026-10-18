@@ -2708,6 +2708,11 @@ msgstr "Guardar su código de recuperación"
 msgid "Saved {0} to {1}"
 msgstr "Guardado {0} en {1}"
 
+#. placeholder {0}: descriptor.label
+#: packages/core/src/app/screens/Settings/components/AliasSection.tsx
+msgid "Saved. {0} can only be checked by creating an alias."
+msgstr "Guardado. {0} solo puede comprobarse creando un alias."
+
 #: packages/core/src/app/screens/CreateEntry/EntryForm.tsx
 #: packages/core/src/app/screens/Settings/components/MasterPasswordSection.tsx
 msgid "Saving…"

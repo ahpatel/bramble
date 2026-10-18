@@ -372,7 +372,7 @@ means the endpoint exists.
 | Provider | verify | create |
 |---|---|---|
 | Firefox Relay | `GET /api/v1/profiles/`, plus `GET /api/v1/relayaddresses/` to count against the free allowance of 5 | `POST /api/v1/relayaddresses/` |
-| DuckDuckGo | `GET /api/email/dashboard` | `POST /api/email/addresses` |
+| DuckDuckGo | none: no read-only call takes the copied token (see status item 5) | `POST /api/email/addresses` |
 
 What is **not** known is the shape of either `verify` response body, because no
 account existed to see one. Both schemas are therefore permissive, every field
@@ -718,14 +718,23 @@ link is not made clickable.
    this cheap to provoke deliberately and worth doing before Phase 2 designs the
    error surface.
 4. Rate limits, undocumented on all four.
-5. **DuckDuckGo and Firefox Relay: `verify` proven, `create` not.** Both were
-   connected with real keys on the desktop build (September 2026), so an
-   authenticated `2xx` has now been seen from each through `http_send`. What is
-   still unseen is a `create` from either, and the `verify` bodies themselves,
-   since the settings screen shows only "Connected." and never the account label;
-   the permissive schemas stay until a body is actually read. Both providers'
-   *error* bodies are measured: DuckDuckGo sends `{"error":"invalid_token"}`,
-   Relay sends Django REST Framework's `{"detail":"Invalid token."}`.
+5. **Firefox Relay: `verify` proven, `create` not.** Connected with a real key on
+   the desktop build (September 2026), so an authenticated `2xx` has been seen
+   through `http_send`; a `create` and the `verify` body are still unseen. Its
+   error body is Django REST Framework's `{"detail":"Invalid token."}`.
+   **DuckDuckGo: `create` proven, `verify` impossible (#123, October 2026).** With
+   the token copied the documented way (the bearer on the address request),
+   `POST /api/email/addresses` answers `201 {"address":"…"}`. That token is the
+   *access* token: `/api/email/dashboard` refuses it with
+   `401 {"error":"invalid_token"}`, because the dashboard takes the *login* token
+   from DuckDuckGo's one-time-code sign-in (and returns the access token), and
+   `GET /api/email/addresses` is a 404. No read-only call accepts it, so Check key
+   sends nothing for DuckDuckGo and says the key is only proven by creating an
+   alias. Separately, DuckDuckGo answers a bare `403` to curl's and OkHttp's
+   default User-Agents, while a browser's, none at all, an iOS `CFNetwork` one and
+   `Bramble/…` all get through; `Origin` is not checked (a `chrome-extension://`
+   origin is accepted). The Android transport therefore sends
+   `Bramble/<version> (Android)` instead of OkHttp's default.
 6. Whether DuckDuckGo's token **expires with the browser session** it was scraped
    from. If it does, an expiry is indistinguishable from a bad key and the
    settings screen has no remedy to offer.

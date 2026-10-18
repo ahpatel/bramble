@@ -38,6 +38,8 @@ export interface AliasAccount {
 	label?: string;
 	/** Aliases used against the allowance, when the provider reports both. Addy does. */
 	quota?: { used: number; limit: number };
+	/** Nothing was checked: the provider has no read-only call for this key, only creating an alias proves it. */
+	unchecked?: boolean;
 }
 
 /**

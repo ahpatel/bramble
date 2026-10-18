@@ -127,6 +127,22 @@ describe("AliasSection persistence", () => {
 		// only fail when pressed.
 		expect(h.set).not.toHaveBeenCalled();
 	});
+	// #123: DuckDuckGo has no read-only call the copied token is good for, so "Check key" used to
+	// report a working token as rejected. It must say what it can't check, without calling out.
+	it("says a DuckDuckGo key is only proven by creating an address, and sends nothing", async () => {
+		const fetchSpy = vi.fn(async () => new Response("{}", { status: 401 }));
+		vi.stubGlobal("fetch", fetchSpy);
+		mount(stored({ provider: "duckduckgo", options: {}, apiKey: "ddg-stored" }));
+		await waitFor(() => expect(providerSelect().value).toBe("duckduckgo"));
+
+		fireEvent.click(screen.getByRole("button", { name: /check key/i }));
+		expect(await screen.findByText(/can only be checked by creating an alias/i)).toBeTruthy();
+		expect(screen.queryByText(/rejected/i)).toBeNull();
+		expect(screen.queryByText(/^Connected\./)).toBeNull();
+		expect(fetchSpy).not.toHaveBeenCalled();
+		vi.unstubAllGlobals();
+	});
+
 	// A key belongs to the provider it was typed for. Carrying it across a switch meant the next
 	// "Check key" sent one provider's secret in an Authorization header to another provider's
 	// server, and the next blur saved it as that provider's key. Found testing DuckDuckGo: a

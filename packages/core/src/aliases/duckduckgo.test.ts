@@ -63,24 +63,13 @@ describe("createDuckDuckGoClient", () => {
 		expect(only(calls).init.body).toBeUndefined();
 	});
 
-	it("reports the personal Duck Address as the account label", async () => {
-		route(() => json({ user: { username: "someone" } }));
-		await expect(client().verify()).resolves.toEqual({ label: "someone@duck.com" });
-	});
-
-	// The dashboard response has never been seen against a live account, so verify must not
-	// reject a successful body it does not recognise: that would report a working token as broken.
-	it("accepts a dashboard whose fields it does not recognise", async () => {
-		route(() => json({ something_new: 1 }));
-		await expect(client().verify()).resolves.toEqual({ label: undefined });
-	});
-
-	// The service is unmetered and reports no allowance, so inventing one would be worse than
-	// showing none.
-	it("never reports a quota", async () => {
-		route(() => json({ user: { username: "someone" } }));
-		const account = await client().verify();
-		expect(account.quota).toBeUndefined();
+	// #123: the token users copy (the access token on the address request) is refused by the
+	// dashboard with 401 invalid_token, since the dashboard takes the login token, and listing
+	// addresses is a 404. Only creating an address proves the token, so a check sends nothing.
+	it("checks nothing over the network, and says so", async () => {
+		const calls = route(() => json({}));
+		await expect(client().verify()).resolves.toEqual({ unchecked: true });
+		expect(calls).toHaveLength(0);
 	});
 
 	it("strips a trailing slash from a configured base URL", async () => {
