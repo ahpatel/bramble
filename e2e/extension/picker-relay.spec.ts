@@ -2,6 +2,7 @@ import type { Frame, Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import {
 	createVault,
+	onOrigin,
 	openPopup,
 	seedExampleCard,
 	seedExampleLogin,
@@ -146,16 +147,19 @@ async function serve(page: Page, opts: ServeOpts = {}): Promise<void> {
 						}
 					: {}),
 			};
-			if (url.startsWith(`${PCI}/login`) || url.startsWith(LOGIN_SAME_SITE)) {
+			if (
+				(onOrigin(url, PCI) && new URL(url).pathname.startsWith("/login")) ||
+				onOrigin(url, LOGIN_SAME_SITE)
+			) {
 				return route.fulfill({ body: LOGIN_FRAME, headers: frameHeaders });
 			}
-			if (url.startsWith(PCI)) {
+			if (onOrigin(url, PCI)) {
 				return route.fulfill({ body: cardFrameHtml, headers: frameHeaders });
 			}
-			if (url.startsWith(AD)) {
+			if (onOrigin(url, AD)) {
 				return route.fulfill({ body: AD_FRAME, headers: frameHeaders });
 			}
-			if (url.startsWith(WALLET)) {
+			if (onOrigin(url, WALLET)) {
 				return route.fulfill({ body: WALLET_FRAME, headers: frameHeaders });
 			}
 			return route.fulfill({
@@ -171,7 +175,7 @@ function uiFrame(page: Page): Frame | undefined {
 }
 
 function cardFrame(page: Page): Frame {
-	const frame = page.frames().find((f) => f.url().startsWith(PCI));
+	const frame = page.frames().find((f) => onOrigin(f.url(), PCI));
 	if (!frame) throw new Error("card frame missing");
 	return frame;
 }
@@ -591,7 +595,7 @@ test("another frame on the page cannot move the relayed picker", async ({
 	await page.goto(`${MERCHANT}/`);
 
 	await openPicker(page);
-	const ad = page.frames().find((f) => f.url().startsWith(AD))!;
+	const ad = page.frames().find((f) => onOrigin(f.url(), AD))!;
 	await expect.poll(() => ad.evaluate(() => !!(window as any).__relayId)).toBe(true);
 	const before = await hostBox(page);
 
@@ -674,7 +678,10 @@ test("a sign-in form in a cross-site frame keeps its picker in that frame", asyn
 	const page = await context.newPage();
 	await serve(page, { topHtml: loginHost(PCI) });
 	await page.goto(`${MERCHANT}/`);
-	const login = () => page.frames().find((f) => f.url().startsWith(`${PCI}/login`))!;
+	const login = () =>
+		page
+			.frames()
+			.find((f) => onOrigin(f.url(), PCI) && new URL(f.url()).pathname.startsWith("/login"))!;
 
 	await expect(async () => {
 		await login().locator("#user").click();
@@ -712,7 +719,7 @@ test("a sign-in form in a same-site frame is hosted by the top frame", async ({
 	const page = await context.newPage();
 	await serve(page, { topHtml: loginHost(LOGIN_SAME_SITE) });
 	await page.goto(`${MERCHANT}/`);
-	const login = () => page.frames().find((f) => f.url().startsWith(LOGIN_SAME_SITE))!;
+	const login = () => page.frames().find((f) => onOrigin(f.url(), LOGIN_SAME_SITE))!;
 
 	await expect(async () => {
 		await login().locator("#user").click();

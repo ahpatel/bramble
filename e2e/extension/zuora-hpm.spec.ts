@@ -1,6 +1,12 @@
 import type { BrowserContext, Frame, Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { createVault, openPopup, seedExampleCard, waitOutPickerClickGuard } from "./helpers";
+import {
+	createVault,
+	onOrigin,
+	openPopup,
+	seedExampleCard,
+	waitOutPickerClickGuard,
+} from "./helpers";
 
 // Zuora's Hosted Payment Page as Zoom embeds it (us05web.zoom.us checkout): a cross-origin frame
 // sized to its own form (548x332), card fields with no cc-* tokens, the expiry as two selects.
@@ -180,13 +186,13 @@ async function serve(page: Page, top: string): Promise<void> {
 		if (route.request().resourceType() !== "document") {
 			return route.fulfill({ status: 200, body: "" });
 		}
-		const body = route.request().url().startsWith(ZUORA) ? HPM : top;
+		const body = onOrigin(route.request().url(), ZUORA) ? HPM : top;
 		return route.fulfill({ body, headers: { "content-type": "text/html" } });
 	});
 }
 
 function hpm(page: Page): Frame {
-	const frame = page.frames().find((f) => f.url().startsWith(ZUORA));
+	const frame = page.frames().find((f) => onOrigin(f.url(), ZUORA));
 	if (!frame) throw new Error("HPM frame missing");
 	return frame;
 }
