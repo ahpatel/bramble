@@ -21,7 +21,7 @@ interface EntryDetailProps {
 	onUse?: () => void;
 }
 
-/** Shared chrome for viewing any entry (banner, header, delete/edit footer); the mode supplies the fields. */
+/** Shared chrome for viewing any entry (banner, Edit header, archive/delete footer); the mode supplies the fields. */
 export function EntryDetail({
 	entry,
 	onEdit,
@@ -129,41 +129,15 @@ export function EntryDetail({
 							<h2 className="text-base truncate">{entry.name}</h2>
 							{subtitle && <p className="text-xs text-muted-foreground truncate">{subtitle}</p>}
 						</div>
-						<div className="flex items-center gap-1 shrink-0">
-							<Button
-								variant="ghost"
-								size="icon"
-								onClick={onEdit}
-								aria-label={t`Edit entry`}
-								title={t`Edit`}
-							>
-								<Pencil className="w-4 h-4" />
-							</Button>
-							<Button
-								variant="ghost"
-								size="icon"
-								onClick={handleSetArchived}
-								disabled={archiving}
-								aria-label={archived ? t`Restore entry` : t`Archive entry`}
-								title={archived ? t`Restore` : t`Archive`}
-							>
-								{archived ? (
-									<ArchiveRestore className="w-4 h-4" />
-								) : (
-									<Archive className="w-4 h-4" />
-								)}
-							</Button>
-							<Button
-								variant="ghost"
-								size="icon"
-								onClick={() => setConfirmDelete(true)}
-								className="hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
-								aria-label={t`Delete entry`}
-								title={t`Delete`}
-							>
-								<Trash2 className="w-4 h-4" />
-							</Button>
-						</div>
+						<Button
+							variant="secondary"
+							onClick={onEdit}
+							aria-label={t`Edit entry`}
+							className="shrink-0 gap-1.5 px-3"
+						>
+							<Pencil className="w-4 h-4" />
+							<Trans>Edit</Trans>
+						</Button>
 					</div>
 
 					<Detail entry={entry} copied={copied} copy={copy} />
@@ -191,6 +165,35 @@ export function EntryDetail({
 						)}
 					</div>
 				)}
+
+				{/* Kept away from Edit so a slip on the header can't archive or delete. */}
+				<div className="px-4 py-2.5 border-t border-border/50 flex items-center justify-end gap-2">
+					<Button
+						variant="secondary"
+						size="sm"
+						onClick={handleSetArchived}
+						disabled={archiving}
+						aria-label={archived ? t`Restore entry` : t`Archive entry`}
+						className="gap-1.5"
+					>
+						{archived ? (
+							<ArchiveRestore className="w-3.5 h-3.5" />
+						) : (
+							<Archive className="w-3.5 h-3.5" />
+						)}
+						{archived ? <Trans>Restore</Trans> : <Trans>Archive</Trans>}
+					</Button>
+					<Button
+						variant="destructiveOutline"
+						size="sm"
+						onClick={() => setConfirmDelete(true)}
+						aria-label={t`Delete entry`}
+						className="gap-1.5"
+					>
+						<Trash2 className="w-3.5 h-3.5" />
+						<Trans>Delete</Trans>
+					</Button>
+				</div>
 
 				{confirmDelete && (
 					<div className="p-4 bg-muted/30 border-t border-border/50 flex items-center justify-between gap-3">
