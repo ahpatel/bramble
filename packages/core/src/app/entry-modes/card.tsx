@@ -180,7 +180,7 @@ function CardFields() {
 				/>
 			</div>
 
-			<TextArea label={t`Notes (optional)`} rows={2} {...register("notes")} />
+			<TextArea label={t`Notes (optional)`} rows={2} autoGrow {...register("notes")} />
 		</>
 	);
 }

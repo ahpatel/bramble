@@ -26,7 +26,7 @@ function NoteFields() {
 	return (
 		<>
 			<TextField label={t`Title`} type="text" {...register("name")} />
-			<TextArea label={t`Content`} rows={8} {...register("notes")} />
+			<TextArea label={t`Content`} rows={8} autoGrow {...register("notes")} />
 		</>
 	);
 }

@@ -421,7 +421,7 @@ function LoginFields({ initialBreach }: EntryFieldsProps) {
 				</div>
 			)}
 
-			<TextArea label={t`Notes (optional)`} rows={3} {...register("notes")} />
+			<TextArea label={t`Notes (optional)`} rows={3} autoGrow {...register("notes")} />
 
 			<AdvancedDisclosure>
 				<ToggleRow
