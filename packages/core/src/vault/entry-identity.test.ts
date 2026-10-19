@@ -44,7 +44,12 @@ describe("entryContentKey", () => {
 	it("treats a re-import carrying new tags/archived state as an entire duplicate", () => {
 		const already = [stored(login())];
 		const incoming = [login({ tags: ["work"] })];
-		expect(splitAlreadyImported(already, incoming)).toEqual({ fresh: [], duplicates: 1 });
+		expect(splitAlreadyImported(already, incoming)).toEqual({
+			fresh: [],
+			duplicates: 1,
+			likelyDuplicates: [],
+			passwordDiffers: 0,
+		});
 	});
 
 	it("survives key reordering, since stored entries are rebuilt on read", () => {
@@ -108,7 +113,7 @@ describe("splitAlreadyImported", () => {
 		const existing = [stored(login()), stored(login({ name: "Fastmail" }))];
 		const { fresh, duplicates } = splitAlreadyImported(existing, [
 			login(),
-			login({ name: "Reddit" }),
+			login({ name: "Reddit", urls: ["https://reddit.com"] }),
 		]);
 		expect(duplicates).toBe(1);
 		expect(fresh.map((e) => e.name)).toEqual(["Reddit"]);
@@ -131,5 +136,124 @@ describe("splitAlreadyImported", () => {
 		const { fresh, duplicates } = splitAlreadyImported(existing, [login({ password: "rotated" })]);
 		expect(duplicates).toBe(0);
 		expect(fresh).toHaveLength(1);
+	});
+});
+
+// The same login exported by a different manager never matches field for field: one export
+// carries custom fields or extra URLs the other doesn't, so importing a second manager's file
+// doubled the vault. Same site, username and password is the same login.
+describe("splitAlreadyImported: the same login from another manager", () => {
+	const card = (number: string): Extract<EntryData, { type: "card" }> => ({
+		type: "card",
+		name: "Visa",
+		cardholderName: "Jane Doe",
+		number,
+		expMonth: "12",
+		expYear: "2030",
+		cvv: "123",
+	});
+
+	it("holds back a login matching on site, username and password whatever else differs", () => {
+		const existing = [
+			stored(
+				login({
+					customFields: [{ key: "PAT", value: "ghp_x", hidden: true }],
+					notes: "dev account",
+				}),
+			),
+		];
+		const result = splitAlreadyImported(existing, [login({ name: "github.com", notes: "other" })]);
+		expect(result.fresh).toEqual([]);
+		expect(result.likelyDuplicates.map((e) => e.name)).toEqual(["github.com"]);
+		expect(result.duplicates).toBe(0);
+	});
+
+	it("reads the site through www, a path or a missing scheme", () => {
+		const existing = [stored(login({ urls: ["https://www.github.com/login?next=/"] }))];
+		const { fresh, likelyDuplicates } = splitAlreadyImported(existing, [
+			login({ urls: ["github.com"] }),
+			login({ urls: ["https://GITHUB.com"], username: "octocat" }),
+		]);
+		expect(fresh).toEqual([]);
+		expect(likelyDuplicates).toHaveLength(2);
+	});
+
+	it("compares usernames without case or surrounding spaces", () => {
+		const existing = [stored(login({ username: "OctoCat@Example.com" }))];
+		const { likelyDuplicates } = splitAlreadyImported(existing, [
+			login({ username: "  octocat@example.com " }),
+		]);
+		expect(likelyDuplicates).toHaveLength(1);
+	});
+
+	it("imports a different password for the same site and username as new, and counts it", () => {
+		const existing = [stored(login())];
+		const result = splitAlreadyImported(existing, [login({ password: "older" })]);
+		expect(result.fresh).toHaveLength(1);
+		expect(result.likelyDuplicates).toEqual([]);
+		expect(result.passwordDiffers).toBe(1);
+	});
+
+	it("treats another site or another username as a different login", () => {
+		const existing = [stored(login())];
+		const result = splitAlreadyImported(existing, [
+			login({ urls: ["https://gitlab.com"] }),
+			login({ username: "someone-else" }),
+		]);
+		expect(result.fresh).toHaveLength(2);
+		expect(result.likelyDuplicates).toEqual([]);
+		expect(result.passwordDiffers).toBe(0);
+	});
+
+	it("matches logins with no website on their title instead", () => {
+		const existing = [stored(login({ urls: [], name: "Router admin" }))];
+		const result = splitAlreadyImported(existing, [
+			login({ urls: [], name: "router ADMIN" }),
+			login({ urls: [], name: "NAS admin" }),
+		]);
+		expect(result.likelyDuplicates.map((e) => e.name)).toEqual(["router ADMIN"]);
+		expect(result.fresh.map((e) => e.name)).toEqual(["NAS admin"]);
+	});
+
+	it("never matches on an empty password", () => {
+		const existing = [stored(login({ password: "" }))];
+		const { fresh, likelyDuplicates } = splitAlreadyImported(existing, [
+			login({ password: "", notes: "passkey only" }),
+		]);
+		expect(likelyDuplicates).toEqual([]);
+		expect(fresh).toHaveLength(1);
+	});
+
+	it("matches a login on the same app link", () => {
+		const existing = [stored(login({ urls: ["androidapp://com.github.android"] }))];
+		const { likelyDuplicates } = splitAlreadyImported(existing, [
+			login({ urls: ["androidapp://com.github.android"], notes: "from the phone" }),
+		]);
+		expect(likelyDuplicates).toHaveLength(1);
+	});
+
+	it("does not take an app link for a website", () => {
+		const existing = [stored(login({ urls: ["androidapp://com.github.android"] }))];
+		const { fresh } = splitAlreadyImported(existing, [
+			login({ urls: ["androidapp://com.example.other"] }),
+		]);
+		expect(fresh).toHaveLength(1);
+	});
+
+	it("matches a card on its number, however it is spaced", () => {
+		const existing = [stored(card("4111 1111 1111 1111"))];
+		const result = splitAlreadyImported(existing, [
+			{ ...card("4111111111111111"), name: "Personal Visa", cvv: "" },
+			card("5555 5555 5555 4444"),
+		]);
+		expect(result.likelyDuplicates.map((e) => e.name)).toEqual(["Personal Visa"]);
+		expect(result.fresh).toHaveLength(1);
+	});
+
+	it("still drops exact duplicates outright rather than holding them back", () => {
+		const existing = [stored(login())];
+		const result = splitAlreadyImported(existing, [login()]);
+		expect(result.duplicates).toBe(1);
+		expect(result.likelyDuplicates).toEqual([]);
 	});
 });

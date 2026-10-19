@@ -8,7 +8,7 @@ import {
 	exchangeBlockedReason,
 	useExchangeAvailability,
 } from "../../../hooks/useExchangeAvailability";
-import { useVault } from "../../../hooks/useVault";
+import { type EntryData, useVault } from "../../../hooks/useVault";
 import { useVaultRegistry } from "../../../hooks/useVaultRegistry";
 import type { ImportParserContext, ImportProvider } from "../../../import";
 import {
@@ -89,15 +89,31 @@ export function ImportShell({ onClose }: { onClose?: () => void } = {}) {
 	// Re-importing the same file is the common accident (github issue #39), so drop what the
 	// vault already holds before the preview rather than after the write. Counted, never silent.
 	const [duplicates, setDuplicates] = useState(0);
+	// The same credential in another manager's shape: kept out unless the user asks for it.
+	const [heldBack, setHeldBack] = useState<EntryData[]>([]);
+	const [passwordDiffers, setPasswordDiffers] = useState(0);
 	const showResult = useCallback(
 		(res: ImportResult) => {
-			const { fresh, duplicates: dupes } = splitAlreadyImported(entries, res.imported);
-			setDuplicates(dupes);
-			if (fresh.length > 0) setResult({ ...res, imported: fresh, byType: tallyByType(fresh) });
-			return fresh.length;
+			const split = splitAlreadyImported(entries, res.imported);
+			setDuplicates(split.duplicates);
+			setHeldBack(split.likelyDuplicates);
+			setPasswordDiffers(split.passwordDiffers);
+			const offered = split.fresh.length + split.likelyDuplicates.length;
+			if (offered > 0) {
+				setResult({ ...res, imported: split.fresh, byType: tallyByType(split.fresh) });
+			}
+			return offered;
 		},
 		[entries],
 	);
+	const importHeldBack = () => {
+		setResult((r) => {
+			if (!r) return r;
+			const imported = [...r.imported, ...heldBack];
+			return { ...r, imported, byType: tallyByType(imported) };
+		});
+		setHeldBack([]);
+	};
 
 	const claimed = useRef(false);
 	useEffect(() => {
@@ -363,6 +379,27 @@ export function ImportShell({ onClose }: { onClose?: () => void } = {}) {
 								</Trans>
 							</p>
 						)}
+						{heldBack.length > 0 && (
+							<div className="space-y-2">
+								<p className="text-xs text-muted-foreground">
+									<Trans>
+										{heldBack.length} more look like entries you already have (the same site,
+										username and password, or the same card number), so they are held back.
+									</Trans>
+								</p>
+								<Button variant="secondary" size="sm" onClick={importHeldBack} disabled={busy}>
+									<Trans>Import them anyway</Trans>
+								</Button>
+							</div>
+						)}
+						{passwordDiffers > 0 && (
+							<p className="text-xs text-muted-foreground">
+								<Trans>
+									{passwordDiffers} share a site and username with an entry you already have, but
+									with a different password. They will be added as new entries.
+								</Trans>
+							</p>
+						)}
 						{result.warnings.length > 0 && (
 							<ul className="text-xs text-yellow-500 space-y-1 list-disc pl-4">
 								{result.warnings.slice(0, 8).map((w) => (
@@ -392,7 +429,12 @@ export function ImportShell({ onClose }: { onClose?: () => void } = {}) {
 							<ArrowLeft className="w-3.5 h-3.5" />
 							<Trans>Choose another file</Trans>
 						</Button>
-						<Button variant="primary" size="md" onClick={runImport} disabled={busy}>
+						<Button
+							variant="primary"
+							size="md"
+							onClick={runImport}
+							disabled={busy || result.imported.length === 0}
+						>
 							{busy ? (
 								<>
 									<Loader2 className="w-3.5 h-3.5 animate-spin" />

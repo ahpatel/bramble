@@ -17,7 +17,17 @@ through their own parsers with no decryption step and are not covered here.
 Every one of them, encrypted or not, lands in the same place: `ImportShell` runs
 `splitAlreadyImported` (`core/vault/entry-identity.ts`) over the parsed entries
 before the preview, so re-importing a file adds nothing and says how many it
-skipped. Import always merges into the current vault. Replacing a vault wholesale
+skipped. That check compares content, so it only catches the same file: the same
+login exported by another manager differs field by field (custom fields, extra
+URLs, titles, notes), and importing a second manager's export used to double the
+vault. A second, looser check holds those back: a login with the same site
+(host without `www.`, or app link), username (case-insensitive) and non-empty
+password as a vault login, or a card with the same number, is listed as "look like
+entries you already have" with an Import them anyway button. A login sharing a site
+and username under a different password is still imported as new, and the preview
+says how many. Hosts, not registrable domains, because core carries no public
+suffix list, and missing a duplicate is the safer error. Import always merges into
+the current vault. Replacing a vault wholesale
 is a different operation, restore-from-backup, described in
 [cloud-storage-backups.md](cloud-storage-backups.md).
 

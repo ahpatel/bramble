@@ -9,6 +9,11 @@
 // produces two objects that differ before any content is examined. The same applies nested:
 // a PasskeyCredential carries its own `createdAt`, which the Bitwarden importer falls back to
 // `Date.now()` for when the export has no creation date.
+//
+// Content identity only catches the same FILE. The same login exported by another manager
+// differs field by field (custom fields, extra URLs, notes), so a looser credential identity
+// sits beside it: same site, username and password for a login, same number for a card. Those
+// are held back for the user to confirm rather than dropped. See docs/encrypted-import.md.
 
 import type { EntryData } from "../hooks/useVault";
 
@@ -54,26 +59,106 @@ export function entryContentKey(entry: EntryData): string {
 	return JSON.stringify(canonical(entry));
 }
 
+/** A website's host with case and `www.` dropped (a bare host read as https); an app link as itself. */
+function siteKey(url: string): string {
+	const raw = url.trim();
+	if (!raw) return "";
+	try {
+		const parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+		if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+			return parsed.hostname.toLowerCase().replace(/^www\./, "");
+		}
+		return raw.toLowerCase();
+	} catch {
+		return "";
+	}
+}
+
+const fold = (s: string | undefined) => (s ?? "").trim().toLowerCase();
+
+interface Credential {
+	hosts: Set<string>;
+	name: string;
+	password: string;
+}
+
+function credentialOf(entry: EntryData): Credential | null {
+	if (entry.type !== "login") return null;
+	const hosts = new Set((entry.urls ?? []).map(siteKey).filter((h) => h !== ""));
+	return { hosts, name: fold(entry.name), password: entry.password ?? "" };
+}
+
+/** The same site: a shared host or app link, or for two logins with neither, the same title. */
+function sameSite(a: Credential, b: Credential): boolean {
+	if (a.hosts.size === 0 || b.hosts.size === 0) {
+		return a.hosts.size === 0 && b.hosts.size === 0 && a.name === b.name;
+	}
+	for (const h of a.hosts) if (b.hosts.has(h)) return true;
+	return false;
+}
+
+const cardNumber = (entry: EntryData) =>
+	entry.type === "card" ? (entry.number ?? "").replace(/\D/g, "") : "";
+
+export interface ImportSplit {
+	/** New to the vault: import these. */
+	fresh: EntryData[];
+	/** Identical to an entry the vault holds (or to one earlier in the batch): dropped. */
+	duplicates: number;
+	/** The same login (site, username, password) or card (number) in another shape: held back. */
+	likelyDuplicates: EntryData[];
+	/** In `fresh` but sharing a site and username with a vault login under another password. */
+	passwordDiffers: number;
+}
+
 /**
- * Split incoming entries into the ones worth importing and a count of those the vault already
- * holds. Duplicates WITHIN the incoming batch collapse too, so a file that repeats an entry
- * imports it once.
+ * Split incoming entries against the vault. Exact copies, including repeats within the batch,
+ * are dropped; the same credential in another manager's shape is held back for the caller to
+ * offer; everything else is fresh.
  */
 export function splitAlreadyImported(
 	existing: readonly EntryData[],
 	incoming: readonly EntryData[],
-): { fresh: EntryData[]; duplicates: number } {
+): ImportSplit {
 	const seen = new Set(existing.map(entryContentKey));
-	const fresh: EntryData[] = [];
-	let duplicates = 0;
+	const byUser = new Map<string, Credential[]>();
+	const cards = new Set<string>();
+	for (const entry of existing) {
+		const cred = credentialOf(entry);
+		if (cred && entry.type === "login") {
+			const user = fold(entry.username);
+			byUser.set(user, [...(byUser.get(user) ?? []), cred]);
+		}
+		const number = cardNumber(entry);
+		if (number.length >= 12) cards.add(number);
+	}
+
+	const split: ImportSplit = { fresh: [], duplicates: 0, likelyDuplicates: [], passwordDiffers: 0 };
 	for (const entry of incoming) {
 		const key = entryContentKey(entry);
 		if (seen.has(key)) {
-			duplicates++;
+			split.duplicates++;
 			continue;
 		}
 		seen.add(key);
-		fresh.push(entry);
+
+		const cred = credentialOf(entry);
+		if (cred && entry.type === "login" && cred.password !== "") {
+			const sameSiteAndUser = (byUser.get(fold(entry.username)) ?? []).filter((o) =>
+				sameSite(o, cred),
+			);
+			if (sameSiteAndUser.some((o) => o.password === cred.password)) {
+				split.likelyDuplicates.push(entry);
+				continue;
+			}
+			if (fold(entry.username) !== "" && sameSiteAndUser.length > 0) split.passwordDiffers++;
+		}
+		const number = cardNumber(entry);
+		if (number.length >= 12 && cards.has(number)) {
+			split.likelyDuplicates.push(entry);
+			continue;
+		}
+		split.fresh.push(entry);
 	}
-	return { fresh, duplicates };
+	return split;
 }

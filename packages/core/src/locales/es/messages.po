@@ -54,6 +54,11 @@ msgstr "{0} · añadido {1}"
 msgid "{0} (your domain)"
 msgstr "{0} (su dominio)"
 
+#. placeholder {0}: heldBack.length
+#: packages/core/src/app/screens/Import/ImportShell.tsx
+msgid "{0} more look like entries you already have (the same site, username and password, or the same card number), so they are held back."
+msgstr "{0} más se parecen a entradas que ya tiene (mismo sitio, nombre de usuario y contraseña, o el mismo número de tarjeta), por lo que se retienen."
+
 #: packages/core/src/app/bulk-actions/tags.tsx
 msgid "{affected, plural, one {Tag # entry} other {Tag # entries}}"
 msgstr "{affected, plural, one {Etiquetar # entrada} other {Etiquetar # entradas}}"
@@ -102,6 +107,10 @@ msgstr "{passkeys, plural, one {# passkey está almacenada en estas entradas y s
 #: packages/core/src/app/screens/Import/util/count-line.tsx
 msgid "{passkeys, plural, one {# passkey} other {# passkeys}}"
 msgstr "{passkeys, plural, one {# llave de acceso} other {# llaves de acceso}}"
+
+#: packages/core/src/app/screens/Import/ImportShell.tsx
+msgid "{passwordDiffers} share a site and username with an entry you already have, but with a different password. They will be added as new entries."
+msgstr "{passwordDiffers} comparten el sitio y el nombre de usuario con una entrada que ya tiene, pero con una contraseña diferente. Se añadirán como nuevas entradas."
 
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "{remaining}s left"
@@ -1654,6 +1663,10 @@ msgstr "Importar datos"
 #: packages/core/src/app/screens/Settings/components/DataSection.tsx
 msgid "Import from another manager"
 msgstr "Importar desde otro gestor"
+
+#: packages/core/src/app/screens/Import/ImportShell.tsx
+msgid "Import them anyway"
+msgstr "Importar de todos modos"
 
 #: packages/core/src/app/screens/Import/ImportShell.tsx
 msgid "Imported {imported} items"
