@@ -79,8 +79,8 @@ class AutofillUnlockActivity : BrambleUnlockActivity() {
                 if (loaded == null) {
                     setError(getString(R.string.af_err_load_logins))
                 } else {
-                    logins = loaded
-                    matches = loaded.filter { VaultReader.matches(it, hosts, matchPackage, callerCerts) }
+                    logins = sortedByTitle(loaded) { it.displayTitle(this) }
+                    matches = logins.filter { VaultReader.matches(it, hosts, matchPackage, callerCerts) }
                     showList("")
                 }
             }
@@ -165,11 +165,11 @@ class AutofillUnlockActivity : BrambleUnlockActivity() {
             matches.forEach { container.addView(row(it)) }
             val others = logins.filter { o -> matches.none { it.id == o.id } }
             if (others.isNotEmpty()) {
-                container.addView(sectionLabel(getString(R.string.af_section_all_items)))
+                container.addView(sectionLabel(getString(R.string.af_section_other_logins)))
                 others.forEach { container.addView(row(it)) }
             }
         } else {
-            val title = if (matches.isEmpty() && label.isNotEmpty()) getString(R.string.af_section_no_matches, label) else getString(R.string.af_section_items_count, logins.size)
+            val title = if (matches.isEmpty() && label.isNotEmpty()) getString(R.string.af_section_no_matches, label) else getString(R.string.af_section_logins_count, logins.size)
             container.addView(sectionLabel(title))
             logins.forEach { container.addView(row(it)) }
         }
@@ -306,6 +306,12 @@ class AutofillUnlockActivity : BrambleUnlockActivity() {
         setPadding(0, dp(5), 0, dp(5))
         addView(view)
     }
+}
+
+/** A to Z by title, ignoring case and accents (#112: it was vault order, newest last). */
+internal fun sortedByTitle(logins: List<AutofillLogin>, title: (AutofillLogin) -> String): List<AutofillLogin> {
+    val collator = java.text.Collator.getInstance().apply { strength = java.text.Collator.PRIMARY }
+    return logins.sortedWith { a, b -> collator.compare(title(a), title(b)) }
 }
 
 /** Split a query into lowercased tokens, as the main app's `queryTokens` does. */

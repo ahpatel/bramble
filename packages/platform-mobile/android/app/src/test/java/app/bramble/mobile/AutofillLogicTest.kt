@@ -20,6 +20,14 @@ class AutofillLogicTest {
         AutofillLogin("id-$name", name, username, "pw", null, hosts.toList())
 
     @Test
+    fun `the list is sorted by title, ignoring case and accents`() {
+        // #112: it was in vault order, newest at the bottom.
+        val logins = listOf("zulu", "Échelle", "alpha", "Bravo", "echo").map { login(it, "u") }
+        val sorted = sortedByTitle(logins) { it.name }
+        assertEquals(listOf("alpha", "Bravo", "Échelle", "echo", "zulu"), sorted.map { it.name })
+    }
+
+    @Test
     fun `search matches every token, across different fields`() {
         // The whole point of the fix: one field holds "acme", another holds the domain, and a
         // query naming both used to find nothing because it was tested as a raw substring.

@@ -13,14 +13,13 @@
     <string name="af_err_load_logins">Konnten Logins nicht laden.</string>
     <string name="af_cancel">Abbrechen</string>
     <string name="af_search_logins">Logins suchen</string>
-    <string name="af_empty_no_logins">Noch keine Logins gespeichert.
-Fügen Sie eines in Bramble hinzu.</string>
+    <string name="af_empty_no_logins">Noch keine Logins gespeichert.\nFügen Sie eines in Bramble hinzu.</string>
     <string name="af_empty_no_match">Keine Logins entsprechen „%s”.</string>
     <string name="af_section_for">Für %s</string>
     <string name="af_section_matches">Treffer</string>
-    <string name="af_section_all_items">Alle Elemente</string>
     <string name="af_section_no_matches">Keine Treffer für %s</string>
-    <string name="af_section_items_count">Elemente (%d)</string>
+    <string name="af_section_other_logins">Weitere Logins</string>
+    <string name="af_section_logins_count">Logins (%d)</string>
     <string name="af_no_name">(kein Name)</string>
     <string name="af_use_password">Passwort verwenden</string>
     <string name="af_err_biometric_prepare">Biometrische Entsperrung konnte nicht vorbereitet werden</string>
