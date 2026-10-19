@@ -1327,8 +1327,12 @@ msgid "Everything in this file is already in your vault, so there is nothing to 
 msgstr "Todo en este archivo ya está en su caja fuerte, por lo que no hay nada que importar."
 
 #: packages/core/src/app/entry-modes/login.tsx
-msgid "Exact hostname only"
-msgstr "Solo nombre de host exacto"
+msgid "Exact hostname (and port, if the URL has one)"
+msgstr "Nombre de host exacto (y puerto, si la URL lo tiene)"
+
+#: packages/core/src/app/entry-modes/login.tsx
+#~ msgid "Exact hostname only"
+#~ msgstr "Solo nombre de host exacto"
 
 #: packages/core/src/app/entry-modes/tags.tsx
 msgid "Existing tags"
@@ -3645,9 +3649,17 @@ msgstr "Actualizada {0}"
 msgid "Updates"
 msgstr "Actualizaciones"
 
+#: packages/core/src/app/entry-modes/login.tsx
+msgid "Use {currentSite}"
+msgstr "Usar {currentSite}"
+
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Use Bramble for passkeys"
 msgstr "Utilizar Bramble para las claves de acceso"
+
+#: packages/core/src/app/entry-modes/login.tsx
+msgid "Use current site"
+msgstr "Usar sitio actual"
 
 #: packages/core/src/app/entry-modes/card.tsx
 msgid "Use digits only."
