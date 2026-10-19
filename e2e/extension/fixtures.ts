@@ -49,9 +49,16 @@ export async function launchExtensionContext(reuseProfileDir?: string): Promise<
 /** Single-device fixture: `context` + `extensionId` for tests that only need one browser. */
 export const test = base.extend<{ context: BrowserContext; extensionId: string }>({
 	// biome-ignore lint/correctness/noEmptyPattern: Playwright requires the fixtures destructuring param.
-	context: async ({}, use) => {
+	context: async ({}, use, testInfo) => {
 		const { context, profileDir } = await launchExtensionContext();
+		// A CI retry is traced here because `use.trace` never reaches a launchPersistentContext.
+		const trace = !!process.env.CI && testInfo.retry > 0;
+		if (trace) await context.tracing.start({ screenshots: true, snapshots: true });
 		await use(context);
+		if (trace) {
+			const failed = testInfo.status !== testInfo.expectedStatus;
+			await context.tracing.stop(failed ? { path: testInfo.outputPath("trace.zip") } : undefined);
+		}
 		await context.close();
 		rmSync(profileDir, { recursive: true, force: true });
 	},
