@@ -1,6 +1,6 @@
 import { i18n } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
-import { Trans, useLingui } from "@lingui/react/macro";
+import { useLingui } from "@lingui/react/macro";
 import { CreditCard, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { useFormContext } from "react-hook-form";
@@ -18,7 +18,7 @@ import {
 import { Button } from "../components/ui/button";
 import { TextArea } from "../components/ui/text-area";
 import { TextField } from "../components/ui/text-field";
-import { DetailField, DetailValue } from "./DetailField";
+import { DetailField, DetailNotes, DetailValue } from "./DetailField";
 import type { EntryDetailBodyProps, EntryMode } from "./types";
 
 interface CardFormValues {
@@ -259,12 +259,7 @@ function CardDetail({ entry, copied, copy }: EntryDetailBodyProps) {
 			</div>
 
 			{card.notes && (
-				<div className="space-y-1.5">
-					<p className="text-xs text-muted-foreground">
-						<Trans>Notes</Trans>
-					</p>
-					<p className="text-sm whitespace-pre-wrap">{card.notes}</p>
-				</div>
+				<DetailNotes label={t`Notes`} value={card.notes} copied={copied} copy={copy} />
 			)}
 		</>
 	);

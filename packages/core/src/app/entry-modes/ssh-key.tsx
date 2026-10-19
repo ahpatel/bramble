@@ -1,6 +1,6 @@
 import { i18n } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
-import { Trans, useLingui } from "@lingui/react/macro";
+import { useLingui } from "@lingui/react/macro";
 import { Check, Copy, Eye, EyeOff, KeyRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useFormContext } from "react-hook-form";
@@ -10,7 +10,7 @@ import { Button } from "../components/ui/button";
 import { SecretArea } from "../components/ui/secret-area";
 import { TextArea } from "../components/ui/text-area";
 import { TextField } from "../components/ui/text-field";
-import { DetailField, DetailValue } from "./DetailField";
+import { DetailField, DetailNotes, DetailValue } from "./DetailField";
 import type { EntryDetailBodyProps, EntryMode } from "./types";
 
 /** OpenSSH SHA-256 fingerprint of `publicKey`. undefined until derived (async) and on parse failure. */
@@ -188,14 +188,7 @@ function SshKeyDetail({ entry, copied, copy }: EntryDetailBodyProps) {
 				</DetailField>
 			)}
 
-			{key.notes && (
-				<div className="space-y-1.5">
-					<p className="text-xs text-muted-foreground">
-						<Trans>Notes</Trans>
-					</p>
-					<p className="text-sm whitespace-pre-wrap">{key.notes}</p>
-				</div>
-			)}
+			{key.notes && <DetailNotes label={t`Notes`} value={key.notes} copied={copied} copy={copy} />}
 		</>
 	);
 }

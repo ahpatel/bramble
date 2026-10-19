@@ -1,11 +1,12 @@
 import { i18n } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
-import { Trans, useLingui } from "@lingui/react/macro";
+import { useLingui } from "@lingui/react/macro";
 import { FileText } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import type { NoteEntryData } from "../../hooks/useVault";
 import { TextArea } from "../components/ui/text-area";
 import { TextField } from "../components/ui/text-field";
+import { DetailNotes } from "./DetailField";
 import type { EntryDetailBodyProps, EntryMode } from "./types";
 
 interface NoteFormValues {
@@ -30,16 +31,10 @@ function NoteFields() {
 	);
 }
 
-function NoteDetail({ entry }: EntryDetailBodyProps) {
+function NoteDetail({ entry, copied, copy }: EntryDetailBodyProps) {
 	const note = entry as NoteEntryData & { id: string };
-	return (
-		<div className="space-y-1.5">
-			<p className="text-xs text-muted-foreground">
-				<Trans>Content</Trans>
-			</p>
-			<p className="text-sm whitespace-pre-wrap">{note.notes || "-"}</p>
-		</div>
-	);
+	const { t } = useLingui();
+	return <DetailNotes label={t`Content`} value={note.notes ?? ""} copied={copied} copy={copy} />;
 }
 
 /** EntryMode for secure notes. */

@@ -42,7 +42,7 @@ import { PasswordStrengthMeter } from "../components/ui/password-strength-meter"
 import { SelectField } from "../components/ui/select-field";
 import { TextArea } from "../components/ui/text-area";
 import { TextField } from "../components/ui/text-field";
-import { DetailField, DetailValue } from "./DetailField";
+import { DetailField, DetailNotes, DetailValue } from "./DetailField";
 import type { EntryDetailBodyProps, EntryFieldsProps, EntryMode } from "./types";
 
 /** The login form's value shape. (Custom fields are host-owned and shared across modes, so not listed here.) */
@@ -779,12 +779,7 @@ function LoginDetail({ entry, copied, copy }: EntryDetailBodyProps) {
 			)}
 
 			{login.notes && (
-				<div className="space-y-1.5">
-					<p className="text-xs text-muted-foreground">
-						<Trans>Notes</Trans>
-					</p>
-					<p className="text-sm whitespace-pre-wrap">{login.notes}</p>
-				</div>
+				<DetailNotes label={t`Notes`} value={login.notes} copied={copied} copy={copy} />
 			)}
 		</>
 	);
