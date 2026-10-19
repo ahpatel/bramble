@@ -52,6 +52,31 @@ export function extractHostname(url: string): string {
 	}
 }
 
+/**
+ * A login's web hostnames plus, lined up with them, the port each URL names ("" for none;
+ * `URL` already reads 80 on http and 443 on https as none). `ports` is left out when no URL
+ * names one.
+ */
+export function loginHosts(urls: readonly string[]): { hostnames: string[]; ports?: string[] } {
+	const hostnames: string[] = [];
+	const ports: string[] = [];
+	for (const url of urls) {
+		const hostname = extractHostname(url);
+		if (hostname.length === 0) continue;
+		hostnames.push(hostname);
+		ports.push(urlPort(url));
+	}
+	return ports.some((p) => p !== "") ? { hostnames, ports } : { hostnames };
+}
+
+function urlPort(url: string): string {
+	try {
+		return new URL(url).port;
+	} catch {
+		return "";
+	}
+}
+
 function autofillCustomFields(fields: CustomField[] | undefined) {
 	if (!fields) return undefined;
 	const out = fields.filter((f) => f.value).map((f) => ({ key: f.key, value: f.value }));
@@ -59,11 +84,12 @@ function autofillCustomFields(fields: CustomField[] | undefined) {
 }
 
 function loginIndexEntry(entry: LoginEntry): IndexEntry {
-	const hostnames = entry.urls.map(extractHostname).filter((h): h is string => h.length > 0);
+	const { hostnames, ports } = loginHosts(entry.urls);
 	return {
 		type: "login",
 		id: entry.id,
 		hostnames,
+		ports,
 		name: entry.name,
 		username: entry.username,
 		password: entry.password,

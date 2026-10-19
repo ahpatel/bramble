@@ -2,9 +2,9 @@
 
 import type { OptionsScreen, PopOutHandoff, ShellAdapter } from "@core/adapters/shell";
 import type { Target } from "@core/flags";
-import { extractHostname } from "@core/vault/autofill-index";
+import { loginHosts } from "@core/vault/autofill-index";
 import { setWebauthnInterceptionPauser, setWebauthnRpId } from "@core/vault/webauthn-ceremony";
-import { hostnameMatches } from "./dedupe";
+import { effectivePort, hostnameMatches } from "./dedupe";
 import { api } from "./platform-api";
 import { ACTIVE_VAULT_SESSION_KEY } from "./session-keys";
 import {
@@ -145,12 +145,16 @@ export const extensionShell: ShellAdapter = {
 	async matchCurrentTab(logins) {
 		const origin = await this.getCurrentTabOrigin();
 		if (!origin) return [];
-		const host = new URL(origin).hostname;
+		const page = new URL(origin);
+		const port = effectivePort(page);
 		return logins
-			.filter((l) => {
-				const hostnames = l.urls.map(extractHostname).filter((h) => h.length > 0);
-				return hostnameMatches({ hostnames, subdomainMatch: l.subdomainMatch }, host);
-			})
+			.filter((l) =>
+				hostnameMatches(
+					{ ...loginHosts(l.urls), subdomainMatch: l.subdomainMatch },
+					page.hostname,
+					port,
+				),
+			)
 			.map((l) => l.id);
 	},
 	async popOut(handoff?: PopOutHandoff) {

@@ -1,6 +1,13 @@
-import type { IndexEntry, LoginIndexEntry } from "@core/adapters/autofill";
+import type { IndexEntry, LoginIndexEntry, SubdomainMatchMode } from "@core/adapters/autofill";
+import { loginHosts } from "@core/vault/autofill-index";
 import { describe, expect, it } from "vitest";
-import { dedupeCapture, hostnameMatches, registrableDomain } from "./dedupe";
+import {
+	dedupeCapture,
+	effectivePort,
+	type HostnameMatchable,
+	hostnameMatches,
+	registrableDomain,
+} from "./dedupe";
 
 function login(over: Partial<LoginIndexEntry> & Pick<LoginIndexEntry, "id">): LoginIndexEntry {
 	return {
@@ -205,6 +212,139 @@ describe("dedupeCapture", () => {
 		);
 		const result = dedupeCapture(index, "accounts.google.com", "alice", "x");
 		expect(result.kind).toBe("save");
+	});
+});
+
+/** A login as the index projects it from its saved URLs. */
+function saved(urls: string[], subdomainMatch?: SubdomainMatchMode): HostnameMatchable {
+	return { ...loginHosts(urls), subdomainMatch };
+}
+
+/** A page's hostname and effective port, as the background reads them off its sender. */
+function on(url: string): [string, string] {
+	const u = new URL(url);
+	return [u.hostname, effectivePort(u)];
+}
+
+describe("exact policy and ports (#131)", () => {
+	it("offers a login saved with a port only on that port", () => {
+		const dsm = saved(["http://nas.local:5000"], "exact");
+		const portainer = saved(["http://nas.local:9000/#/home"], "exact");
+		expect(hostnameMatches(dsm, ...on("http://nas.local:5000/login"))).toBe(true);
+		expect(hostnameMatches(portainer, ...on("http://nas.local:5000/login"))).toBe(false);
+		expect(hostnameMatches(dsm, ...on("http://nas.local:9000/"))).toBe(false);
+		expect(hostnameMatches(portainer, ...on("http://nas.local:9000/"))).toBe(true);
+		expect(hostnameMatches(dsm, ...on("http://nas.local/"))).toBe(false);
+	});
+
+	it("keeps matching every port of the host when the saved URL names none", () => {
+		const nas = saved(["https://nas.local"], "exact");
+		expect(hostnameMatches(nas, ...on("http://nas.local:5000/"))).toBe(true);
+		expect(hostnameMatches(nas, ...on("https://nas.local:8443/"))).toBe(true);
+		expect(hostnameMatches(nas, ...on("https://nas.local/"))).toBe(true);
+		expect(hostnameMatches(nas, ...on("https://other.local/"))).toBe(false);
+	});
+
+	it("reads a scheme's own default port as no port", () => {
+		expect(saved(["https://nas.local:443"], "exact")).toEqual(
+			saved(["https://nas.local"], "exact"),
+		);
+		expect(saved(["http://nas.local:80"], "exact")).toEqual(saved(["http://nas.local"], "exact"));
+		expect(
+			hostnameMatches(saved(["https://nas.local:443"], "exact"), ...on("http://nas.local:8080")),
+		).toBe(true);
+	});
+
+	it("compares a pinned port with the page's effective port", () => {
+		// 443 named on http: is a real pin, and an https page with no port is served on 443.
+		const pinned = saved(["http://nas.local:443"], "exact");
+		expect(hostnameMatches(pinned, ...on("https://nas.local/"))).toBe(true);
+		expect(hostnameMatches(pinned, ...on("http://nas.local/"))).toBe(false);
+		const alt = saved(["https://nas.local:8443"], "exact");
+		expect(hostnameMatches(alt, ...on("https://nas.local:8443/"))).toBe(true);
+		expect(hostnameMatches(alt, ...on("https://nas.local/"))).toBe(false);
+	});
+
+	it("pins each of a login's URLs separately", () => {
+		const twoPorts = saved(["http://nas.local:5000", "http://nas.local:5001"], "exact");
+		expect(hostnameMatches(twoPorts, ...on("http://nas.local:5001/"))).toBe(true);
+		expect(hostnameMatches(twoPorts, ...on("http://nas.local:8080/"))).toBe(false);
+		const mixed = saved(
+			["http://nas.local:5000", "androidapp://com.synology", "https://other.local"],
+			"exact",
+		);
+		expect(hostnameMatches(mixed, ...on("http://nas.local:5000/"))).toBe(true);
+		expect(hostnameMatches(mixed, ...on("http://nas.local:8080/"))).toBe(false);
+		expect(hostnameMatches(mixed, ...on("http://other.local:8080/"))).toBe(true);
+	});
+
+	it.each([
+		["http://192.168.1.10:8080", "http://192.168.1.10:8080/admin", "http://192.168.1.10:9000/"],
+		["http://localhost:3000", "http://localhost:3000/", "http://localhost:5173/"],
+		["http://[fe80::1]:8080", "http://[fe80::1]:8080/", "http://[fe80::1]:9000/"],
+		[
+			"https://bücher.example:8443",
+			"https://xn--bcher-kva.example:8443/",
+			"https://bücher.example/",
+		],
+	])("pins the port on %s", (url, samePort, otherPort) => {
+		const entry = saved([url], "exact");
+		expect(hostnameMatches(entry, ...on(samePort))).toBe(true);
+		expect(hostnameMatches(entry, ...on(otherPort))).toBe(false);
+	});
+
+	it("offers no port-pinned URL when the page's port is unknown", () => {
+		expect(hostnameMatches(saved(["http://nas.local:5000"], "exact"), "nas.local")).toBe(false);
+		expect(hostnameMatches(saved(["http://nas.local"], "exact"), "nas.local")).toBe(true);
+	});
+
+	it("leaves the eTLD+1 and subdomain policies ignoring ports", () => {
+		expect(hostnameMatches(saved(["http://nas.local:5000"]), ...on("http://nas.local:9000/"))).toBe(
+			true,
+		);
+		expect(
+			hostnameMatches(saved(["https://example.com:8443"]), ...on("https://www.example.com/")),
+		).toBe(true);
+		expect(
+			hostnameMatches(
+				saved(["https://example.com:8443"], "subdomain"),
+				...on("https://app.example.com:9000/"),
+			),
+		).toBe(true);
+		expect(hostnameMatches(saved(["https://example.com:8443"], "etld1"), "example.com")).toBe(true);
+	});
+
+	it("keeps a capture on another port from becoming an update of a pinned login", () => {
+		const index = indexOf(
+			login({ id: "dsm", ...loginHosts(["http://nas.local:5000"]), subdomainMatch: "exact" }),
+		);
+		expect(dedupeCapture(index, "nas.local", "alice", "new", "8080").kind).toBe("save");
+		expect(dedupeCapture(index, "nas.local", "alice", "new", "5000").kind).toBe("update");
+	});
+
+	it("narrows an index entry shaped like a Host-matched Bitwarden import to its port", () => {
+		// What core's bitwarden.test.ts shows toAutofillIndex projecting from such an import.
+		const index = [
+			login({
+				id: "dsm",
+				name: "DSM",
+				hostnames: ["nas.local"],
+				ports: ["5000"],
+				subdomainMatch: "exact",
+			}),
+			login({
+				id: "pt",
+				name: "Portainer",
+				hostnames: ["nas.local"],
+				ports: ["9000"],
+				subdomainMatch: "exact",
+			}),
+			login({ id: "router", name: "Router", hostnames: ["nas.local"], ports: ["8080"] }),
+		];
+		const offered = (url: string) =>
+			index.filter((e) => hostnameMatches(e, ...on(url))).map((e) => e.name);
+		expect(offered("http://nas.local:5000/")).toEqual(["DSM", "Router"]);
+		expect(offered("http://nas.local:9000/")).toEqual(["Portainer", "Router"]);
 	});
 });
 

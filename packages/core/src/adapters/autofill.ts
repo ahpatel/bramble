@@ -30,6 +30,9 @@ export interface LoginIndexEntry {
 	id: string;
 	/** Hostnames this login is registered against, derived from `LoginEntryData.urls` (empty/unparseable URLs dropped). */
 	hostnames: string[];
+	/** Aligned with `hostnames`: the port its URL names, "" for none. Absent when no URL names
+	 * one. Only the "exact" policy reads it. */
+	ports?: string[];
 	name: string;
 	username: string;
 	password: string;

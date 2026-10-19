@@ -230,6 +230,29 @@ describe("commit: update an existing login (password rotation)", () => {
 		);
 		expect(fetched.resp.data.password).toBe("pw1");
 	});
+
+	it("refuses to update an exact login pinned to another port of the same host", async () => {
+		const bg = await loadBackground({
+			sessionSeed: { [TEST_VEK_KEY]: "SEED" },
+			offscreen: commitOffscreen,
+		});
+		await setAutofillIndex(bg, [
+			{ ...LOGIN, hostnames: ["nas.local"], ports: ["5000"], subdomainMatch: "exact" },
+		]);
+		const cap = await bg.send(
+			{ type: "CORNER_PROMPT_CAPTURE", payload: { username: "alice", password: "OTHER" } },
+			pageSender("nas.local:9000", 9),
+		);
+		const res = await bg.send(
+			{
+				type: "CORNER_PROMPT_RESPONSE",
+				payload: { promptId: cap.resp.data.promptId, action: "update", chosenEntryId: "login1" },
+			},
+			pageSender("nas.local:9000", 9),
+		);
+		expect(res.resp.error).toContain("not offered on this origin");
+		expect(vaultChanged(bg)).toBe(false);
+	});
 });
 
 describe("commit: Save as new on the update card", () => {

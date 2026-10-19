@@ -66,12 +66,43 @@ a login's registered hostnames under that entry's **subdomain match** policy:
   sites. tldts leaves the private section out by default, which collapsed every
   tenant to `github.io` and offered one tenant's login to all the others
   (GHSA-rf5w-r5j3-6wmf).
-- `exact`: that exact hostname only.
+- `exact`: that exact hostname only, and, for a saved URL that names a port, only
+  that port (issue #131).
 - `subdomain`: this domain plus its subdomains.
 
 The query hostname is derived from the **verified message sender**
 (`sender.origin` / `sender.url` / `sender.tab.url`), not from the message body, so
 a content script cannot request matches for a different domain.
+
+### Ports under `exact`
+
+Several services on one local host (`nas.local:5000` and `nas.local:9000`, or
+`192.168.1.10:8080` and `:9000`) each want their own login. Under `exact`, a saved
+URL with an explicit port matches only a page served on that port; one without a
+port matches the host on any port, as before. Default ports are no port:
+`https://nas.local:443` reads the same as `https://nas.local`, and a page with no
+port is compared on its scheme's default (80 or 443). `etld1` and `subdomain`
+ignore ports.
+This is Bitwarden's "Host" match detection per login, and a Bitwarden import that
+used Host (or any non-default mode) already lands on `exact` with its URLs intact.
+
+There is no separate mode for it on purpose: `subdomainMatch` is persisted and
+synced, so a new enum value would be a format change that released clients reject.
+The port rides the index instead (`LoginIndexEntry.ports`, lined up with
+`hostnames` by `loginHosts`), which the extension holds in memory only. A URL
+saved without a scheme (`nas.local:5000`) is not read as a host and port, so it
+matches nothing, as before.
+
+Every page-side caller passes the page's port: the content-script query and fill
+authorization, the corner prompt's dedupe and update check (the port is stashed
+with the capture), and the popup's matches for the current tab. `AUTOFILL_FIND`
+takes a hostname only, so it never offers a port-pinned login. Not port-aware:
+the locked-state hint (an eTLD+1 hint only), the desktop app's link query and
+panel fill check (`index_store.rs` `query`, `socket.rs` `spotlight_request_fill`,
+which compare bare hostnames), and both mobile providers. Android's
+`AutofillService` gets `webDomain` with no port, and the iOS provider normalizes
+the service identifier to a bare host; both also ignore `subdomainMatch`, so on
+mobile two logins on one host are still offered together.
 
 ### App URIs are not web hosts
 

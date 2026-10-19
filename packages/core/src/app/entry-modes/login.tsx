@@ -475,7 +475,7 @@ function LoginFields({ initialBreach }: EntryFieldsProps) {
 				<div>
 					<SelectField label={t`Subdomain match`} {...register("subdomainMatch")}>
 						<option value="etld1">{t`eTLD+1 (default, matches all subdomains)`}</option>
-						<option value="exact">{t`Exact hostname only`}</option>
+						<option value="exact">{t`Exact hostname (and port, if the URL has one)`}</option>
 						<option value="subdomain">{t`This domain and its subdomains`}</option>
 					</SelectField>
 					<p className="text-xs text-muted-foreground mt-1.5">

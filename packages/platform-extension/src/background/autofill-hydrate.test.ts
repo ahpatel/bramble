@@ -239,6 +239,42 @@ describe("autofill query with no pushed index (rebuild from disk)", () => {
 			"old-login",
 		);
 	});
+
+	// The rebuild projects ports itself (via loginHosts), so it must pin them like the popup's push.
+	it("keeps an exact login's saved port in the rebuilt index", async () => {
+		const bg = await loadBackground({
+			sessionSeed: { [TEST_VEK_KEY]: "SEED" },
+			offscreen: (msg) =>
+				msg.type === "CRYPTO_DECRYPT_INDEX"
+					? {
+							ok: true,
+							data: [
+								{
+									id: "login1",
+									plaintext: JSON.stringify({
+										type: "login",
+										name: "DSM",
+										urls: ["https://nas.local:5001"],
+										username: "admin",
+										password: "pw1",
+										subdomainMatch: "exact",
+									}),
+								},
+							],
+						}
+					: diskOffscreen(msg),
+		});
+		const other = await bg.send(
+			{ type: "AUTOFILL_QUERY", hasLogin: true },
+			pageSender("nas.local:9443", 4),
+		);
+		expect(other.resp.data).toMatchObject({ locked: false, logins: [] });
+		const same = await bg.send(
+			{ type: "AUTOFILL_QUERY", hasLogin: true },
+			pageSender("nas.local:5001", 4),
+		);
+		expect(same.resp.data.logins).toMatchObject([{ id: "login1", name: "DSM" }]);
+	});
 });
 
 describe("keyed best-effort index hydration", () => {

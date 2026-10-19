@@ -8,7 +8,7 @@ import type {
 	UpdateLoginPrompt,
 } from "@core/adapters/autofill";
 import { type EncryptedEntry, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
-import { type DedupeOutcome, hostnameMatches, registrableDomain } from "../dedupe";
+import { type DedupeOutcome, effectivePort, hostnameMatches, registrableDomain } from "../dedupe";
 import { api } from "../platform-api";
 import { CORNER_HANDOFF_KEY } from "../session-keys";
 import {
@@ -37,6 +37,8 @@ interface PendingCapture {
 	promptId: string;
 	etld1: string;
 	hostname: string;
+	/** The page's effective port, for the "exact" policy's port pin. */
+	port?: string;
 	username: string;
 	password: string;
 	capturedAt: number;
@@ -77,7 +79,7 @@ async function clearPendingCapture(etld1: string): Promise<void> {
 /** Dedupe outcome for a capture, forcing a fresh save when it's flagged as a new login (signup). */
 function captureOutcome(capture: PendingCapture): DedupeOutcome {
 	if (capture.newLogin) return { kind: "save" };
-	return dedupeCapture(capture.hostname, capture.username, capture.password);
+	return dedupeCapture(capture.hostname, capture.username, capture.password, capture.port);
 }
 
 function buildCornerPayload(
@@ -180,7 +182,7 @@ async function commitCornerUpdate(capture: PendingCapture, chosenEntryId: string
 	const username = capture.username || indexEntry.username;
 	// Parity with authorizeFill: only overwrite a login the captured hostname matches, so a
 	// capture on site A can never be written into site B's entry. See docs/sec-audit-7726.md (A4).
-	if (!hostnameMatches(indexEntry, capture.hostname)) {
+	if (!hostnameMatches(indexEntry, capture.hostname, capture.port)) {
 		throw new Error("update target is not offered on this origin");
 	}
 	const vaultId = requireActiveVaultId();
@@ -273,9 +275,14 @@ async function cornerPromptCapture(
 ): Promise<MessageEnvelope> {
 	// Hostname is derived from the verified sender, never the message body.
 	let hostname = "";
+	let port = "";
 	try {
 		const src = sender.origin ?? sender.url ?? sender.tab?.url ?? "";
-		if (src) hostname = new URL(src).hostname;
+		if (src) {
+			const url = new URL(src);
+			hostname = url.hostname;
+			port = effectivePort(url);
+		}
 	} catch {}
 	if (!hostname) return { ok: false, error: "no verifiable origin on sender" };
 	const { username, password, newLogin } = message.payload as {
@@ -289,6 +296,7 @@ async function cornerPromptCapture(
 		promptId: globalThis.crypto.randomUUID(),
 		etld1,
 		hostname,
+		port,
 		username,
 		password,
 		capturedAt: Date.now(),

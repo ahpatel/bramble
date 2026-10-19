@@ -10,12 +10,13 @@ import type {
 import { AliasError } from "@core/aliases";
 import { decodeEntriesPayload } from "@core/sync";
 import { parseTotp, totpAt } from "@core/util/totp";
-import { extractHostname } from "@core/vault/autofill-index";
+import { loginHosts } from "@core/vault/autofill-index";
 import { normalizeEntryData } from "@core/vault/entry-normalize";
 import { CryptoDecryptIndexResultSchema } from "../crypto/messages";
 import {
 	type DedupeOutcome,
 	dedupeCapture as dedupeCaptureFn,
+	effectivePort,
 	hostnameMatches,
 	registrableDomain,
 } from "../dedupe";
@@ -230,8 +231,13 @@ export function updateLoginCredentials(id: string, username: string, password: s
 }
 
 /** Classify a captured credential against the live index (null index degrades to save). */
-export function dedupeCapture(hostname: string, username: string, password: string): DedupeOutcome {
-	return dedupeCaptureFn(currentIndex(), hostname, username, password);
+export function dedupeCapture(
+	hostname: string,
+	username: string,
+	password: string,
+	port?: string,
+): DedupeOutcome {
+	return dedupeCaptureFn(currentIndex(), hostname, username, password, port);
 }
 
 /** Masked card label for the dropdown, e.g. "Visa •••• 1234". */
@@ -257,6 +263,7 @@ function disabledResult(): QueryResult {
 /** Build the autofill match list for a hostname, or a locked result if no VEK. */
 function queryResult(
 	hostname: string,
+	port: string | undefined,
 	hasLogin: boolean,
 	hasCard: boolean,
 	hasOtp: boolean,
@@ -278,7 +285,7 @@ function queryResult(
 	const otps: MatchSummary[] = [];
 	for (const entry of index.values()) {
 		if (entry.type === "login") {
-			if (!hostnameMatches(entry, hostname)) continue;
+			if (!hostnameMatches(entry, hostname, port)) continue;
 			if (hasLogin) {
 				logins.push({
 					id: entry.id,
@@ -339,13 +346,13 @@ function fetchFill(entryId: string): FillPayload {
 	};
 }
 
-/** Verified page hostname for a content-script sender, or "" when none can be derived. */
-function senderHostname(sender: chrome.runtime.MessageSender): string {
+/** Verified page URL for a content-script sender, or null when none can be derived. */
+function senderUrl(sender: chrome.runtime.MessageSender): URL | null {
 	try {
 		const src = sender.origin ?? sender.url ?? sender.tab?.url ?? "";
-		if (src) return new URL(src).hostname;
+		if (src) return new URL(src);
 	} catch {}
-	return "";
+	return null;
 }
 
 /**
@@ -368,10 +375,14 @@ function sameSiteAsTop(sender: chrome.runtime.MessageSender): boolean {
 }
 
 /** Content-script-only requests must have a browser-verified page sender. */
-function pageSenderHostname(sender: chrome.runtime.MessageSender): string | null {
+function pageSenderUrl(sender: chrome.runtime.MessageSender): URL | null {
 	if (isExtensionSender(sender) || sender.tab?.id === undefined) return null;
-	const hostname = senderHostname(sender);
-	return hostname || null;
+	const url = senderUrl(sender);
+	return url?.hostname ? url : null;
+}
+
+function pageSenderHostname(sender: chrome.runtime.MessageSender): string | null {
+	return pageSenderUrl(sender)?.hostname ?? null;
 }
 
 function validQueryFlags(message: any): boolean {
@@ -424,9 +435,9 @@ function validClearIndexPayload(payload: unknown): payload is { owner: AutofillS
 }
 
 /** A login may be filled only on a page its hostname matches; cards are site-agnostic. See docs/autofill.md. */
-function authorizeFill(entryId: string, pageHostname: string): void {
+function authorizeFill(entryId: string, pageHostname: string, pagePort: string): void {
 	const entry = currentIndex()?.get(entryId);
-	if (entry?.type === "login" && !hostnameMatches(entry, pageHostname)) {
+	if (entry?.type === "login" && !hostnameMatches(entry, pageHostname, pagePort)) {
 		throw new Error("entry is not offered on this origin");
 	}
 }
@@ -493,17 +504,15 @@ async function hydrateIndexForOwner(
 			const projectedCustomFields =
 				customFields && customFields.length > 0 ? customFields : undefined;
 			if (data.type === "login") {
-				// Shares extractHostname with the popup's projection so the two can't
+				// Shares loginHosts with the popup's projection so the two can't
 				// drift; in particular both must drop app URIs rather than index a
 				// package name as a hostname.
-				const hostnames = data.urls
-					.filter((u): u is string => !!u)
-					.map(extractHostname)
-					.filter((h) => h.length > 0);
+				const { hostnames, ports } = loginHosts(data.urls.filter((u): u is string => !!u));
 				newIndex.set(enc.id, {
 					type: "login",
 					id: enc.id,
 					hostnames,
+					ports,
 					name: data.name,
 					username: data.username,
 					password: data.password,
@@ -631,6 +640,7 @@ async function autofillFind(
 					ok: true,
 					data: queryResult(
 						(message.payload as { hostname: string }).hostname,
+						undefined,
 						(message.payload as { hasLogin?: boolean }).hasLogin !== false,
 						(message.payload as { hasCard?: boolean }).hasCard === true,
 						(message.payload as { hasOtp?: boolean }).hasOtp === true,
@@ -646,14 +656,21 @@ async function autofillFind(
 		hasOtp?: boolean;
 	};
 	if (!autofillSessionOwnerIsCurrent(owner)) return { ok: false, error: "unavailable" };
-	const result = queryResult(hostname, hasLogin !== false, hasCard === true, hasOtp === true);
+	// The body names no port, so a port-pinned "exact" login is not offered here.
+	const result = queryResult(
+		hostname,
+		undefined,
+		hasLogin !== false,
+		hasCard === true,
+		hasOtp === true,
+	);
 	if (result.locked) return { ok: true, data: result };
 	await scheduleAutoLock();
 	if (!autofillSessionOwnerIsCurrent(owner)) return { ok: false, error: "unavailable" };
 	// Construct the summary after the final await/check, matching the secret-fetch ordering.
 	return {
 		ok: true,
-		data: queryResult(hostname, hasLogin !== false, hasCard === true, hasOtp === true),
+		data: queryResult(hostname, undefined, hasLogin !== false, hasCard === true, hasOtp === true),
 	};
 }
 
@@ -677,11 +694,11 @@ async function autofillQuery(
 	message: any,
 	sender: chrome.runtime.MessageSender,
 ): Promise<MessageEnvelope> {
-	const hostname = pageSenderHostname(sender);
+	const page = pageSenderUrl(sender);
 	if (!validQueryFlags(message)) return { ok: false, error: "invalid_request" };
 	// Hostname is derived from the verified sender, never the message body. The result
 	// returns through this request's response channel; it is never tab/frame-addressed.
-	if (!hostname) return { ok: false, error: "forbidden" };
+	if (!page) return { ok: false, error: "forbidden" };
 	const generation = autofillSessionSnapshot();
 	try {
 		// Master switch (Settings -> General). Enforced here rather than only in the page: a content
@@ -691,7 +708,7 @@ async function autofillQuery(
 		const hasLogin = message.hasLogin !== false;
 		const hasCard = message.hasCard === true;
 		const hasOtp = message.hasOtp === true;
-		const result = queryResult(hostname, hasLogin, hasCard, hasOtp);
+		const result = queryResult(page.hostname, effectivePort(page), hasLogin, hasCard, hasOtp);
 		result.sameSiteAsTop = sameSiteAsTop(sender);
 		if (hasCard && !result.locked) {
 			// Only ever an id this very response already carries, so the page learns nothing it
@@ -726,11 +743,11 @@ async function autofillSelect(
 	message: any,
 	sender: chrome.runtime.MessageSender,
 ): Promise<MessageEnvelope> {
-	const hostname = pageSenderHostname(sender);
+	const page = pageSenderUrl(sender);
 	if (!validSelectPayload(message.payload)) {
 		return { ok: false, error: "invalid_request" };
 	}
-	if (!hostname) return { ok: false, error: "forbidden" };
+	if (!page) return { ok: false, error: "forbidden" };
 	const generation = autofillSessionSnapshot();
 	// A request that began while locked (or a transition was already underway) must
 	// never become eligible merely because an unlock completes during its await. Nothing may
@@ -745,7 +762,7 @@ async function autofillSelect(
 		await scheduleAutoLock();
 		// Do every authorization and plaintext operation synchronously after the last await.
 		if (!autofillSessionIsCurrent(generation)) return { ok: false, error: "unavailable" };
-		authorizeFill(message.payload.entryId, hostname);
+		authorizeFill(message.payload.entryId, page.hostname, effectivePort(page));
 		const payload = fetchFill(message.payload.entryId);
 		rememberCardCarry(payload.kind, message.payload.entryId, sender.tab?.id);
 		return {
