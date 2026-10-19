@@ -74,7 +74,8 @@ type TotpScanState =
 	| { kind: "failed"; failure: QrScanFailure; vendor?: string };
 
 function LoginFields({ initialBreach }: EntryFieldsProps) {
-	const { register, control, watch, setValue, getValues } = useFormContext<LoginFormValues>();
+	const { register, control, watch, setValue, getValues, setFocus } =
+		useFormContext<LoginFormValues>();
 	const { shell } = usePlatform();
 	const { prefs } = usePrefs();
 	const { t } = useLingui();
@@ -84,6 +85,26 @@ function LoginFields({ initialBreach }: EntryFieldsProps) {
 		append: appendUrl,
 		remove: removeUrl,
 	} = useFieldArray({ control, name: "urls" });
+	const urlValues = watch("urls");
+	// Same origin a new login is seeded with; null off the extension and on non-web tabs.
+	const [currentSite, setCurrentSite] = useState<string | null>(null);
+	useEffect(() => {
+		let cancelled = false;
+		shell
+			.getCurrentTabOrigin()
+			.then((origin) => {
+				if (!cancelled) setCurrentSite(origin);
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [shell]);
+	const fillCurrentSite = (index: number, site: string) => {
+		setValue(`urls.${index}.value`, site, { shouldDirty: true });
+		// The button unmounts once the row has a value, so hand focus to the field.
+		setFocus(`urls.${index}.value`);
+	};
 	const [generatorOpen, setGeneratorOpen] = useState(false);
 	const aliases = useAliasProvider();
 	const [aliasState, setAliasState] = useState<AliasFieldState>({ kind: "idle" });
@@ -211,6 +232,21 @@ function LoginFields({ initialBreach }: EntryFieldsProps) {
 										label={t`Website URL`}
 										type="url"
 										autoComplete="off"
+										endAdornment={
+											// Empty rows only, so it never replaces a URL the user typed.
+											currentSite && !urlValues?.[index]?.value?.trim() ? (
+												<Button
+													variant="ghost"
+													size="none"
+													onClick={() => fillCurrentSite(index, currentSite)}
+													className="p-1.5 rounded-md"
+													aria-label={t`Use current site`}
+													title={t`Use ${currentSite}`}
+												>
+													<Plus className="w-3.5 h-3.5" />
+												</Button>
+											) : undefined
+										}
 										{...register(`urls.${index}.value`)}
 									/>
 								</div>
