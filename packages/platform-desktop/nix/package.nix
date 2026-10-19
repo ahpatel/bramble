@@ -89,6 +89,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
     xdotool # the global shortcut
   ];
 
+  # Autostart records this rather than current_exe(), the wrapped binary, which starts without
+  # the environment set here.
+  preFixup = ''
+    gappsWrapperArgs+=(--set BRAMBLE_LAUNCHER "$out/bin/bramble-desktop")
+  '';
+
   postFixup = ''
     # libappindicator-sys loads AppIndicator dynamically with dlopen(),
     # so add it to the binary's RUNPATH.

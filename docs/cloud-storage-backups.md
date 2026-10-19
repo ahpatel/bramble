@@ -474,6 +474,18 @@ tray app, and an XDG entry starts once the graphical session exists where a user
 `default.target` can come up with no display to render into. The TPM tier above is the reason that
 will need revisiting.
 
+The plugin records `current_exe()` and has no way to name anything else. Under Nix that is
+`.bramble-desktop-wrapped`, which started directly misses the environment `wrapGAppsHook3` sets: no
+TLS backend for WebKit, no loader for the tray icon (#108). So the Nix wrapper sets
+`BRAMBLE_LAUNCHER` to itself, and when that is an absolute path the app repairs the entry the
+plugin wrote: the desktop adapter calls `autostart_repoint` right after `enable()`, and every launch
+does the same for an entry an earlier build or version left. The repair swaps the program on the
+`Exec=` line in place, keeping any key a desktop added to switch the entry off, and reads the file
+where auto-launch writes it (`$HOME/.config/autostart/Bramble.desktop`, which ignores
+`XDG_CONFIG_HOME`). Without the variable, and on macOS and Windows, the command does nothing. The
+path is still a store path, so after an upgrade the entry starts the old version until the new one
+is launched once, and nothing if the old path was collected first.
+
 The registered entry passes `--hidden`, and the main window is configured `visible: false` so an
 ordinary launch shows it explicitly and a login launch never flashes one. That inverts the usual
 arrangement, so the show/hide decision is the first thing `setup` does, before anything fallible:

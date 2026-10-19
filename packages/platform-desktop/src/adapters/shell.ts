@@ -107,7 +107,10 @@ export const desktopShell: ShellAdapter = {
 	autostart: {
 		isEnabled,
 		setEnabled: async (on: boolean) => {
-			await (on ? enable() : disable());
+			if (!on) return disable();
+			await enable();
+			// The plugin records the running binary; a Nix install names its wrapper instead (#108).
+			await invoke<void>("autostart_repoint");
 		},
 	},
 
