@@ -674,7 +674,9 @@ covers three operating systems, so it has more parts than the others:
    crate's build script, so it stays away from the keys; on macOS the signing happens while
    bundling, which is what makes the split possible (`build-macos.ts --compile-only`).
 4. **Windows**, in `sign-windows.yml`, waits for your approval **in SignPath**, which holds the
-   Authenticode certificate. That approval stays by design.
+   Authenticode certificate. That approval stays by design. The request goes in about 20 minutes
+   after the release starts, once the installer is built, and the terminal that dispatched the
+   release prints its link the moment it does (SignPath emails it too). You have five hours.
 5. **Publish**, on macOS, waits for your approval **in the `desktop-release` environment**. It is the
    only job the updater key ever reaches, and it runs first-party actions only. It bundles,
    codesigns and notarizes macOS from the handed-over binaries (`--bundle-only`), re-signs the
@@ -743,6 +745,22 @@ be signed at all. Windows is therefore the one artifact Bramble ships that is no
 `.github/workflows/sign-windows.yml` builds it on a `windows-latest` runner and submits the single
 `*-setup.exe` to SignPath, a maintainer approves the request in the SignPath UI (manual by
 design), and the signed installer comes back as the `bramble-windows-signed` artifact.
+
+It is two jobs, as the other release workflows are: **build**, which holds no secret, and **sign**,
+which holds the SignPath token, never checks out the repository, and so runs none of its code. The
+split matters more here than elsewhere because the production certificate waits on a person (the
+test certificate signs at once, which is why the test runs never showed it). The sign job submits
+without waiting, announces the request's link as a notice titled "Approve in SignPath", then polls
+SignPath's REST API for up to five hours; `scripts/release-watch.ts` finds that notice and prints
+the link in the terminal that dispatched the release, and the release's publish job is given
+GitHub's six-hour maximum so it outlasts the wait.
+
+**If nobody approves in time,** the sign job fails and the installer it was waiting on is kept.
+Deny the stale request in SignPath, re-run the failed job on the `sign-windows.yml` run (it submits
+a fresh request for the same build, no rebuild), approve that, then re-run the failed jobs of the
+release run: its publish job collects from the same `sign-windows.yml` run. That relies on SignPath
+accepting a re-run, which it does by default and would stop doing if the project's policy ever set
+`disallow_reruns`; then the release is simply cut again.
 
 On the way out the job asks Windows (`Get-AuthenticodeSignature`) and fails on two things: no
 signature at all, because a silently unsigned installer looks identical until a user hits

@@ -285,8 +285,9 @@ jobs:
     permissions:
       contents: write # the tag, the release and the manifest commit
       actions: read # collecting the Windows installer from sign-windows.yml
-    # Bundling, codesigning and notarization, then as long as SignPath's approval takes.
-    timeout-minutes: 180
+    # Bundling, codesigning and notarization, then as long as SignPath's approval takes: the sign
+    # job waits up to five hours for it, so this is GitHub's six-hour maximum.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
