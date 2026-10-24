@@ -1,11 +1,20 @@
-import { decodeRoster, emptyEntriesPayload, encodeRoster } from "@core/sync";
+import type { Entry } from "@core/hooks/useVault";
+import {
+	decodeEntriesPayload,
+	decodeRoster,
+	emptyEntriesPayload,
+	encodeRoster,
+	type Hlc,
+	nextCausal,
+} from "@core/sync";
+import { withPartStamps } from "@core/vault/parts";
 import {
 	addVault,
 	EMPTY_REGISTRY,
 	VAULT_REGISTRY_KEY,
 	type VaultRegistry,
 } from "@core/vault/vault-registry";
-import { encodeVaultBlob, SLOT_KIND_PASSWORD } from "@core/vault-format";
+import { type EncryptedEntry, encodeVaultBlob, SLOT_KIND_PASSWORD } from "@core/vault-format";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTIVE_VAULT_SESSION_KEY } from "../session-keys";
 import { memoryStorageArea } from "../test/test-harness";
@@ -346,5 +355,105 @@ describe("sync is pinned to one vault", () => {
 		const sync = await loadSync();
 		await sync.maybeStartSync();
 		expect(types()).not.toContain("SYNC_ROSTER_SYNC");
+	});
+});
+
+describe("combining siblings in the background (release B2)", () => {
+	const at = (wall: number, node: string): Hlc => ({ wall, counter: 0, node });
+	/** A sealed version whose ciphertext is its plaintext, part-stamped like a real write. */
+	function version(
+		data: Record<string, unknown>,
+		stamp: Hlc,
+		prev?: { data: Record<string, unknown>; envelope: EncryptedEntry },
+	) {
+		const held = prev ? [prev.envelope] : [];
+		const causal = nextCausal({ hlc: stamp, bases: held, held });
+		const { id: _id, ...stamped } = withPartStamps(
+			{ id: "e", ...data } as Entry,
+			prev && { data: prev.data as never, version: prev.envelope },
+			stamp,
+		);
+		const envelope: EncryptedEntry = {
+			id: "e",
+			wrappedDek: "w",
+			dekIv: "d",
+			ciphertext: `ct:${JSON.stringify(stamped)}`,
+			iv: "i",
+			hlc: stamp,
+			...causal,
+		};
+		return { data: stamped as Record<string, unknown>, envelope };
+	}
+
+	it("the background port combines through the offscreen crypto", async () => {
+		vi.doMock("@core/sync/combine", async (importOriginal) => ({
+			...(await importOriginal<typeof import("@core/sync/combine")>()),
+			COMBINE_CONCURRENT_EDITS: true,
+		}));
+		try {
+			const base = version(
+				{ type: "login", name: "A", urls: [], username: "u", password: "p", notes: "n0" },
+				at(10, "laptop"),
+			);
+			const password = version({ ...base.data, password: "px" }, at(20, "laptop"), base);
+			const notes = version({ ...base.data, notes: "ny" }, at(30, "phone"), base);
+			const blob = encodeVaultBlob({
+				slots: [
+					{
+						kind: SLOT_KIND_PASSWORD,
+						slotId: new Uint8Array(16),
+						salt: new Uint8Array(16),
+						verifier: new Uint8Array(32),
+						wrapIv: new Uint8Array(12),
+						wrappedVek: new Uint8Array(48),
+					},
+				],
+				entriesIv: new Uint8Array(12),
+				entriesCiphertext: new Uint8Array([1]),
+			});
+			stubChrome(
+				{ ...seedTwoVaults(), "vault-blob-b64:a": btoa(String.fromCharCode(...blob)) },
+				{ [ACTIVE_VAULT_SESSION_KEY]: "a" },
+			);
+			let written: string | undefined;
+			sendToOffscreen.mockImplementation(async (m) => {
+				const p = m.payload ?? {};
+				switch (m.type) {
+					case "CRYPTO_DECRYPT_OUTER":
+						return {
+							ok: true,
+							data: JSON.stringify({ entries: [notes.envelope], tombstones: [] }),
+						} as never;
+					case "CRYPTO_CHECK_ENTRIES":
+						return { ok: true, data: (p.entries as unknown[]).map(() => true) } as never;
+					case "CRYPTO_DECRYPT_BATCH":
+						return {
+							ok: true,
+							data: (p.entries as { ciphertext: string }[]).map((e) => e.ciphertext.slice(3)),
+						} as never;
+					case "CRYPTO_ENCRYPT":
+						return {
+							ok: true,
+							data: { ciphertext: `ct:${p.plaintextJson}`, iv: "i", wrappedDek: "w", dekIv: "d" },
+						} as never;
+					case "CRYPTO_ENCRYPT_OUTER":
+						written = p.plaintext as string;
+						return { ok: true, data: { iv: "AAAAAAAAAAAAAAAA", ciphertext: "AA==" } } as never;
+				}
+				return { ok: true };
+			});
+			const sync = await loadSync();
+			const remote = JSON.stringify({ entries: [password.envelope], tombstones: [] });
+			expect(await sync.syncApplyRemote("a", remote)).toBe(true);
+			const merged = decodeEntriesPayload(written!);
+			expect(merged.conflicts).toBeUndefined();
+			expect(merged.entries[0]!.hlc.node.startsWith("~merge:")).toBe(true);
+			expect(JSON.parse(merged.entries[0]!.ciphertext.slice(3))).toMatchObject({
+				password: "px",
+				notes: "ny",
+			});
+		} finally {
+			vi.doUnmock("@core/sync/combine");
+		}
 	});
 });

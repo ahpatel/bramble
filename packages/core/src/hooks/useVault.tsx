@@ -190,6 +190,8 @@ import { backupTargetsKeyFor } from "../backup/config";
 import { exportToOs } from "../exchange";
 import { toKdbxEntries } from "../export/kdbx";
 import {
+	COMBINE_CONCURRENT_EDITS,
+	combinePayload,
 	compareHlc,
 	DEVICE_ID_KEY,
 	decodeEntriesPayload,
@@ -660,6 +662,24 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 				throw new UserFacingError(
 					"This vault was created by an incompatible version and can't be opened. Its data format has changed.",
 				);
+			}
+			// Siblings that changed different parts open as one version, written back so peers
+			// converge on it. A failure leaves them a conflict, as before combining.
+			if (COMBINE_CONCURRENT_EDITS) {
+				try {
+					const combined = await combinePayload(payload, crypto);
+					if (combined.stamps.length > 0) {
+						await createEntriesBlobStore({
+							crypto,
+							storage,
+							readDecodedBlob,
+							verifyVekBeforeWrite: true,
+						}).writeEntriesBlob(combined.payload);
+						payload = combined.payload;
+					}
+				} catch (e) {
+					console.warn("[vault] combining siblings on load failed; keeping the conflict:", e);
+				}
 			}
 			setSyncedSettings(payload.settings);
 			// Advance this device's clock past every stamp it just read, so the next

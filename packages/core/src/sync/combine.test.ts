@@ -3,7 +3,13 @@ import type { Entry, EntryData } from "../hooks/useVault";
 import { withPartStamps } from "../vault/parts";
 import type { EncryptedEntry } from "../vault-format";
 import { isAncestor, nextCausal, type Versioned } from "./causal";
-import { type Combined, combineSiblings, type Sibling } from "./combine";
+import {
+	type CombineCrypto,
+	type Combined,
+	combinePayload,
+	combineSiblings,
+	type Sibling,
+} from "./combine";
 import type { Hlc } from "./hlc";
 
 const at = (wall: number, node: string): Hlc => ({ wall, counter: 0, node });
@@ -224,5 +230,64 @@ describe("combineSiblings", () => {
 		};
 		const later = edit(combined, { name: "later" }, at(40, "d"));
 		expect(isAncestor({ hlc: c.hlc }, later.envelope)).toBe(true);
+	});
+});
+
+describe("combinePayload", () => {
+	const base = created(login({ notes: "n0" }), at(10, "a"));
+	/** Ciphertext is the plaintext, so sealing and opening are visible. */
+	const sealed = (sib: Sibling): EncryptedEntry => ({
+		...sib.envelope,
+		ciphertext: `ct:${JSON.stringify(sib.data)}`,
+	});
+	const crypto = (): CombineCrypto & { opened: number } => {
+		const c = {
+			opened: 0,
+			decryptEntries: async (ps: { ciphertext: string }[]) => {
+				c.opened += ps.length;
+				return ps.map((p) => (p.ciphertext.startsWith("ct:") ? p.ciphertext.slice(3) : null));
+			},
+			encryptEntry: async (json: string) => ({
+				ciphertext: `ct:${json}`,
+				iv: "i",
+				wrappedDek: "w",
+				dekIv: "d",
+			}),
+		};
+		return c;
+	};
+
+	it("a payload with no siblings is returned as is without decrypting", async () => {
+		const c = crypto();
+		const payload = { entries: [sealed(base)], tombstones: [] };
+		const out = await combinePayload(payload, c);
+		expect(out.payload).toBe(payload);
+		expect(out.stamps).toEqual([]);
+		expect(c.opened).toBe(0);
+	});
+
+	it("combinePayload leaves ids outside `only` unopened", async () => {
+		const x = edit(base, { password: "px" }, at(20, "a"));
+		const y = edit(base, { notes: "ny" }, at(30, "b"));
+		const c = crypto();
+		const payload = { entries: [sealed(y)], tombstones: [], conflicts: [sealed(x)] };
+		const out = await combinePayload(payload, c, new Set(["other"]));
+		expect(out.payload).toBe(payload);
+		expect(c.opened).toBe(0);
+	});
+
+	it("combinePayload replaces combinable siblings with one sealed version", async () => {
+		const x = edit(base, { password: "px" }, at(20, "a"));
+		const y = edit(base, { notes: "ny" }, at(30, "b"));
+		const out = await combinePayload(
+			{ entries: [sealed(y)], tombstones: [], conflicts: [sealed(x)] },
+			crypto(),
+		);
+		expect(out.payload.conflicts).toBeUndefined();
+		expect(out.payload.entries).toHaveLength(1);
+		const [only] = out.payload.entries;
+		expect(only!.hlc.node.startsWith("~merge:")).toBe(true);
+		expect(JSON.parse(only!.ciphertext.slice(3))).toMatchObject({ password: "px", notes: "ny" });
+		expect(out.stamps).toEqual([only!.hlc]);
 	});
 });

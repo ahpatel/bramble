@@ -5,6 +5,7 @@
 // (combine.golden.test.ts pins the output of the current one).
 
 import type { Entry, EntryData } from "../hooks/useVault";
+import { normalizeEntryData } from "../vault/entry-normalize";
 import {
 	effectivePartStamps,
 	fieldsOfPart,
@@ -19,7 +20,9 @@ import {
 import { withSupersededPasswords } from "../vault/password-changelog";
 import type { EncryptedEntry } from "../vault-format";
 import { type Causal, causalKey, inHistory, joinCausal, type Versioned } from "./causal";
+import type { EntriesPayload } from "./entries-payload";
 import { compareHlc, type Hlc } from "./hlc";
+import { mergeEntriesPayload } from "./vault-merge";
 
 /** Off until most devices record part stamps (release B2 flips it). */
 export const COMBINE_CONCURRENT_EDITS = false;
@@ -225,4 +228,62 @@ function pruneEmpty(items: Record<ItemList, Record<string, Hlc>>): ItemStamps {
 	const out: ItemStamps = {};
 	for (const list of ITEM_LISTS) if (Object.keys(items[list]).length > 0) out[list] = items[list];
 	return out;
+}
+
+/** What combining needs from the crypto host: open sealed entries, seal a new one. */
+export interface CombineCrypto {
+	decryptEntries(
+		ps: { ciphertext: string; iv: string; wrappedDek: string; dekIv: string }[],
+	): Promise<(string | null)[]>;
+	encryptEntry(
+		json: string,
+	): Promise<{ ciphertext: string; iv: string; wrappedDek: string; dekIv: string }>;
+}
+
+/**
+ * Combine every entry's siblings in a payload, or only those of `only`. Only ids with siblings are
+ * opened, so a payload without conflicts costs nothing. Returns the payload with each combined
+ * version merged in (it prunes what it replaces) and the stamps written, for the clock to witness.
+ */
+export async function combinePayload(
+	payload: EntriesPayload,
+	crypto: CombineCrypto,
+	only?: ReadonlySet<string>,
+): Promise<{ payload: EntriesPayload; stamps: Hlc[] }> {
+	const ids = [...new Set((payload.conflicts ?? []).map((e) => e.id))].filter(
+		(id) => !only || only.has(id),
+	);
+	const sealed: EncryptedEntry[] = [];
+	for (const id of ids) {
+		const envelopes = [
+			...payload.entries.filter((e) => e.id === id),
+			...(payload.conflicts ?? []).filter((e) => e.id === id),
+		];
+		const plaintexts = await crypto.decryptEntries(
+			envelopes.map(({ ciphertext, iv, wrappedDek, dekIv }) => ({
+				ciphertext,
+				iv,
+				wrappedDek,
+				dekIv,
+			})),
+		);
+		const siblings = envelopes.flatMap((envelope, i) => {
+			const plaintext = plaintexts[i];
+			if (plaintext == null) return [];
+			try {
+				return [{ envelope, data: normalizeEntryData(JSON.parse(plaintext)) }];
+			} catch {
+				return [];
+			}
+		});
+		const combined = await combineSiblings(siblings);
+		if (!combined) continue;
+		const enc = await crypto.encryptEntry(JSON.stringify(combined.data));
+		sealed.push({ id, ...enc, hlc: combined.hlc, ...combined.causal });
+	}
+	if (sealed.length === 0) return { payload, stamps: [] };
+	return {
+		payload: mergeEntriesPayload(payload, { entries: sealed, tombstones: [] }),
+		stamps: sealed.map((e) => e.hlc),
+	};
 }

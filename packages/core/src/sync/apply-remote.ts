@@ -7,10 +7,11 @@ import type { CryptoAdapter } from "../adapters/crypto";
 import type { EntriesBlobStore } from "../vault/entries-blob";
 import type { EncryptedEntry } from "../vault-format";
 import { causalKey, type Versioned } from "./causal";
+import { COMBINE_CONCURRENT_EDITS, combinePayload } from "./combine";
 import { type EntriesPayload, sanitizeRemoteEntriesPayload } from "./entries-payload";
 import { entryVersionKey } from "./entry-version";
 import { compareHlc, type Hlc } from "./hlc";
-import { mergeEntriesPayload } from "./vault-merge";
+import { heldVersions, mergeEntriesPayload } from "./vault-merge";
 
 /** Host hooks for reading and writing the local entries payload. */
 export interface VaultSyncPort {
@@ -24,6 +25,11 @@ export interface VaultSyncPort {
 	writeMerged(merged: EntriesPayload): Promise<void>;
 	/** Whether each entry decrypts under this vault's key; only the verdict leaves the crypto host. */
 	openable(entries: EncryptedEntry[]): Promise<boolean[]>;
+	/** Combine the siblings of `ids` in the crypto host (docs/sync-conflicts.md, Phase B); absent = never. */
+	combineSiblings?(
+		payload: EntriesPayload,
+		ids: ReadonlySet<string>,
+	): Promise<{ payload: EntriesPayload; stamps: Hlc[] }>;
 }
 
 /** Every stamp the remote carries (winners, losers, siblings and histories), for clock witnessing. */
@@ -122,6 +128,18 @@ async function admitAndMerge(
 }
 
 /**
+ * Ids holding siblings whose versions this merge changed. Combining is a pure function of the
+ * versions, so siblings this device already held (and didn't combine) are left unopened.
+ */
+function newSiblingIds(local: EntriesPayload, merged: EntriesPayload): Set<string> {
+	const held = (p: EntriesPayload, id: string) =>
+		heldVersions(p, id).map(causalKey).sort().join("\n");
+	return new Set(
+		(merged.conflicts ?? []).map((e) => e.id).filter((id) => held(local, id) !== held(merged, id)),
+	);
+}
+
+/**
  * Merge an incoming remote payload into the local vault. Writes (and so triggers
  * a re-broadcast in a mesh) only when the merge changed local state, which keeps
  * gossip from looping forever once peers converge. `rejected` remembers refused entry
@@ -130,20 +148,33 @@ async function admitAndMerge(
 export async function applyRemotePayload(
 	port: VaultSyncPort,
 	remote: EntriesPayload,
-	{ rejected = new Set<string>() }: { rejected?: Set<string> } = {},
+	{
+		rejected = new Set<string>(),
+		combine = COMBINE_CONCURRENT_EDITS,
+	}: { rejected?: Set<string>; combine?: boolean } = {},
 ): Promise<ApplyResult> {
 	// A peer's payload is untrusted: drop any future-dated (poisoned) stamps before merge or
 	// witness, so a member can't pin an un-deletable entry by stamping it years ahead.
 	const safe = sanitizeRemoteEntriesPayload(remote);
 	const local = await port.readLocal();
 	const { admitted, merged } = await admitAndMerge(port, local, safe, rejected);
-	const changed = !payloadsEquivalent(local, merged);
+	const unchanged = { payload: merged, stamps: [] as Hlc[] };
+	const ids = combine && port.combineSiblings ? newSiblingIds(local, merged) : new Set<string>();
+	// Combining only tidies siblings the merge already kept, so a failure leaves them as they are.
+	const combined =
+		port.combineSiblings && ids.size > 0
+			? await port.combineSiblings(merged, ids).catch((e: unknown) => {
+					console.warn("[sync] combining siblings failed; keeping them as they are:", e);
+					return unchanged;
+				})
+			: unchanged;
+	const changed = !payloadsEquivalent(local, combined.payload);
 	if (changed) {
 		// Only admitted stamps: a refused entry must not advance this device's clock.
-		await port.witnessRemote(remoteStamps(admitted));
-		await port.writeMerged(merged);
+		await port.witnessRemote([...remoteStamps(admitted), ...combined.stamps]);
+		await port.writeMerged(combined.payload);
 	}
-	return { payload: merged, changed };
+	return { payload: combined.payload, changed };
 }
 
 /**
@@ -153,7 +184,7 @@ export async function applyRemotePayload(
  */
 export function createVaultSyncPort(deps: {
 	store: EntriesBlobStore;
-	crypto: Pick<CryptoAdapter, "decryptEntries">;
+	crypto: Pick<CryptoAdapter, "decryptEntries" | "encryptEntry">;
 	witnessRemote: (stamps: Hlc[]) => Promise<void>;
 	onChanged?: () => void | Promise<void>;
 }): VaultSyncPort {
@@ -164,6 +195,7 @@ export function createVaultSyncPort(deps: {
 			await deps.store.writeEntriesBlob(merged);
 			await deps.onChanged?.();
 		},
+		combineSiblings: (payload, ids) => combinePayload(payload, deps.crypto, ids),
 		openable: async (entries) =>
 			(
 				await deps.crypto.decryptEntries(

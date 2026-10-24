@@ -29,7 +29,7 @@ async function load(d: Device): Promise<VaultEntries> {
 }
 
 /** `to` takes in what `from` holds, as a peer broadcast would deliver it. */
-async function sync(from: Device, to: Device): Promise<void> {
+async function sync(from: Device, to: Device, combine = false): Promise<boolean> {
 	const port = createVaultSyncPort({
 		store: to.mutations,
 		crypto: to.crypto,
@@ -37,12 +37,15 @@ async function sync(from: Device, to: Device): Promise<void> {
 			for (const s of stamps) to.clock.witness(s);
 		},
 	});
-	await applyRemotePayload(port, await from.mutations.readEntriesPayload());
+	const { changed } = await applyRemotePayload(port, await from.mutations.readEntriesPayload(), {
+		combine,
+	});
+	return changed;
 }
 
-async function both(a: Device, b: Device): Promise<void> {
-	await sync(a, b);
-	await sync(b, a);
+async function both(a: Device, b: Device, combine = false): Promise<void> {
+	await sync(a, b, combine);
+	await sync(b, a, combine);
 }
 
 /** A laptop and a phone sharing one login, in sync. The clock is shared and settable. */
@@ -169,5 +172,65 @@ describe("two devices", () => {
 			expect(shown(s, id)).toMatchObject({ password: "older-pw" });
 			expect(conflictsOf(s).size).toBe(0);
 		}
+	});
+
+	// Phase B (docs/sync-conflicts.md): with combining on, edits to different parts merge.
+	it("password on the phone, notes on the laptop: both end with one entry holding both", async () => {
+		const { time, laptop, phone, id } = await pair();
+		time.now = 2000;
+		await phone.mutations.update(await load(phone), id, login("GitHub", "phone-pw"));
+		time.now = 3000;
+		await laptop.mutations.update(await load(laptop), id, {
+			...login("GitHub"),
+			notes: "laptop note",
+		} as EntryData);
+		await both(laptop, phone, true);
+		for (const d of [laptop, phone]) {
+			const s = await load(d);
+			expect(conflictsOf(s).size).toBe(0);
+			expect(shown(s, id)).toMatchObject({ password: "phone-pw", notes: "laptop note" });
+		}
+	});
+
+	it("both devices combine the same siblings into the same version, then stop", async () => {
+		const { time, laptop, phone, id } = await pair();
+		time.now = 2000;
+		await phone.mutations.update(await load(phone), id, login("GitHub", "phone-pw"));
+		time.now = 3000;
+		await laptop.mutations.update(await load(laptop), id, {
+			...login("GitHub"),
+			notes: "n",
+		} as EntryData);
+		await both(laptop, phone, true);
+		await both(laptop, phone, true);
+		expect(await sync(laptop, phone, true)).toBe(false);
+		expect(await sync(phone, laptop, true)).toBe(false);
+		const [l, p] = [await load(laptop), await load(phone)];
+		expect(l.stamps.get(id)?.node.startsWith("~merge:")).toBe(true);
+		expect(l.stamps.get(id)).toEqual(p.stamps.get(id));
+		expect(conflictsOf(l).size + conflictsOf(p).size).toBe(0);
+	});
+
+	it("with combining off, siblings stay siblings", async () => {
+		const { time, laptop, phone, id } = await pair();
+		time.now = 2000;
+		await phone.mutations.update(await load(phone), id, login("GitHub", "phone-pw"));
+		time.now = 3000;
+		await laptop.mutations.update(await load(laptop), id, {
+			...login("GitHub"),
+			notes: "n",
+		} as EntryData);
+		await both(laptop, phone);
+		expect(conflictsOf(await load(laptop)).get(id)).toEqual({ versions: 1, deleted: false });
+	});
+
+	it("a delete conflict is left for the user", async () => {
+		const { time, laptop, phone, id } = await pair();
+		time.now = 2000;
+		await laptop.mutations.update(await load(laptop), id, login("GitHub", "laptop-pw"));
+		time.now = 3000;
+		await phone.mutations.remove(await load(phone), id);
+		await both(laptop, phone, true);
+		expect(conflictsOf(await load(laptop)).get(id)).toEqual({ versions: 0, deleted: true });
 	});
 });

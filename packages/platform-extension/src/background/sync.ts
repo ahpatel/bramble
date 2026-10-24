@@ -8,6 +8,8 @@
 
 import {
 	applyRemotePayload,
+	type CombineCrypto,
+	combinePayload,
 	decodeEntriesPayload,
 	decodeRoster,
 	type EntriesPayload,
@@ -369,6 +371,30 @@ async function readLocalState(
 	return { blob, payload: decodeEntriesPayload(dec.data) };
 }
 
+/** Opening and sealing single entries in the offscreen host, under one vault's key. */
+function offscreenEntryCrypto(vaultId: string): CombineCrypto {
+	return {
+		async decryptEntries(entries) {
+			const res = await sendToOffscreen({
+				type: "CRYPTO_DECRYPT_BATCH",
+				vaultId,
+				payload: { entries },
+			});
+			if (!res.ok || !Array.isArray(res.data)) throw new Error(res.error ?? "decrypt failed");
+			return res.data as (string | null)[];
+		},
+		async encryptEntry(plaintextJson) {
+			const res = await sendToOffscreen({
+				type: "CRYPTO_ENCRYPT",
+				vaultId,
+				payload: { plaintextJson },
+			});
+			if (!res.ok || !res.data) throw new Error(res.error ?? "encrypt failed");
+			return res.data as Awaited<ReturnType<CombineCrypto["encryptEntry"]>>;
+		},
+	};
+}
+
 // The host side of the merge seam: read/witness/re-seal happen here (storage + the
 // offscreen's VEK); applyRemotePayload owns the order. readLocal runs before
 // writeMerged, so the slots captured there are current.
@@ -413,6 +439,8 @@ function makeVaultSyncPort(ctx: SyncVaultCtx): VaultSyncPort {
 			if (!res.ok || !Array.isArray(res.data)) throw new Error(res.error ?? "entry check failed");
 			return res.data as boolean[];
 		},
+		combineSiblings: (payload, ids) =>
+			combinePayload(payload, offscreenEntryCrypto(ctx.vaultId), ids),
 	};
 }
 
