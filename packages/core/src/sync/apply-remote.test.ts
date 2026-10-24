@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EncryptedEntry } from "../vault-format";
 import { applyRemotePayload, payloadsEquivalent, type VaultSyncPort } from "./apply-remote";
-import { type EntriesPayload, emptyEntriesPayload } from "./entries-payload";
+import { type EntriesPayload, emptyEntriesPayload, type Tombstone } from "./entries-payload";
 import type { Hlc } from "./hlc";
 
 const hlc = (wall: number, node: string): Hlc => ({ wall, counter: 0, node });
@@ -13,10 +13,10 @@ const env = (id: string, ct: string, stamp: Hlc): EncryptedEntry => ({
 	iv: "i",
 	hlc: stamp,
 });
-const payload = (
-	entries: EncryptedEntry[],
-	tombstones: { id: string; hlc: Hlc }[] = [],
-): EntriesPayload => ({ entries, tombstones });
+const payload = (entries: EncryptedEntry[], tombstones: Tombstone[] = []): EntriesPayload => ({
+	entries,
+	tombstones,
+});
 
 /** A fake port recording writes + witnessed stamps + call order, from a given local payload. */
 function fakePort(local: EntriesPayload, { unopenable = [] }: { unopenable?: string[] } = {}) {
@@ -148,6 +148,29 @@ describe("payloadsEquivalent", () => {
 		const a = payload([], [{ id: "1", hlc: hlc(1, "n") }]);
 		const b = payload([]);
 		expect(payloadsEquivalent(a, b)).toBe(false);
+	});
+
+	it("a stripped copy is not equivalent to its source", () => {
+		const withVv = payload([{ ...env("1", "x", hlc(1, "n")), vv: { n: hlc(1, "n") } }]);
+		const stripped = payload([env("1", "x", hlc(1, "n"))]);
+		expect(payloadsEquivalent(withVv, stripped)).toBe(false);
+	});
+
+	it("a tombstone whose vv grew under the same stamp is not equivalent", () => {
+		const a = payload([], [{ id: "1", hlc: hlc(5, "n"), vv: { n: hlc(5, "n") } }]);
+		const b = payload([], [{ id: "1", hlc: hlc(5, "n"), vv: { n: hlc(5, "n"), m: hlc(3, "m") } }]);
+		expect(payloadsEquivalent(a, b)).toBe(false);
+	});
+
+	it("conflicts are part of equivalence", () => {
+		const shown = { ...env("1", "x", hlc(2, "n")), vv: { n: hlc(2, "n") } };
+		const sibling = { ...env("1", "y", hlc(1, "m")), vv: { m: hlc(1, "m") } };
+		const a = payload([shown]);
+		const b: EntriesPayload = { ...payload([shown]), conflicts: [sibling] };
+		expect(payloadsEquivalent(a, b)).toBe(false);
+		expect(payloadsEquivalent(b, { ...b, conflicts: [{ ...sibling, ciphertext: "z" }] })).toBe(
+			true,
+		);
 	});
 });
 

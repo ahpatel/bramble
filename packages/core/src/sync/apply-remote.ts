@@ -6,6 +6,7 @@
 import type { CryptoAdapter } from "../adapters/crypto";
 import type { EntriesBlobStore } from "../vault/entries-blob";
 import type { EncryptedEntry } from "../vault-format";
+import { causalKey, type Versioned } from "./causal";
 import { type EntriesPayload, sanitizeRemoteEntriesPayload } from "./entries-payload";
 import { entryVersionKey } from "./entry-version";
 import { compareHlc, type Hlc } from "./hlc";
@@ -36,10 +37,6 @@ export interface ApplyResult {
 	changed: boolean;
 }
 
-function stampMap(items: { id: string; hlc: Hlc }[]): Map<string, Hlc> {
-	return new Map(items.map((i) => [i.id, i.hlc]));
-}
-
 function stampMapsEqual(a: Map<string, Hlc>, b: Map<string, Hlc>): boolean {
 	if (a.size !== b.size) return false;
 	for (const [id, hlc] of a) {
@@ -54,17 +51,29 @@ function settingsStamps(settings: EntriesPayload["settings"]): Map<string, Hlc> 
 	return new Map(Object.entries(settings ?? {}).map(([key, rec]) => [key, rec.hlc]));
 }
 
+/** Each version as id + stamp + causal history, so a stripped copy differs from its source. */
+function versionKeys(items: readonly ({ id: string } & Versioned)[] | undefined): Set<string> {
+	return new Set((items ?? []).map((v) => `${v.id}|${causalKey(v)}`));
+}
+
+function setsEqual(a: Set<string>, b: Set<string>): boolean {
+	return a.size === b.size && [...a].every((k) => b.has(k));
+}
+
 /**
- * True if both payloads hold the same entries (by id+stamp), tombstones and settings.
+ * True if both payloads hold the same entries, conflicts and tombstones (by id, stamp and causal
+ * history) and the same settings.
  *
  * Settings are part of this or they never propagate: the caller writes and re-broadcasts only
  * when a merge changed something, so a settings-only change judged equivalent would be dropped
- * on the floor and appear to sync only when it rode along with an entry edit.
+ * on the floor and appear to sync only when it rode along with an entry edit. The same goes for
+ * conflicts and for history gained under an unchanged stamp.
  */
 export function payloadsEquivalent(a: EntriesPayload, b: EntriesPayload): boolean {
 	return (
-		stampMapsEqual(stampMap(a.entries), stampMap(b.entries)) &&
-		stampMapsEqual(stampMap(a.tombstones), stampMap(b.tombstones)) &&
+		setsEqual(versionKeys(a.entries), versionKeys(b.entries)) &&
+		setsEqual(versionKeys(a.conflicts), versionKeys(b.conflicts)) &&
+		setsEqual(versionKeys(a.tombstones), versionKeys(b.tombstones)) &&
 		stampMapsEqual(settingsStamps(a.settings), settingsStamps(b.settings))
 	);
 }

@@ -1,6 +1,7 @@
 // VLT1 v2 multi-key vault blob format. See docs/vault-format.md.
 
 import { z } from "zod";
+import { VersionVectorSchema } from "./sync/causal";
 import { HlcSchema } from "./sync/hlc";
 
 export const MAGIC = new Uint8Array([0x56, 0x4c, 0x54, 0x31]);
@@ -99,6 +100,9 @@ export const EncryptedEntrySchema = z.object({
 	ciphertext: z.string(),
 	iv: z.string(),
 	hlc: HlcSchema,
+	// Causal history (docs/sync-conflicts.md). Absent on a version from an older build.
+	vv: VersionVectorSchema.optional(),
+	floor: HlcSchema.optional(),
 });
 export type EncryptedEntry = z.infer<typeof EncryptedEntrySchema>;
 
