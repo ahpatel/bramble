@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { EntryData } from "../hooks/useVault";
+import { HlcSchema } from "../sync/hlc";
 
 // Runtime mirror of EntryData; the z.ZodType<EntryData> annotation fails the
 // build if schema and union diverge.
@@ -20,6 +21,16 @@ const baseEntryFields = {
 	lastUsedAt: z.number().optional(),
 	archivedAt: z.number().optional(),
 	tags: z.array(z.string()).optional(),
+	// Sync bookkeeping; vault/parts.ts is the only writer. See docs/sync-conflicts.md, Phase B.
+	partStamps: z.record(z.string(), HlcSchema).optional(),
+	itemStamps: z
+		.object({
+			urls: z.record(z.string(), HlcSchema).optional(),
+			tags: z.record(z.string(), HlcSchema).optional(),
+			passkeys: z.record(z.string(), HlcSchema).optional(),
+		})
+		.optional(),
+	partStampsAt: HlcSchema.optional(),
 };
 
 // Mirror of PasskeyCredential. Kept in lockstep with the interface in useVault.

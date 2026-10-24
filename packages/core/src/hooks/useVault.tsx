@@ -109,6 +109,12 @@ interface BaseEntryData {
 	 * the vault and in exports, but leave the list and every autofill projection.
 	 */
 	archivedAt?: number;
+	/** Which write last changed each part (docs/sync-conflicts.md, Phase B); vault/parts.ts writes it. */
+	partStamps?: Record<string, Hlc>;
+	/** Which write added each list item, by list and item key. */
+	itemStamps?: Partial<Record<"urls" | "tags" | "passkeys", Record<string, Hlc>>>;
+	/** The version stamp these were written with; a mismatch means a build without them rewrote it. */
+	partStampsAt?: Hlc;
 }
 
 /**
