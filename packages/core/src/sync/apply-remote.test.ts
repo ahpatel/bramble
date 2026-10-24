@@ -175,6 +175,35 @@ describe("payloadsEquivalent", () => {
 });
 
 describe("applyRemotePayload admission", () => {
+	const shown = { ...env("a", "shown", hlc(100, "x")), vv: { x: hlc(100, "x") } };
+	const sibling = {
+		...env("a", "sibling", hlc(50, "y")),
+		vv: { y: hlc(50, "y"), z: hlc(40, "z") },
+	};
+
+	it("a remote conflict that doesn't decrypt here is refused", async () => {
+		const rejected = new Set<string>();
+		const { port, writes } = fakePort(payload([shown]), { unopenable: ["a"] });
+		const remote: EntriesPayload = { ...payload([shown]), conflicts: [sibling] };
+		const res = await applyRemotePayload(port, remote, { rejected });
+		expect(res.changed).toBe(false);
+		expect(writes).toHaveLength(0);
+		expect(rejected.has("a|50|0|y")).toBe(true);
+	});
+
+	it("conflict stamps and vv values are witnessed", async () => {
+		const { port, witnessed } = fakePort(payload([shown]));
+		await applyRemotePayload(port, { ...payload([shown]), conflicts: [sibling] });
+		expect(witnessed.flat().map((h) => h.wall)).toEqual(expect.arrayContaining([50, 40]));
+	});
+
+	it("a remote payload carrying only a new conflict is a change and is written", async () => {
+		const { port, writes } = fakePort(payload([shown]));
+		const res = await applyRemotePayload(port, { ...payload([shown]), conflicts: [sibling] });
+		expect(res.changed).toBe(true);
+		expect(writes[0]?.conflicts?.map((e) => e.ciphertext)).toEqual(["sibling"]);
+	});
+
 	it("does not merge a remote entry that doesn't decrypt under this vault's key", async () => {
 		const { port, writes } = fakePort(payload([env("a", "a", hlc(100, "x"))]), {
 			unopenable: ["stray"],

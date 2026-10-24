@@ -26,9 +26,13 @@ export interface VaultSyncPort {
 	openable(entries: EncryptedEntry[]): Promise<boolean[]>;
 }
 
-/** Every stamp the remote has observed (winners and losers), for clock witnessing. */
+/** Every stamp the remote carries (winners, losers, siblings and histories), for clock witnessing. */
 function remoteStamps(remote: EntriesPayload): Hlc[] {
-	return [...remote.entries.map((e) => e.hlc), ...remote.tombstones.map((t) => t.hlc)];
+	return [...remote.entries, ...(remote.conflicts ?? []), ...remote.tombstones].flatMap((v) => [
+		v.hlc,
+		...(v.floor ? [v.floor] : []),
+		...Object.values(v.vv ?? {}),
+	]);
 }
 
 export interface ApplyResult {
@@ -78,28 +82,43 @@ export function payloadsEquivalent(a: EntriesPayload, b: EntriesPayload): boolea
 	);
 }
 
-/** Drop incoming entries that would win the merge but don't decrypt here: a peer can't plant another vault's entries. */
-async function admit(
+/** Remote versions with one refused version key dropped. */
+function withoutRejected(remote: EntriesPayload, rejected: Set<string>): EntriesPayload {
+	const keep = (e: EncryptedEntry) => !rejected.has(entryVersionKey(e));
+	const out: EntriesPayload = { ...remote, entries: remote.entries.filter(keep) };
+	if (remote.conflicts) out.conflicts = remote.conflicts.filter(keep);
+	return out;
+}
+
+/**
+ * Merge, checking every version that would newly land here decrypts under this vault's key, so a
+ * peer can't plant another vault's entries. Checks what lands rather than what arrives: a stale
+ * version the merge prunes costs nothing. A refusal can change what survives, so it re-merges.
+ */
+async function admitAndMerge(
 	port: VaultSyncPort,
 	local: EntriesPayload,
 	remote: EntriesPayload,
 	rejected: Set<string>,
-): Promise<EntriesPayload> {
-	const mine = new Map(local.entries.map((e) => [e.id, e.hlc]));
-	const candidates = remote.entries.filter((e) => {
-		if (rejected.has(entryVersionKey(e))) return false;
-		const have = mine.get(e.id);
-		return have === undefined || compareHlc(e.hlc, have) > 0;
-	});
-	if (candidates.length > 0) {
-		const verdicts = await port.openable(candidates);
-		const refused = candidates.filter((_, i) => !verdicts[i]);
+): Promise<{ admitted: EntriesPayload; merged: EntriesPayload }> {
+	const held = new Set([...local.entries, ...(local.conflicts ?? [])].map(entryVersionKey));
+	const opened = new Set<string>();
+	let admitted = withoutRejected(remote, rejected);
+	for (;;) {
+		const merged = mergeEntriesPayload(local, admitted);
+		const fresh = [...merged.entries, ...(merged.conflicts ?? [])].filter((e) => {
+			const key = entryVersionKey(e);
+			return !held.has(key) && !opened.has(key);
+		});
+		if (fresh.length === 0) return { admitted, merged };
+		const verdicts = await port.openable(fresh);
+		const refused = fresh.filter((_, i) => !verdicts[i]);
+		for (const e of fresh.filter((_, i) => verdicts[i])) opened.add(entryVersionKey(e));
+		if (refused.length === 0) return { admitted, merged };
+		console.warn(`[sync] refused ${refused.length} entries that don't decrypt in this vault`);
 		for (const e of refused) rejected.add(entryVersionKey(e));
-		if (refused.length > 0) {
-			console.warn(`[sync] refused ${refused.length} entries that don't decrypt in this vault`);
-		}
+		admitted = withoutRejected(admitted, rejected);
 	}
-	return { ...remote, entries: remote.entries.filter((e) => !rejected.has(entryVersionKey(e))) };
 }
 
 /**
@@ -117,8 +136,7 @@ export async function applyRemotePayload(
 	// witness, so a member can't pin an un-deletable entry by stamping it years ahead.
 	const safe = sanitizeRemoteEntriesPayload(remote);
 	const local = await port.readLocal();
-	const admitted = await admit(port, local, safe, rejected);
-	const merged = mergeEntriesPayload(local, admitted);
+	const { admitted, merged } = await admitAndMerge(port, local, safe, rejected);
 	const changed = !payloadsEquivalent(local, merged);
 	if (changed) {
 		// Only admitted stamps: a refused entry must not advance this device's clock.

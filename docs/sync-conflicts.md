@@ -103,8 +103,11 @@ first, so it never gets the chance.
 
 Deletes merge into **one tombstone per id**: `hlc` is the max, `vv` the component-wise max, and
 `floor` the max. By the chain rule its history is exactly the union of the deletes' histories.
-One exception: a legacy tombstone whose own event is already in the other tombstone's history
-adds nothing. It is a stripped copy of a delete already known (an older build relaying an old
+Two tombstones with histories always join, even at the same stamp: a joined tombstone carries
+the stamp of its newest delete, so one stamp can sit on different histories, and keeping either
+copy would make the result depend on merge order (found by the property test). One exception: a
+legacy tombstone at the other's stamp, or whose own event is already in the other's history, adds
+nothing. It is a stripped copy of a delete already known (an older build relaying an old
 tombstone after a later delete raised the stamp), and joining its claim would kill every
 delete-conflicted edit stamped below it.
 
