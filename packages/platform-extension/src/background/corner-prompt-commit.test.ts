@@ -1,3 +1,4 @@
+import { effectivePartStamps } from "@core/vault/parts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type BackgroundHarness,
@@ -505,8 +506,8 @@ describe("commit: background writes record history", () => {
 		);
 		const plaintext = JSON.parse(sealed[sealed.length - 1] as string);
 		expect(plaintext.partStampsAt).toEqual(env.hlc);
-		expect(plaintext.partStamps.credential).toEqual(env.hlc);
-		expect(plaintext.partStamps.name).toEqual(seed);
+		expect(effectivePartStamps(plaintext, env).parts.credential).toEqual(env.hlc);
+		expect(effectivePartStamps(plaintext, env).parts.name).toEqual(seed);
 	});
 
 	it("a new corner-prompt login stamps every part at its own stamp", async () => {
@@ -527,6 +528,6 @@ describe("commit: background writes record history", () => {
 		);
 		const plaintext = JSON.parse(sealed[sealed.length - 1] as string);
 		expect(plaintext.partStampsAt).toEqual(env.hlc);
-		expect(plaintext.partStamps.credential).toEqual(env.hlc);
+		expect(effectivePartStamps(plaintext, env).parts.credential).toEqual(env.hlc);
 	});
 });

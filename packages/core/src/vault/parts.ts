@@ -8,7 +8,7 @@
 import type { Entry, EntryData } from "../hooks/useVault";
 import type { Versioned } from "../sync/causal";
 import { compareHlc, type Hlc } from "../sync/hlc";
-import { tagKey } from "./tags";
+import { normalizeEntryData } from "./entry-normalize";
 
 export type ItemList = "urls" | "tags" | "passkeys";
 export type PartStamps = Record<string, Hlc>;
@@ -79,11 +79,14 @@ export function partsOf(data: EntryData): Map<string, unknown> {
 	return parts;
 }
 
-/** Item key -> item, for a list that combines item by item. */
+/**
+ * Item key -> item, for a list that combines item by item. Keys are stored and compared across
+ * devices, so a tag's is case-folded without the locale `tagKey` uses for display.
+ */
 export function itemsOf(data: EntryData, list: ItemList): Map<string, unknown> {
 	const items = (data as unknown as Record<string, unknown>)[list];
 	if (!Array.isArray(items)) return new Map();
-	if (list === "tags") return new Map(items.map((t: string) => [tagKey(t), t]));
+	if (list === "tags") return new Map(items.map((t: string) => [t.trim().toLowerCase(), t]));
 	if (list === "passkeys") {
 		return new Map(items.map((p: { credentialId: string }) => [p.credentialId, p]));
 	}
@@ -100,7 +103,14 @@ export function effectivePartStamps(
 	version: Versioned,
 ): { stale: boolean; parts: PartStamps; items: Record<ItemList, Record<string, Hlc>> } {
 	const stale = !data.partStampsAt || compareHlc(data.partStampsAt, version.hlc) !== 0;
-	const parts: PartStamps = stale ? {} : { ...data.partStamps };
+	const grouped = new Set(Object.values(GROUPS[data.type] ?? {}).flat());
+	const parts: PartStamps = {};
+	if (!stale) {
+		for (const [name, stamp] of Object.entries(data.partStamps ?? {})) {
+			if (!grouped.has(name)) parts[name] = stamp;
+		}
+	}
+	// A stamp left out is the version's own (withPartStamps stores only older ones and clears).
 	for (const name of partsOf(data).keys()) {
 		if (stale || !parts[name]) parts[name] = version.hlc;
 	}
@@ -139,26 +149,35 @@ export function withPartStamps(
 		...Object.keys(before?.parts ?? {}),
 		...otherParts.flatMap((parts) => [...parts.keys()]),
 	]);
+	// Only stamps older than `hlc` are stored, plus clears: a present part or item without one is
+	// read back as changed at the version's own stamp (effectivePartStamps).
 	for (const name of names) {
 		const stamp = before?.parts[name];
 		const value = nextParts.get(name);
 		const chosen = otherParts.some((parts) => !partsEqual(parts.get(name), value));
-		if (stamp && !chosen && partsEqual(prevParts.get(name), value)) partStamps[name] = stamp;
-		else if (value !== undefined || stamp || chosen) partStamps[name] = hlc;
+		if (stamp && !chosen && partsEqual(prevParts.get(name), value)) {
+			if (value === undefined || compareHlc(stamp, hlc) !== 0) partStamps[name] = stamp;
+		} else if (value === undefined && (stamp || chosen)) partStamps[name] = hlc;
 	}
 	const itemStamps: ItemStamps = {};
 	for (const list of ITEM_LISTS) {
-		const keys = [...itemsOf(next, list).keys()];
-		if (keys.length === 0) continue;
 		const otherItems = superseded.map((data) => itemsOf(data, list));
-		itemStamps[list] = Object.fromEntries(
-			keys.map((k) => [
-				k,
-				otherItems.some((items) => !items.has(k)) ? hlc : (before?.items[list][k] ?? hlc),
-			]),
-		);
+		const kept: [string, Hlc][] = [];
+		for (const k of itemsOf(next, list).keys()) {
+			const stamp = before?.items[list][k];
+			if (stamp && !otherItems.some((items) => !items.has(k)) && compareHlc(stamp, hlc) !== 0) {
+				kept.push([k, stamp]);
+			}
+		}
+		if (kept.length > 0) itemStamps[list] = Object.fromEntries(kept);
 	}
-	return { ...next, partStamps, itemStamps, partStampsAt: hlc };
+	const { partStamps: _p, itemStamps: _i, ...rest } = next;
+	return {
+		...rest,
+		...(Object.keys(partStamps).length > 0 ? { partStamps } : {}),
+		...(Object.keys(itemStamps).length > 0 ? { itemStamps } : {}),
+		partStampsAt: hlc,
+	} as Entry;
 }
 
 /**
@@ -171,6 +190,12 @@ export function stampedPlaintext(
 	prev: { data: EntryData; version: Versioned } | undefined,
 	hlc: Hlc,
 ): string {
-	const { id: _id, ...data } = withPartStamps({ id, ...next } as Entry, prev, hlc);
+	// Raw plaintext from an old build can lack `type`; parts are grouped by it.
+	const normalize = (d: EntryData) => normalizeEntryData(d as unknown as Record<string, unknown>);
+	const { id: _id, ...data } = withPartStamps(
+		{ ...normalize(next), id } as Entry,
+		prev && { data: normalize(prev.data), version: prev.version },
+		hlc,
+	);
 	return JSON.stringify(data);
 }

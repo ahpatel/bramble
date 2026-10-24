@@ -17,7 +17,10 @@ import {
 	vaultEntriesFromPayload,
 } from "./entry-mutations";
 import { harness } from "./entry-mutations.harness";
+import { effectivePartStamps, PART_STAMP_FIELDS } from "./parts";
 
+/** A written entry's stamps as combining reads them (own-stamp ones are left out on disk). */
+const eff = (e: Entry) => effectivePartStamps(e, { hlc: e.partStampsAt! });
 const empty = (): VaultEntries => ({
 	entries: [],
 	stamps: new Map(),
@@ -922,12 +925,30 @@ describe("createEntryMutations: resolving a conflict", () => {
 		const next = await h.mutations.resolve(state, id, { kind: "keep", superseded: [] });
 		expect(next.conflicts).toEqual([]);
 		expect(conflictsOf(next).size).toBe(0);
-		const content = ({ partStampsAt: _at, ...rest }: Entry) => rest;
+		const content = (e: Entry) => {
+			const rest: Record<string, unknown> = { ...e };
+			for (const f of PART_STAMP_FIELDS) delete rest[f];
+			return rest;
+		};
 		expect(next.entries.map(content)).toEqual(state.entries.map(content));
 		expect(containsHistory(versionOf(next, id), sib(id))).toBe(true);
 		expect(next.tombstones.has(id)).toBe(true);
 		const disk = await h.mutations.readEntriesPayload();
 		expect(disk.conflicts).toBeUndefined();
+	});
+
+	// Keeping a version over a delete restores everything the delete removed: each part and item
+	// it keeps is a choice made now, not the old write's (docs/sync-conflicts.md, Part stamps).
+	it("keeping a version over a delete restamps everything it keeps", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const { state, id } = await conflicted(h, loginWith("a", { tags: ["work"], notes: "n" }));
+		t = 2000;
+		const next = await h.mutations.resolve(state, id, { kind: "keep", superseded: [] });
+		const stamp = next.stamps.get(id)!;
+		const kept = eff(next.entries[0]!);
+		expect(new Set(Object.values(kept.parts))).toEqual(new Set([stamp]));
+		expect(Object.values(kept.items.tags)).toEqual([stamp]);
 	});
 
 	it("use writes the sibling's content and keeps the displayed password in the changelog", async () => {
@@ -1027,8 +1048,8 @@ describe("createEntryMutations: part stamps", () => {
 		const a = await h.mutations.add(empty(), loginWith("a", { tags: ["work"] }));
 		const e = a.entries[0]!;
 		const s = stampOf(a, e.id);
-		expect(e.partStamps).toEqual({ name: s, credential: s });
-		expect(e.itemStamps).toEqual({ tags: { work: s } });
+		expect(eff(e).parts).toEqual({ name: s, credential: s });
+		expect(eff(e).items.tags).toEqual({ work: s });
 		expect(e.partStampsAt).toEqual(s);
 		t = 2000;
 		const foreign = {
@@ -1038,7 +1059,7 @@ describe("createEntryMutations: part stamps", () => {
 		};
 		const imported = await h.mutations.importMany(a, [foreign as EntryData]);
 		const b = imported.entries[1]!;
-		expect(b.partStamps?.name).toEqual(stampOf(imported, b.id));
+		expect(eff(b).parts.name).toEqual(stampOf(imported, b.id));
 		expect(b.partStampsAt).toEqual(stampOf(imported, b.id));
 	});
 
@@ -1051,7 +1072,7 @@ describe("createEntryMutations: part stamps", () => {
 		t = 2000;
 		const next = await h.mutations.update(a, id, loginWith("a", { notes: "y" }));
 		const second = stampOf(next, id);
-		expect(next.entries[0]!.partStamps).toEqual({ name: first, notes: second, credential: first });
+		expect(eff(next.entries[0]!).parts).toEqual({ name: first, notes: second, credential: first });
 		expect(next.entries[0]!.partStampsAt).toEqual(second);
 		const [onDisk] = (await h.mutations.readEntriesPayload()).entries;
 		expect(onDisk!.ciphertext).toContain('"partStampsAt"');
@@ -1065,11 +1086,11 @@ describe("createEntryMutations: part stamps", () => {
 		const first = stampOf(a, id);
 		t = 2000;
 		const archived = await h.mutations.setArchived(a, [id], true);
-		expect(archived.entries[0]!.partStamps?.archivedAt).toEqual(stampOf(archived, id));
-		expect(archived.entries[0]!.partStamps?.name).toEqual(first);
+		expect(eff(archived.entries[0]!).parts.archivedAt).toEqual(stampOf(archived, id));
+		expect(eff(archived.entries[0]!).parts.name).toEqual(first);
 		t = 3000;
 		const tagged = await h.mutations.setTags(archived, [id], { add: ["work"] });
-		expect(tagged.entries[0]!.itemStamps?.tags).toEqual({ work: stampOf(tagged, id) });
+		expect(eff(tagged.entries[0]!).items.tags).toEqual({ work: stampOf(tagged, id) });
 		expect(tagged.entries[0]!.partStampsAt).toEqual(stampOf(tagged, id));
 	});
 
@@ -1096,7 +1117,7 @@ describe("createEntryMutations: part stamps", () => {
 			kind: "keep",
 			superseded: [loginWith("a", { notes: "theirs" })],
 		});
-		expect(kept.entries[0]!.partStamps).toEqual({
+		expect(eff(kept.entries[0]!).parts).toEqual({
 			name: first,
 			credential: first,
 			notes: stampOf(kept, id),
@@ -1108,7 +1129,7 @@ describe("createEntryMutations: part stamps", () => {
 			data: loginWith("b"),
 			superseded: [],
 		});
-		expect(both.entries[0]!.partStamps?.name).toEqual(stampOf(both, id));
+		expect(eff(both.entries[0]!).parts.name).toEqual(stampOf(both, id));
 	});
 
 	it("an edit around its own sibling stamps parts with its fork-key stamp", async () => {
@@ -1134,7 +1155,7 @@ describe("createEntryMutations: part stamps", () => {
 		const next = await h.mutations.update(seeded, id, loginWith("a2"));
 		const stamp = stampOf(next, id);
 		expect(stamp.node.startsWith("device-a~")).toBe(true);
-		expect(next.entries[0]!.partStamps?.name).toEqual(stamp);
+		expect(eff(next.entries[0]!).parts.name).toEqual(stamp);
 		expect(next.entries[0]!.partStampsAt).toEqual(stamp);
 	});
 });
@@ -1210,7 +1231,7 @@ describe("createEntryMutations: saving from the version the form opened", () => 
 			opened,
 		);
 		const saved = next.entries[0] as Entry & LoginEntryData;
-		expect(saved.partStamps).toEqual({ name: opened.hlc, credential: next.stamps.get(id) });
+		expect(eff(saved).parts).toEqual({ name: opened.hlc, credential: next.stamps.get(id) });
 		expect(saved.passwordChangelog?.map((c) => c.value)).toEqual(["p"]);
 	});
 

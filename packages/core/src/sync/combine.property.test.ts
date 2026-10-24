@@ -2,10 +2,11 @@
 // part at a time, delete, resolve and partially sync (merge, then combine), records the TRUE
 // ancestry of every write, and checks what combining builds against it. See docs/sync-conflicts.md,
 // Phase B. Every value a write sets carries its label, so a value names the write that set it.
+// A second fleet swaps the tablet for a Phase A build: no part stamps, no combining.
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { Entry, EntryData } from "../hooks/useVault";
-import { partsEqual, partsOf, withPartStamps } from "../vault/parts";
+import { ITEM_LISTS, itemsOf, partsEqual, partsOf, withPartStamps } from "../vault/parts";
 import { tagKey } from "../vault/tags";
 import type { EncryptedEntry } from "../vault-format";
 import { applyRemotePayload } from "./apply-remote";
@@ -43,6 +44,8 @@ interface Device {
 	name: string;
 	clock: HybridClock;
 	payload: EntriesPayload;
+	/** A Phase A build: copies part stamps verbatim (so its writes are stale) and never combines. */
+	older: boolean;
 	/** Delete labels this device has seen, per entry id. */
 	deletes: Map<string, Set<string>>;
 }
@@ -56,12 +59,16 @@ interface Write {
 	sets: ReadonlySet<string>;
 	/** Every write this one supersedes, directly or not. */
 	ancestors: ReadonlySet<string>;
+	/** List items (`list:key`) this write put there that a version it superseded lacked. */
+	adds: ReadonlySet<string>;
 }
 
 const empty = (): EntriesPayload => ({ entries: [], tombstones: [] });
 const keyOf = (id: string, v: Versioned) => `${id}|${causalKey(v)}`;
 const live = (p: EntriesPayload) => [...p.entries, ...(p.conflicts ?? [])];
 const open = (e: EncryptedEntry) => JSON.parse(e.ciphertext.slice(3)) as EntryData;
+const itemKeys = (data: EntryData) =>
+	ITEM_LISTS.flatMap((list) => [...itemsOf(data, list).keys()].map((k) => `${list}:${k}`));
 
 function canon(p: EntriesPayload): string {
 	const keys = (tag: string, vs: readonly ({ id: string } & Versioned)[] | undefined) =>
@@ -84,7 +91,7 @@ class Sim {
 	private time = 1000;
 	private labels = 0;
 
-	constructor(seed: number) {
+	constructor(seed: number, mixed: boolean) {
 		this.rand = mulberry32(seed);
 		this.devices = ["laptop", "phone", "tablet"].map((name) => {
 			const skew = Math.floor(this.rand() * 3);
@@ -92,6 +99,7 @@ class Sim {
 				name,
 				clock: new HybridClock(name, () => this.time + skew),
 				payload: empty(),
+				older: mixed && name === "tablet",
 				deletes: new Map(),
 			};
 		});
@@ -130,12 +138,9 @@ class Sim {
 		prev?: { data: EntryData; version: EncryptedEntry },
 		superseded: readonly EntryData[] = [],
 	): void {
-		const { id: _id, ...data } = withPartStamps(
-			{ id: w.id, ...w.data } as Entry,
-			prev,
-			version.hlc,
-			superseded,
-		);
+		const { id: _id, ...data } = d.older
+			? ({ id: w.id, ...w.data } as Entry)
+			: withPartStamps({ id: w.id, ...w.data } as Entry, prev, version.hlc, superseded);
 		const env: EncryptedEntry = {
 			id: w.id,
 			wrappedDek: "w",
@@ -162,7 +167,18 @@ class Sim {
 			notes: `notes@${label}`,
 		} as EntryData;
 		const causal = nextCausal({ hlc, bases: [], held: [] });
-		this.write(d, { label, id, data, sets: new Set(PARTS), ancestors: new Set() }, { hlc, causal });
+		this.write(
+			d,
+			{
+				label,
+				id,
+				data,
+				sets: new Set(PARTS),
+				ancestors: new Set(),
+				adds: new Set(itemKeys(data)),
+			},
+			{ hlc, causal },
+		);
 	}
 
 	edit(d: Device, id: string): void {
@@ -193,6 +209,8 @@ class Sim {
 		const before = partsOf(prev);
 		const after = partsOf(next as unknown as EntryData);
 		const sets = new Set(PARTS.filter((p) => !partsEqual(before.get(p), after.get(p))));
+		const had = new Set(itemKeys(prev));
+		const adds = new Set(itemKeys(next as unknown as EntryData).filter((k) => !had.has(k)));
 		const version = nextVersion({
 			hlc: d.clock.send(),
 			bases: [shown],
@@ -206,6 +224,7 @@ class Sim {
 				data: next as unknown as EntryData,
 				sets,
 				ancestors: this.inherit(d, id, [shown], false),
+				adds,
 			},
 			version,
 			{ data: prev, version: shown },
@@ -243,6 +262,14 @@ class Sim {
 			held: heldVersions(d.payload, id),
 		});
 		const data = open(shown);
+		// Over a delete, everything kept is restored now (EntryMutations.resolve).
+		const against = [
+			...versions.filter((e) => e !== shown).map(open),
+			...(tomb ? [{ type: data.type } as EntryData] : []),
+		];
+		const adds = new Set(
+			itemKeys(data).filter((k) => against.some((o) => !itemKeys(o).includes(k))),
+		);
 		this.write(
 			d,
 			{
@@ -251,10 +278,11 @@ class Sim {
 				data,
 				sets: new Set(PARTS),
 				ancestors: this.inherit(d, id, versions, true),
+				adds,
 			},
 			{ hlc, causal },
 			{ data, version: shown },
-			versions.filter((e) => e !== shown).map(open),
+			against,
 		);
 	}
 
@@ -297,7 +325,7 @@ class Sim {
 				combineSiblings: (p, ids) => this.combine(p, ids),
 			},
 			from.payload,
-			{ combine: true },
+			{ combine: !to.older },
 		);
 		for (const [id, labels] of from.deletes) {
 			const seen = to.deletes.get(id) ?? new Set<string>();
@@ -334,80 +362,126 @@ class Sim {
 	}
 }
 
-const SEEDS = Array.from({ length: 200 }, (_, i) => i + 1);
+const SEEDS = Array.from({ length: 1000 }, (_, i) => i + 1);
 const STEPS = 40;
 
-/** Two entries every device starts with, then random steps. */
-async function run(seed: number): Promise<Sim> {
-	const sim = new Sim(seed);
+const credentialOf = (data: EntryData) => JSON.stringify(partsOf(data).get("credential") ?? null);
+
+/** Credentials some device holds that no single write produced. */
+function strayCredentials(sim: Sim): string[] {
+	const written = new Set(sim.writes.map((w) => `${w.id}|${credentialOf(w.data)}`));
+	return sim.devices.flatMap((d) =>
+		live(d.payload)
+			.map((e) => `${e.id}|${credentialOf(open(e))}`)
+			.filter((tuple) => !written.has(tuple))
+			.map((tuple) => `${d.name}: ${tuple}`),
+	);
+}
+
+interface Run {
+	seed: number;
+	sim: Sim;
+	/** Stray credentials before the final gossip. */
+	strayBefore: string[];
+	rounds: number;
+}
+
+/** Two entries every device starts with, random steps, then gossip until nothing changes. */
+async function run(seed: number, mixed: boolean): Promise<Run> {
+	const sim = new Sim(seed, mixed);
 	const [first] = sim.devices as [Device];
 	sim.add(first, "e1");
 	sim.add(first, "e2");
 	for (const d of sim.devices) if (d !== first) await sim.sync(first, d);
 	for (let i = 0; i < STEPS; i++) await sim.step();
-	return sim;
+	const strayBefore = strayCredentials(sim);
+	return { seed, sim, strayBefore, rounds: await sim.gossip(20) };
 }
 
-const credentialOf = (data: EntryData) => JSON.stringify(partsOf(data).get("credential") ?? null);
+const runs = new Map<boolean, Promise<Run[]>>();
+/** Every seed's run for a fleet, simulated once and shared by the properties. */
+function runsFor(mixed: boolean): Promise<Run[]> {
+	let all = runs.get(mixed);
+	if (!all) {
+		all = (async () => {
+			const out: Run[] = [];
+			for (const seed of SEEDS) out.push(await run(seed, mixed));
+			return out;
+		})();
+		runs.set(mixed, all);
+	}
+	return all;
+}
 
-describe("combine properties", () => {
+/** Each entry device 0 ends up showing without siblings, with what wrote it. */
+function settled({ sim }: Run) {
+	const payload = sim.devices[0]!.payload;
+	const conflicted = entryConflicts(payload);
+	return payload.entries
+		.filter((e) => !conflicted.has(e.id))
+		.map((e) => ({ e, data: open(e), writes: sim.writes.filter((w) => w.id === e.id) }));
+}
+
+describe.each([
+	["newer builds", false],
+	["newer builds and a Phase A build", true],
+])("combine properties: %s", (_fleet, mixed) => {
+	// A thousand histories take a few seconds, more on a loaded machine; simulated once here.
+	beforeAll(() => runsFor(mixed), 120_000);
+
 	it("combining converges", async () => {
-		for (const seed of SEEDS) {
-			const sim = await run(seed);
-			expect(await sim.gossip(20), `seed ${seed} gossip rounds`).toBeLessThanOrEqual(20);
+		for (const { seed, sim, rounds } of await runsFor(mixed)) {
+			expect(rounds, `seed ${seed} gossip rounds`).toBeLessThanOrEqual(20);
 			const [a, ...rest] = sim.devices.map((d) => canon(d.payload));
 			for (const other of rest) expect(other, `seed ${seed} devices agree`).toBe(a);
 		}
 	});
 
 	it("no entry nobody wrote", async () => {
-		for (const seed of SEEDS) {
-			const sim = await run(seed);
-			const check = () => {
-				const written = new Set(sim.writes.map((w) => `${w.id}|${credentialOf(w.data)}`));
-				for (const d of sim.devices) {
-					for (const e of live(d.payload)) {
-						const tuple = `${e.id}|${credentialOf(open(e))}`;
-						if (!written.has(tuple)) {
-							throw new Error(`seed ${seed}: ${d.name} holds a credential no write made: ${tuple}`);
-						}
-					}
-				}
-			};
-			check();
-			await sim.gossip(20);
-			check();
+		for (const r of await runsFor(mixed)) {
+			expect(r.strayBefore, `seed ${r.seed} before gossip`).toEqual([]);
+			expect(strayCredentials(r.sim), `seed ${r.seed} after gossip`).toEqual([]);
 		}
 	});
 
 	it("each part ends at a write nothing else superseded", async () => {
 		let combined = 0;
-		for (const seed of SEEDS) {
-			const sim = await run(seed);
-			await sim.gossip(20);
-			const payload = sim.devices[0]!.payload;
-			const conflicted = entryConflicts(payload);
-			for (const e of payload.entries) {
-				if (conflicted.has(e.id)) continue;
-				const parts = partsOf(open(e));
+		for (const r of await runsFor(mixed)) {
+			for (const { e, data, writes } of settled(r)) {
+				const parts = partsOf(data);
 				for (const part of PARTS) {
-					const setters = sim.writes.filter((w) => w.id === e.id && w.sets.has(part));
-					const candidates = setters.filter((w) =>
-						partsEqual(partsOf(w.data).get(part), parts.get(part)),
-					);
-					const current = candidates.some(
-						(c) => !setters.some((w) => w !== c && w.ancestors.has(c.label)),
-					);
-					if (!current) {
-						throw new Error(
-							`seed ${seed}: ${e.id}.${part} = ${JSON.stringify(parts.get(part))} is not from a current write`,
-						);
-					}
+					const setters = writes.filter((w) => w.sets.has(part));
+					const current = setters
+						.filter((w) => partsEqual(partsOf(w.data).get(part), parts.get(part)))
+						.some((c) => !setters.some((w) => w !== c && w.ancestors.has(c.label)));
+					expect(
+						current,
+						`seed ${r.seed}: ${e.id}.${part} = ${JSON.stringify(parts.get(part))}`,
+					).toBe(true);
 				}
 			}
-			combined += sim.combined;
+			combined += r.sim.combined;
 		}
 		// The properties only mean something if combining happened along the way.
 		expect(combined).toBeGreaterThan(SEEDS.length);
+	});
+
+	it("a list item stays exactly while some write added it and nothing that saw it removed it", async () => {
+		for (const r of await runsFor(mixed)) {
+			for (const { e, data, writes } of settled(r)) {
+				const have = new Set(itemKeys(data));
+				for (const k of new Set(writes.flatMap((w) => [...w.adds]))) {
+					const standing = writes
+						.filter((w) => w.adds.has(k))
+						.filter(
+							(w) =>
+								!writes.some(
+									(later) => later.ancestors.has(w.label) && !itemKeys(later.data).includes(k),
+								),
+						);
+					expect(have.has(k), `seed ${r.seed}: ${e.id} ${k}`).toBe(standing.length > 0);
+				}
+			}
+		}
 	});
 });

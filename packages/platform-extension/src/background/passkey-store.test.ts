@@ -1,3 +1,4 @@
+import { effectivePartStamps } from "@core/vault/parts";
 import { describe, expect, it, vi } from "vitest";
 import {
 	defaultOffscreen,
@@ -106,8 +107,8 @@ describe("savePlacement records history", () => {
 		await savePlacement({ kind: "attach", entryId: "login1", passkeys: [passkey] });
 		const env = last().entries.find((e: { id: string }) => e.id === "login1");
 		const plaintext = lastSealed();
-		expect(plaintext.itemStamps.passkeys).toEqual({ "cred-1": env.hlc });
-		expect(plaintext.partStamps.name).toEqual(seed);
+		expect(effectivePartStamps(plaintext, env).items.passkeys).toEqual({ "cred-1": env.hlc });
+		expect(effectivePartStamps(plaintext, env).parts.name).toEqual(seed);
 		expect(plaintext.partStampsAt).toEqual(env.hlc);
 	});
 });

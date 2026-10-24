@@ -19,7 +19,14 @@ import {
 } from "../vault/parts";
 import { withSupersededPasswords } from "../vault/password-changelog";
 import type { EncryptedEntry } from "../vault-format";
-import { type Causal, causalKey, inHistory, joinCausal, type Versioned } from "./causal";
+import {
+	type Causal,
+	causalKey,
+	inHistory,
+	joinCausal,
+	MERGE_WRITER_PREFIX,
+	type Versioned,
+} from "./causal";
 import type { EntriesPayload } from "./entries-payload";
 import { compareHlc, type Hlc } from "./hlc";
 import { mergeEntriesPayload } from "./vault-merge";
@@ -87,19 +94,43 @@ function choosePart(a: Side, b: Side, part: string, va: unknown, vb: unknown): "
 	const sa = partStamp(a, part);
 	const sb = partStamp(b, part);
 	if (partsEqual(va, vb)) return !sa || (sb && compareHlc(sb, sa) > 0) ? "b" : "a";
-	if (!sa) return "b";
-	if (!sb) return "a";
+	// No stamp means never set, unless that side saw the other's change and still lacks the
+	// value: then it cleared it (an older build's clear records no stamp).
+	if (!sa) return sb && seenBy(sb, b.version, a.version) ? "a" : "b";
+	if (!sb) return seenBy(sa, a.version, b.version) ? "b" : "a";
 	const aSeen = seenBy(sa, a.version, b.version);
 	const bSeen = seenBy(sb, b.version, a.version);
 	if (aSeen && !bSeen) return "b";
 	if (bSeen && !aSeen) return "a";
-	if (aSeen && bSeen) return compareHlc(sa, sb) >= 0 ? "a" : "b";
+	// Neither saw the other's change, or both did and still differ: not ours to pick.
 	return null;
 }
+
+/** The stamp an item on both sides keeps: a stale side's claim yields to an add it has seen. */
+function itemStamp(a: Side, sa: Hlc, b: Side, sb: Hlc): Hlc {
+	if (a.stale && seenBy(sb, b.version, a.version)) return sb;
+	if (b.stale && seenBy(sa, a.version, b.version)) return sa;
+	return later(sa, sb);
+}
+
+/** Whether every item of every list has its own key; two under one key can't combine safely. */
+const listsIntact = (data: EntryData) =>
+	ITEM_LISTS.every((list) => {
+		const items = (data as unknown as Record<string, unknown>)[list];
+		return !Array.isArray(items) || itemsOf(data, list).size === items.length;
+	});
 
 /** Combine two sides, `a` the higher stamp, or null when they conflict. */
 function combinePair(a: Side, b: Side): Side | null {
 	if (a.data.type !== b.data.type) return null;
+	// Neither carries part stamps, only claims: nothing to combine by.
+	if (a.stale && b.stale) return null;
+	if (
+		!listsIntact(a.data as unknown as EntryData) ||
+		!listsIntact(b.data as unknown as EntryData)
+	) {
+		return null;
+	}
 	const type = String(a.data.type);
 	const aParts = partsOf(a.data as unknown as EntryData);
 	const bParts = partsOf(b.data as unknown as EntryData);
@@ -132,13 +163,20 @@ function combinePair(a: Side, b: Side): Side | null {
 		for (const [key, item] of aItems) {
 			const sa = a.items[list][key] as Hlc;
 			const sb = b.items[list][key];
-			// On both: kept once, as the higher stamp has it. On one: kept unless the other saw it go.
-			if (sb) kept.push([key, item, later(sa, sb)]);
-			else if (!seenBy(sa, a.version, b.version)) kept.push([key, item, sa]);
+			// On both: kept once, as the higher stamp has it, except that an older build's claim on an
+			// add it saw happen isn't passed on as the add. On one: kept unless the other saw it go,
+			// and an older build's can't be told from one the other removed, so that conflicts.
+			if (sb) kept.push([key, item, itemStamp(a, sa, b, sb)]);
+			else if (!seenBy(sa, a.version, b.version)) {
+				if (a.stale) return null;
+				kept.push([key, item, sa]);
+			}
 		}
 		for (const [key, item] of bItems) {
 			const sb = b.items[list][key] as Hlc;
-			if (!aItems.has(key) && !seenBy(sb, b.version, a.version)) kept.push([key, item, sb]);
+			if (aItems.has(key) || seenBy(sb, b.version, a.version)) continue;
+			if (b.stale) return null;
+			kept.push([key, item, sb]);
 		}
 		items[list] = Object.fromEntries(kept.map(([key, , stamp]) => [key, stamp]));
 		if (kept.length > 0) out[list] = kept.map(([, item]) => item);
@@ -176,7 +214,7 @@ async function mergeNode(inputs: readonly Sibling[]): Promise<string> {
 		await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
 	);
 	const b64 = btoa(String.fromCharCode(...digest.slice(0, 16)));
-	return `~merge:${b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+	return `${MERGE_WRITER_PREFIX}${b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
 }
 
 /**

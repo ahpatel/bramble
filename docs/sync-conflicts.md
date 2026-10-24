@@ -263,11 +263,17 @@ Every write records, inside the encrypted entry JSON (so older builds keep it; s
 - `partStamps: Record<part, Hlc>`: the stamp of the write that last changed each part. A write
   copies the previous stamps and restamps only the parts whose value it changed.
 - `itemStamps: { urls?, tags?, passkeys?: Record<itemKey, Hlc> }`: the stamp of the write that
-  added each list item.
+  added each list item. A tag's key is case-folded without the device's locale (`tagKey`'s
+  locale-aware fold stays for display), since keys are compared across devices.
 - `partStampsAt: Hlc`: the version's own stamp at the time it wrote these. A version whose `hlc`
   differs was rewritten by a build that doesn't keep part stamps (Phase A or older), so all of
   its parts and items count as changed at its own `hlc`. A version with no part stamps at all
   counts the same way.
+
+Only stamps older than `partStampsAt` are stored, plus clears: a present part or item without one
+reads back as changed at the version's own stamp. Most stamps are the write's own, so this keeps an
+entry close to its plain size (the final review measured a typical login at 4.5 times it with every
+stamp stored).
 
 `touch` and the breach refresh don't restamp the version, so they don't touch part stamps.
 
@@ -276,7 +282,7 @@ of them disagrees with the kept content (a part's value, or an item it lacks), k
 was a choice, so the resolution restamps it at its own stamp. Otherwise the kept value would carry
 an older stamp than the dropped one, and a later combine with an edit of the dropped version
 (which never saw the resolution) would bring the dropped value back. The combine property tests
-found this.
+found this. A resolution over a delete restores everything it keeps, so it restamps all of it.
 
 ### Combining two versions
 
@@ -296,15 +302,22 @@ had changed. With the restriction, such a pair is a conflict instead. (A stamp's
 
 - **A part.** If the values are equal, keep it. Otherwise, if X's part stamp is seen by Y, Y has
   the newer value: take Y's. If Y's is seen by X, take X's. If neither, both changed it: **the
-  pair doesn't combine** and stays a conflict.
+  pair doesn't combine** and stays a conflict. If both are seen and the values still differ, some
+  write kept a value without restamping it, and the higher stamp isn't the answer: no combine.
+  A side with no stamp for the part never set it, unless it has seen the other side's stamp and
+  still lacks the value: then it cleared it (an older build's clear records no stamp).
 - **A list.** An item on both sides stays. An item only on X stays if its add stamp is **not**
   seen by Y (X added it concurrently), and goes if it is (Y saw it and removed it). Symmetric
   for Y. A re-added item has a new add stamp, so it survives a concurrent removal of the old one.
-  Order: the higher-stamp version's order, then the other side's new items in its order.
+  Order: the higher-stamp version's order, then the other side's new items in its order. Two
+  items under one key (a duplicated URL) mean no combine.
 - **Stale stamps** (an older build's edit): every part counts as changed at its `hlc`, a stamp
   only its own claim covers, so the other side never sees it; it combines only where the values
-  happen to be equal or the other side's change is an older build's too. List items from it count
-  as added at its `hlc`, which errs toward keeping them.
+  happen to be equal. Its list items carry no real add stamps, so an item only on the stale side
+  can't be told from one the other side removed: **no combine** (the final review found removals
+  undone). An item on both sides keeps the other side's add stamp when the stale side has seen it,
+  so a combined version never passes the stale claim on as an add. Two stale versions don't
+  combine at all: neither carries anything to combine by.
 
 Three or more siblings combine in a fixed order (by stamp, highest first), folding each into the
 result while it combines and leaving it as a sibling when it doesn't.
@@ -321,6 +334,11 @@ the same set writes the same version and nothing bounces:
   never share a stamp, and it doubles as the writer key, used once.
 - Plaintext: built as above; `partStamps` and `itemStamps` carried from the side each value came
   from; `partStampsAt` is the combined `hlc`.
+
+A combined version is an **ancestor** of any version or delete whose history holds all its inputs:
+it is a pure function of them, so whoever saw them all has seen it. Without that, a delete made
+by a device that held the inputs uncombined would come back as a delete conflict against the
+combined version (found by the final review).
 
 Ciphertext differs per device (fresh DEK), the content doesn't. A device that combined a
 different set produces a different version; when they meet they are siblings again and combine
@@ -417,6 +435,9 @@ combining at sync time, not at display time, is what gets the combined password 
 - **Three devices, two combinable, one conflicting.** The two combine; the third stays a sibling
   of the result.
 - **Two devices combine at once.** Same inputs, same version: one write, no ping-pong.
+- **An edit-form save over a version a sync replaced.** The two become siblings; when they changed
+  different parts they combine right away (the save reloads, and a load combines), not at the next
+  sync.
 - **Combine, then a resolution elsewhere that didn't see it.** The resolution and the combined
   version are siblings; they combine or conflict like any pair.
 - **The kept password history.** Rows from both sides survive (capped at 5, the documented loss).

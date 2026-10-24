@@ -11,6 +11,7 @@ import {
 	type Sibling,
 } from "./combine";
 import type { Hlc } from "./hlc";
+import { mergeEntriesPayload } from "./vault-merge";
 
 const at = (wall: number, node: string): Hlc => ({ wall, counter: 0, node });
 
@@ -35,6 +36,14 @@ function created(data: EntryData, stamp: Hlc): Sibling {
 /** A version an older build wrote: no history, no part stamps. */
 function legacy(data: EntryData, stamp: Hlc): Sibling {
 	return { envelope: envelope("e", { hlc: stamp }), data: { ...data } };
+}
+
+/** A Phase A build's edit: it keeps a history but copies the part-stamp fields verbatim (stale). */
+function phaseAEdit(prev: Sibling, changes: Record<string, unknown>, stamp: Hlc): Sibling {
+	const causal = nextCausal({ hlc: stamp, bases: [prev.envelope], held: [prev.envelope] });
+	const data = { ...prev.data, ...changes } as Record<string, unknown>;
+	for (const [k, v] of Object.entries(changes)) if (v === undefined) delete data[k];
+	return { envelope: envelope("e", { hlc: stamp, ...causal }), data: data as unknown as EntryData };
 }
 
 /** An edit of `prev` at `stamp`, the way EntryMutations writes one. */
@@ -139,6 +148,97 @@ describe("combineSiblings", () => {
 		const resolved = resolveKeep(kept, [dropped], at(40, "b"));
 		const later = edit(dropped, { name: "nz" }, at(50, "a"));
 		expect(as(await combineSiblings([resolved, later]))?.tags).toEqual(["a"]);
+	});
+
+	// Each side's stamp for the part is in the other's history, yet the values differ: only a write
+	// that kept a value without restamping it gets here, and the higher stamp isn't the answer.
+	it("both sides saw each other's change to a part yet differ: no combine", async () => {
+		const named = created(login({ name: "n1" }), at(10, "laptop"));
+		const renamed = edit(named, { name: "n3" }, at(20, "laptop"));
+		const later = edit(renamed, { notes: "tab" }, at(30, "tablet"));
+		const renamedAgain = edit(renamed, { name: "n6" }, at(40, "laptop"));
+		const tomb = {
+			hlc: at(50, "laptop"),
+			...nextCausal({
+				hlc: at(50, "laptop"),
+				bases: [renamedAgain.envelope],
+				held: [renamedAgain.envelope],
+			}),
+		};
+		const phone = edit(named, { password: "p9" }, at(45, "phone"));
+		// Kept over the delete without restamping what it kept.
+		const kHlc = at(60, "laptop");
+		const kept: Sibling = {
+			envelope: envelope("e", {
+				hlc: kHlc,
+				...nextCausal({ hlc: kHlc, bases: [phone.envelope, tomb], held: [phone.envelope, tomb] }),
+			}),
+			data: withPartStamps(
+				{ ...phone.data, id: "e" } as Entry,
+				{ data: phone.data, version: phone.envelope },
+				kHlc,
+			),
+		};
+		expect(await combineSiblings([kept, later])).toBeNull();
+	});
+
+	it("a value an older build cleared stays cleared under a newer build's edit", async () => {
+		const withNotes = created(login({ notes: "recovery codes" }), at(10, "laptop"));
+		const cleared = phaseAEdit(withNotes, { notes: undefined }, at(20, "tablet"));
+		const renamed = edit(cleared, { name: "renamed" }, at(30, "laptop"));
+		const other = edit(withNotes, { urls: ["https://example.com"] }, at(25, "phone"));
+		const c = await combineSiblings([renamed, other]);
+		expect(as(c)?.notes).toBeUndefined();
+		expect(as(c)).toMatchObject({ name: "renamed", urls: ["https://example.com"] });
+	});
+
+	// An older build's item can't be told apart from one the other side removed: it carries no
+	// stamp of its own.
+	it("an older build's version holding an item the other side lacks: no combine", async () => {
+		const both = created(
+			login({ urls: ["https://old.example", "https://new.example"] }),
+			at(10, "a"),
+		);
+		const removed = edit(both, { urls: ["https://new.example"] }, at(20, "a"));
+		const older = phaseAEdit(both, { name: "renamed" }, at(30, "b"));
+		expect(await combineSiblings([removed, older])).toBeNull();
+		const keys = created(
+			login({ passkeys: [{ credentialId: "K1" }, { credentialId: "K2" }] }),
+			at(10, "a"),
+		);
+		const dropped = edit(keys, { passkeys: [{ credentialId: "K2" }] }, at(20, "a"));
+		const olderNotes = phaseAEdit(keys, { notes: "nB" }, at(30, "b"));
+		expect(await combineSiblings([dropped, olderNotes])).toBeNull();
+	});
+
+	// An older build's copy claims every item as added at its own stamp; a combine must not pass
+	// that claim on as the real add, or a removal that saw the real add no longer applies.
+	it("an older build's claim on an item doesn't outlive the combine", async () => {
+		const tagged = created(login({ tags: ["t0"] }), at(10, "a"));
+		const older = phaseAEdit(tagged, { notes: "older" }, at(40, "tablet"));
+		const withUrl = edit(tagged, { urls: ["https://x.example"] }, at(20, "b"));
+		const removed = edit(tagged, { tags: undefined }, at(30, "c"));
+		const c = (await combineSiblings([older, withUrl]))!;
+		expect(as(c)).toMatchObject({ notes: "older", tags: ["t0"], urls: ["https://x.example"] });
+		const combined: Sibling = {
+			envelope: envelope("e", { hlc: c.hlc, ...c.causal }),
+			data: c.data,
+		};
+		expect(as(await combineSiblings([combined, removed]))?.tags).toBeUndefined();
+	});
+
+	it("two versions an older build wrote don't combine, even when they agree", async () => {
+		const both = created(login({ notes: "n0", tags: ["t0"] }), at(10, "a"));
+		const x = phaseAEdit(both, { notes: "same" }, at(20, "tablet"));
+		const y = phaseAEdit(both, { notes: "same" }, at(30, "tablet2"));
+		expect(await combineSiblings([x, y])).toBeNull();
+	});
+
+	it("two items under one key: no combine", async () => {
+		const dup = created(login({ urls: ["https://x.example", "https://x.example"] }), at(10, "a"));
+		const x = edit(dup, { notes: "nx" }, at(20, "a"));
+		const y = edit(dup, { name: "ny" }, at(30, "b"));
+		expect(await combineSiblings([x, y])).toBeNull();
 	});
 
 	it("both edit custom fields: no combine", async () => {
@@ -310,6 +410,39 @@ describe("combinePayload", () => {
 		const out = await combinePayload(payload, c, new Set(["other"]));
 		expect(out.payload).toBe(payload);
 		expect(c.opened).toBe(0);
+	});
+
+	// A combined version is a pure function of its inputs: whoever saw them all has seen it.
+	it("a delete that saw every input of a combined version deletes it", async () => {
+		const x = edit(base, { password: "px" }, at(20, "a"));
+		const y = edit(base, { notes: "ny" }, at(30, "b"));
+		const both = mergeEntriesPayload(
+			{ entries: [sealed(x)], tombstones: [] },
+			{ entries: [sealed(y)], tombstones: [] },
+		);
+		const combined = await combinePayload(both, crypto());
+		expect(combined.stamps).toHaveLength(1);
+		const tHlc = at(40, "z");
+		const inputs = [x.envelope, y.envelope];
+		const tomb = { id: "e", hlc: tHlc, ...nextCausal({ hlc: tHlc, bases: inputs, held: inputs }) };
+		const merged = mergeEntriesPayload(combined.payload, { entries: [], tombstones: [tomb] });
+		expect(merged.entries).toEqual([]);
+		expect(merged.conflicts).toBeUndefined();
+	});
+
+	it("a version that saw only some inputs doesn't supersede the combined one", async () => {
+		const x = edit(base, { password: "px" }, at(20, "a"));
+		const y = edit(base, { notes: "ny" }, at(30, "b"));
+		const c = (await combineSiblings([x, y]))!;
+		const combined = { hlc: c.hlc, ...c.causal };
+		const sawX = edit(x, { name: "later" }, at(40, "a"));
+		expect(isAncestor(combined, sawX.envelope)).toBe(false);
+		const r = at(50, "z");
+		const sawBoth = {
+			hlc: r,
+			...nextCausal({ hlc: r, bases: [x.envelope, y.envelope], held: [] }),
+		};
+		expect(isAncestor(combined, sawBoth)).toBe(true);
 	});
 
 	it("combinePayload replaces combinable siblings with one sealed version", async () => {

@@ -1,7 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Entry, EntryData } from "../hooks/useVault";
 import type { Hlc } from "../sync";
-import { effectivePartStamps, itemsOf, partsEqual, partsOf, withPartStamps } from "./parts";
+import {
+	effectivePartStamps,
+	itemsOf,
+	partsEqual,
+	partsOf,
+	stampedPlaintext,
+	withPartStamps,
+} from "./parts";
 
 const at = (wall: number, node = "n"): Hlc => ({ wall, counter: 0, node });
 const login = (over: Partial<Extract<EntryData, { type: "login" }>> = {}): Entry =>
@@ -65,6 +72,43 @@ describe("parts", () => {
 		expect([...itemsOf(e, "urls").keys()]).toEqual(["https://github.com"]);
 	});
 
+	// Item keys are stored and compared across devices, so they can't follow one device's locale.
+	it("tag item keys don't depend on the device's locale", () => {
+		vi.spyOn(String.prototype, "toLocaleLowerCase").mockImplementation(() => "turkish");
+		expect([...itemsOf(login({ tags: ["Work"] }), "tags").keys()]).toEqual(["work"]);
+	});
+
+	it("a typeless legacy login stamps one credential part, as a login", () => {
+		const legacy = { name: "A", url: "https://a.example", username: "u", password: "p" };
+		const json = stampedPlaintext(
+			"e",
+			{ ...legacy, password: "p2" } as never,
+			{
+				data: legacy as never,
+				version: { hlc: at(1) },
+			},
+			at(5),
+		);
+		const written = JSON.parse(json);
+		expect(written.type).toBe("login");
+		expect(Object.keys(effectivePartStamps(written, { hlc: at(5) }).parts).sort()).toEqual([
+			"credential",
+			"name",
+		]);
+	});
+
+	it("a stamp named after a grouped field is ignored", () => {
+		const e = {
+			...login(),
+			partStamps: { password: at(3), credential: at(2) },
+			partStampsAt: at(9),
+		} as Entry;
+		expect(effectivePartStamps(e, { hlc: at(9) }).parts).toEqual({
+			credential: at(2),
+			name: at(9),
+		});
+	});
+
 	it("a stale version counts every part and item as changed at its own stamp", () => {
 		const e = login({ tags: ["work"] });
 		for (const data of [e, { ...e, partStamps: { name: at(1) }, partStampsAt: at(1) }]) {
@@ -84,6 +128,8 @@ describe("parts", () => {
 	});
 });
 
+afterEach(() => vi.restoreAllMocks());
+
 describe("withPartStamps", () => {
 	const s1 = at(1);
 	const base = {
@@ -95,6 +141,8 @@ describe("withPartStamps", () => {
 		},
 		partStampsAt: s1,
 	} as Entry;
+	/** What a written version's stamps mean, read the way combining reads them. */
+	const eff = (e: Entry) => effectivePartStamps(e, { hlc: e.partStampsAt! });
 
 	it("restamps only what changed", () => {
 		const next = withPartStamps(
@@ -102,8 +150,23 @@ describe("withPartStamps", () => {
 			{ data: base, version: { hlc: s1 } },
 			at(5),
 		);
-		expect(next.partStamps).toEqual({ name: s1, notes: at(5), credential: s1 });
+		expect(eff(next).parts).toEqual({ name: s1, notes: at(5), credential: s1 });
 		expect(next.partStampsAt).toEqual(at(5));
+	});
+
+	// Most stamps are the write's own: storing only the older ones and the clears keeps an entry
+	// close to its plain size.
+	it("stores only stamps older than the write's own, and clears", () => {
+		const next = withPartStamps(
+			{ ...base, notes: undefined, tags: ["work", "travel"] } as Entry,
+			{ data: base, version: { hlc: s1 } },
+			at(5),
+		);
+		expect(next.partStamps).toEqual({ name: s1, credential: s1, notes: at(5) });
+		expect(next.itemStamps).toEqual({ urls: { "https://github.com": s1 }, tags: { work: s1 } });
+		const fresh = withPartStamps(login({ tags: ["work"] }), undefined, at(7));
+		expect(fresh.partStamps).toBeUndefined();
+		expect(fresh.itemStamps).toBeUndefined();
 	});
 
 	it("stamps added items, keeps existing ones, drops removed ones", () => {
@@ -112,8 +175,8 @@ describe("withPartStamps", () => {
 			{ data: base, version: { hlc: s1 } },
 			at(5),
 		);
-		expect(next.itemStamps?.tags).toEqual({ work: s1, travel: at(5) });
-		expect(next.partStamps).toEqual(base.partStamps);
+		expect(eff(next).items.tags).toEqual({ work: s1, travel: at(5) });
+		expect(eff(next).parts).toEqual(base.partStamps);
 	});
 
 	it("discards stamps the caller supplied", () => {
@@ -128,10 +191,11 @@ describe("withPartStamps", () => {
 
 	it("a new entry stamps every part and item at its own stamp", () => {
 		const next = withPartStamps(login({ tags: ["work"] }), undefined, at(7));
-		expect(next.partStamps).toEqual({ name: at(7), credential: at(7) });
-		expect(next.itemStamps).toEqual({
+		expect(eff(next).parts).toEqual({ name: at(7), credential: at(7) });
+		expect(eff(next).items).toEqual({
 			urls: { "https://github.com": at(7) },
 			tags: { work: at(7) },
+			passkeys: {},
 		});
 		expect(next.partStampsAt).toEqual(at(7));
 	});
@@ -143,14 +207,14 @@ describe("withPartStamps", () => {
 			{ data: stale, version: { hlc: at(4) } },
 			at(8),
 		);
-		expect(next.partStamps).toEqual({ name: at(4), notes: at(8), credential: at(4) });
+		expect(eff(next).parts).toEqual({ name: at(4), notes: at(8), credential: at(4) });
 	});
 
 	it("a part or item a superseded version disagrees with is restamped, as a resolution's choice", () => {
 		const sibling = { ...base, notes: "other", tags: ["work"] } as Entry;
 		const next = withPartStamps(base, { data: base, version: { hlc: s1 } }, at(7), [sibling]);
-		expect(next.partStamps).toEqual({ name: s1, notes: at(7), credential: s1 });
-		expect(next.itemStamps?.tags).toEqual({ work: s1, home: at(7) });
+		expect(eff(next).parts).toEqual({ name: s1, notes: at(7), credential: s1 });
+		expect(eff(next).items.tags).toEqual({ work: s1, home: at(7) });
 	});
 
 	it("a part only a superseded version has is recorded as cleared", () => {

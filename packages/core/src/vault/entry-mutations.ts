@@ -605,9 +605,13 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			const causal = new Map(current.causal);
 			stamps.set(id, hlc);
 			causal.set(id, nextCausal({ hlc, bases: held, held }));
-			// Every version the resolution chose against; keeping both, the copied one too.
-			const against =
-				choice.kind === "keepBoth" ? [...choice.superseded, choice.data] : choice.superseded;
+			// Every version the resolution chose against; keeping both, the copied one too. Over a
+			// delete, the deleted state too: everything kept is restored now, not by the old write.
+			const against = [
+				...choice.superseded,
+				...(choice.kind === "keepBoth" ? [choice.data] : []),
+				...(current.tombstones.has(id) ? [{ type: prev.type } as EntryData] : []),
+			];
 			// The kept content keeps its part stamps except where a version it replaces disagreed.
 			let entries = current.entries.map((e) =>
 				e.id === id

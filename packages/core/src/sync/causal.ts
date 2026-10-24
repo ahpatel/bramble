@@ -53,9 +53,19 @@ export function inHistory(writer: string, stamp: Hlc, v: Versioned): boolean {
 	return causalHas(causalOf(v), writer, stamp);
 }
 
-/** Whether x is an ancestor of y: x's own event is in y's history. */
+/** The writer-key prefix of a combined version (sync/combine.ts). */
+export const MERGE_WRITER_PREFIX = "~merge:";
+
+/**
+ * Whether x is an ancestor of y: x's own event is in y's history. A combined version is a pure
+ * function of its inputs, so it is also an ancestor of anything whose history holds them all.
+ */
 export function isAncestor(x: Versioned, y: Versioned): boolean {
-	return inHistory(writerOf(x), x.hlc, y);
+	const writer = writerOf(x);
+	if (inHistory(writer, x.hlc, y)) return true;
+	if (!x.vv || !writer.startsWith(MERGE_WRITER_PREFIX)) return false;
+	const { [writer]: _own, ...inputs } = x.vv;
+	return containsHistory(y, { hlc: x.hlc, vv: inputs, ...(x.floor ? { floor: x.floor } : {}) });
 }
 
 /** Whether all of inner's history is inside outer's. */
