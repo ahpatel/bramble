@@ -30,6 +30,8 @@ export interface VaultListItem {
 	secondary: string;
 	leaked?: boolean;
 	passkeys?: number;
+	/** Sync kept other versions of it, or a concurrent delete, awaiting a choice. */
+	conflict?: boolean;
 	copyItems: CopyItem[];
 	// Lowercased text the search box matches against.
 	searchText: string;
@@ -275,6 +277,7 @@ export function VaultHome({
 											initials={item.initials}
 											leaked={item.leaked}
 											passkeys={item.passkeys}
+											conflict={item.conflict}
 											copyItems={item.copyItems}
 											onSelect={onSelectEntry}
 											onEdit={onEditEntry}

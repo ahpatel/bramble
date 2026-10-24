@@ -6,13 +6,18 @@
 // default, and the few fields the list owns are applied over the top.
 
 import type { Entry } from "../../../hooks/useVault";
+import type { EntryConflict } from "../../../sync";
 import { tagKey } from "../../../vault/tags";
 import { getEntryMode } from "../../entry-modes";
 import { customFieldsCopyItems, customFieldsSearchText } from "../../entry-modes/custom-fields";
 import type { VaultListItem } from "./VaultHome";
 
 /** `showBreaches` off hides the badge without the list having to know why. */
-export function toListItem(entry: Entry, showBreaches: boolean): VaultListItem {
+export function toListItem(
+	entry: Entry,
+	showBreaches: boolean,
+	conflict?: EntryConflict,
+): VaultListItem {
 	const mode = getEntryMode(entry.type);
 	const view = mode.row(entry);
 	return {
@@ -32,6 +37,7 @@ export function toListItem(entry: Entry, showBreaches: boolean): VaultListItem {
 		updatedAt: entry.updatedAt,
 		lastUsedAt: entry.lastUsedAt,
 		archived: entry.archivedAt !== undefined,
+		conflict: conflict !== undefined,
 		tagKeys: entry.tags?.map(tagKey),
 	};
 }

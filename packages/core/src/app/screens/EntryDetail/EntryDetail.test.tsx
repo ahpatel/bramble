@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { i18n } from "@lingui/core";
 import { I18nProvider } from "@lingui/react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { type Platform, PlatformProvider } from "../../../context/PlatformContext";
 import type { Entry } from "../../../hooks/useVault";
@@ -115,5 +115,41 @@ describe("EntryDetail actions", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 		expect(screen.queryByText("Delete this entry permanently?")).toBeNull();
 		expect(onDelete).not.toHaveBeenCalled();
+	});
+});
+
+// The compare view renders each version through the mode's own detail body, but copying from a
+// version you are only comparing is not a use of the entry.
+describe("EntryDetail conflict", () => {
+	it("copying a field in the compare view doesn't record a use", async () => {
+		const onUse = vi.fn();
+		const sibling = { ...CARD, number: "4111 1111 1111 1111" } as unknown as Entry;
+		render(
+			<I18nProvider i18n={i18n}>
+				<PlatformProvider platform={platform}>
+					<EntryDetail
+						entry={CARD}
+						onEdit={() => {}}
+						onDelete={async () => {}}
+						onSetArchived={async () => {}}
+						onSelectTag={() => {}}
+						onUse={onUse}
+						conflict={{ versions: 1, deleted: false }}
+						onReadConflictVersions={async () => [
+							{ hlc: { wall: 5, counter: 0, node: "phone" }, data: sibling },
+						]}
+						onResolveConflict={async () => {}}
+					/>
+				</PlatformProvider>
+			</I18nProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Compare versions" }));
+		await screen.findByRole("button", { name: "Use this one" });
+		const other = screen.getByText("The other version").closest("div.rounded-lg") as HTMLElement;
+		fireEvent.click(within(other).getByRole("button", { name: /copy card number/i }));
+		await waitFor(() =>
+			expect(platform.clipboard.copy).toHaveBeenLastCalledWith(expect.stringContaining("4111")),
+		);
+		expect(onUse).not.toHaveBeenCalled();
 	});
 });

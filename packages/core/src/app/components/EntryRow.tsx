@@ -29,6 +29,8 @@ interface EntryRowProps {
 	/** Login-only: passkeys held by this entry. Marked on the row because deleting the entry
 	 * deletes them with it, so a duplicate carrying one is the copy worth keeping. */
 	passkeys?: number;
+	/** Sync kept other versions of this entry, or a concurrent delete (docs/sync-conflicts.md). */
+	conflict?: boolean;
 	/** Quick-copy actions; empty hides the copy button. */
 	copyItems: CopyItem[];
 	onSelect: (id: string) => void;
@@ -58,6 +60,7 @@ export const EntryRow = memo(function EntryRow({
 	initials,
 	leaked,
 	passkeys = 0,
+	conflict = false,
 	copyItems,
 	onSelect,
 	onEdit,
@@ -206,6 +209,14 @@ export const EntryRow = memo(function EntryRow({
 								aria-label={passkeyLabel}
 								role="img"
 							/>
+						)}
+						{conflict && (
+							<span
+								className="shrink-0 self-center text-[10px] uppercase tracking-wide text-amber-600 border border-amber-500/40 rounded px-1 py-px dark:text-amber-500"
+								title={t`Changed on two devices before they synced`}
+							>
+								<Trans>Conflict</Trans>
+							</span>
 						)}
 					</div>
 					<p className="text-xs text-muted-foreground truncate mt-0.5">{secondary}</p>

@@ -71,6 +71,14 @@ msgstr "{affected, plural, one {Remover tag de # entrada} other {Remover tag de 
 msgid "{appName} recovery code"
 msgstr "Código de recuperação {appName}"
 
+#: packages/core/src/app/screens/Settings/components/KdbxExportDialog.tsx
+msgid "{conflicted, plural, one {# entry has a sync conflict. Only the version you see is exported.} other {# entries have a sync conflict. Only the version you see is exported.}}"
+msgstr ""
+
+#: packages/core/src/app/bulk-actions/export.tsx
+msgid "{conflicted, plural, one {# of these entries has a sync conflict. Only the version you see is exported.} other {# of these entries have a sync conflict. Only the version you see is exported.}}"
+msgstr ""
+
 #: packages/core/src/app/screens/VaultHome/SelectionBar.tsx
 msgid "{count, plural, one {# selected} other {# selected}}"
 msgstr "{count, plural, one {# selecionado} other {# selecionados}}"
@@ -672,6 +680,10 @@ msgstr "Altere-o no site para manter sua conta segura."
 msgid "Change your master password"
 msgstr "Mudar sua senha mestra"
 
+#: packages/core/src/app/components/EntryRow.tsx
+msgid "Changed on two devices before they synced"
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/UpdatesSection.tsx
 msgid "Check"
 msgstr "Verificar"
@@ -801,6 +813,10 @@ msgstr "Em breve"
 msgid "Comma (,)"
 msgstr "Vírgula (,)"
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Compare versions"
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/RecoveryCodeSection.tsx
 msgid "Confirm"
 msgstr "Confirmar"
@@ -849,6 +865,10 @@ msgstr "Confirme sua senha mestra para redefinir o código de recuperação."
 #: packages/core/src/app/screens/Settings/components/MasterPasswordSection.tsx
 msgid "Confirm your new password"
 msgstr "Confirmar nova senha"
+
+#: packages/core/src/app/components/EntryRow.tsx
+msgid "Conflict"
+msgstr ""
 
 #: packages/core/src/app/screens/Settings/components/BrowserPairingSection.tsx
 #: packages/core/src/app/screens/Settings/components/DesktopLinkSection.tsx
@@ -1104,6 +1124,10 @@ msgstr "Excluir"
 #: packages/core/src/app/screens/EntryDetail/EntryDetail.tsx
 msgid "Delete entry"
 msgstr "Excluir entrada"
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Delete it"
+msgstr ""
 
 #: packages/core/src/app/screens/EntryDetail/EntryDetail.tsx
 msgid "Delete this entry permanently?"
@@ -1755,13 +1779,25 @@ msgstr "Vincular cofre"
 msgid "KDBX export isn't available here."
 msgstr "A exportação KDBX não está disponível aqui."
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Keep both"
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Keep everything"
 msgstr "Manter tudo"
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Keep it"
+msgstr ""
+
 #: packages/core/src/app/screens/VaultSetup/VaultSetup.tsx
 msgid "Keep the invite open on your other device while the vault transfers."
 msgstr "Mantenha o convite aberto no seu outro dispositivo enquanto o cofre é transferido."
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Keep this one"
+msgstr ""
 
 #: packages/core/src/app/screens/VaultSetup/VaultSetup.tsx
 msgid "Keep this screen open until pairing finishes."
@@ -2719,6 +2755,11 @@ msgstr "Salvar em um novo login"
 msgid "Save your recovery code"
 msgstr "Salvar seu código de recuperação"
 
+#. placeholder {0}: formatDateTime(saved)
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Saved {0}"
+msgstr ""
+
 #. placeholder {0}: u.label
 #. placeholder {1}: u.entryName
 #: packages/core/src/hooks/usePendingHandoffs.tsx
@@ -3189,6 +3230,10 @@ msgstr "Essa transferência não continha nada que pudéssemos importar."
 msgid "That transfer didn't go through."
 msgstr "Essa transferência não foi concluída."
 
+#: packages/core/src/hooks/useVault.tsx
+msgid "That version is no longer here. It may have synced away."
+msgstr ""
+
 #: packages/core/src/app/entry-modes/card.tsx
 msgid "That year is outside the range cards use."
 msgstr "Esse ano está fora do intervalo utilizado pelos cartões."
@@ -3225,6 +3270,10 @@ msgstr "O aplicativo de desktop ofereceu compartilhar seu cofre com este navegad
 msgid "The one you saved with Export a backup, or a cloud backup."
 msgstr "Aquele que você salvou com Exportar um backup, ou um backup na nuvem."
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "The other version"
+msgstr ""
+
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "The signaling relay that introduces devices. Defaults to the hosted relay; point it at your own or any public Nostr relay."
 msgstr "O relé de sinalização que introduz os dispositivos. Padrão é o relé hospedado; aponte para o seu próprio ou qualquer relé Nostr público."
@@ -3232,6 +3281,10 @@ msgstr "O relé de sinalização que introduz os dispositivos. Padrão é o rel�
 #: packages/core/src/hooks/useCryptoErrorMessage.tsx
 msgid "The vault was locked or switched while that was in progress. Try again."
 msgstr "O cofre foi bloqueado ou trocado enquanto isso estava em andamento. Tente novamente."
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "The version shown"
+msgstr ""
 
 #: packages/core/src/app/screens/Settings/components/AppearanceSection.tsx
 msgid "Theme"
@@ -3333,6 +3386,14 @@ msgstr "Este domínio e seus subdomínios"
 #: packages/core/src/app/entry-modes/tags.tsx
 msgid "This entry has as many tags as it can hold."
 msgstr "Esta entrada atingiu o limite de tags."
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "This entry was changed on two devices before they synced."
+msgstr ""
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "This entry was deleted on one device and changed on another before they synced."
+msgstr ""
 
 #. placeholder {0}: res.skipped
 #: packages/core/src/app/screens/Import/ImportShell.tsx
@@ -3689,6 +3750,10 @@ msgstr "Use apenas dígitos, espaços ou hífens."
 #: packages/core/src/app/components/PasswordGenerator.tsx
 msgid "Use password"
 msgstr "Usar senha"
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Use this one"
+msgstr ""
 
 #: packages/core/src/app/components/ui/weak-password-notice.tsx
 msgid "Use this password anyway"

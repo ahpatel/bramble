@@ -2,12 +2,14 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import { AlertTriangle, Archive, ArchiveRestore, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePlatform } from "../../../context/PlatformContext";
-import type { Entry } from "../../../hooks/useVault";
+import type { ConflictChoice, ConflictVersion, Entry } from "../../../hooks/useVault";
+import type { EntryConflict } from "../../../sync";
 import { formatDateTime } from "../../../util/format-date";
 import { Button } from "../../components/ui/button";
 import { getEntryMode } from "../../entry-modes";
 import { CustomFieldsDetail } from "../../entry-modes/custom-fields";
 import { TagsDetail } from "../../entry-modes/tags";
+import { ConflictBanner } from "./ConflictBanner";
 
 interface EntryDetailProps {
 	entry: Entry;
@@ -19,6 +21,10 @@ interface EntryDetailProps {
 	onSelectTag: (tag: string) => void;
 	/** Called after a successful field copy, to record the entry as recently used. */
 	onUse?: () => void;
+	/** Sync kept other versions of this entry, or a concurrent delete (docs/sync-conflicts.md). */
+	conflict?: EntryConflict;
+	onReadConflictVersions?: () => Promise<ConflictVersion[]>;
+	onResolveConflict?: (choice: ConflictChoice) => Promise<void>;
 }
 
 /** Shared chrome for viewing any entry (banner, Edit header, archive/delete footer); the mode supplies the fields. */
@@ -29,6 +35,9 @@ export function EntryDetail({
 	onSetArchived,
 	onSelectTag,
 	onUse,
+	conflict,
+	onReadConflictVersions,
+	onResolveConflict,
 }: EntryDetailProps) {
 	const { clipboard } = usePlatform();
 	const { t } = useLingui();
@@ -100,6 +109,16 @@ export function EntryDetail({
 						</p>
 					</div>
 				</div>
+			)}
+
+			{conflict && onReadConflictVersions && onResolveConflict && (
+				<ConflictBanner
+					entry={entry}
+					conflict={conflict}
+					onReadVersions={onReadConflictVersions}
+					onResolve={onResolveConflict}
+					onDelete={onDelete}
+				/>
 			)}
 
 			{alert && (

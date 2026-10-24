@@ -11,7 +11,16 @@ const BREACH_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 export function EntryDetailRoute() {
 	const navigate = useNavigate();
 	const { entryId } = useParams({ from: "/_app/vault/$entryId" });
-	const { entries, deleteEntry, setEntriesArchived, touchEntry, setEntryBreach } = useVault();
+	const {
+		entries,
+		conflicts,
+		deleteEntry,
+		setEntriesArchived,
+		touchEntry,
+		setEntryBreach,
+		readConflictVersions,
+		resolveConflict,
+	} = useVault();
 	const { prefs, loaded: prefsLoaded } = usePrefs();
 	const entry = entries.find((e) => e.id === entryId);
 	const refreshAttemptedRef = useRef<string | null>(null);
@@ -53,6 +62,9 @@ export function EntryDetailRoute() {
 				// truth, and the resulting URL is the same one typing `#tag` would produce.
 				onSelectTag={(tag) => navigate({ to: "/vault", search: { q: `#${tag}` } })}
 				onUse={() => void touchEntry(entryId)}
+				conflict={conflicts.get(entryId)}
+				onReadConflictVersions={() => readConflictVersions(entryId)}
+				onResolveConflict={(choice) => resolveConflict(entryId, choice)}
 			/>
 		</div>
 	);

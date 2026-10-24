@@ -232,3 +232,17 @@ describe("EntryRow action arguments", () => {
 		await vi.waitFor(() => expect(onUse).toHaveBeenCalledExactlyOnceWith("e1"));
 	});
 });
+
+// Sync keeps both versions when two devices change one entry; the list has to say which entries
+// are waiting on a choice (docs/sync-conflicts.md).
+describe("EntryRow conflict marker", () => {
+	it("marks an entry with a conflict", () => {
+		renderRow({ conflict: true });
+		expect(screen.getByText("Conflict")).toBeTruthy();
+	});
+
+	it("leaves other entries unmarked", () => {
+		renderRow();
+		expect(screen.queryByText("Conflict")).toBeNull();
+	});
+});

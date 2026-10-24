@@ -26,7 +26,7 @@ export function VaultHomeRoute() {
 		}),
 		[raw.q, raw.type, raw.sort, raw.archived],
 	);
-	const { entries, ready, deleteEntry, touchEntry } = useVault();
+	const { entries, conflicts, ready, deleteEntry, touchEntry } = useVault();
 	const { shell } = usePlatform();
 	const { prefs, update } = usePrefs();
 	// Hide stored breach flags when breach checking is off.
@@ -73,8 +73,8 @@ export function VaultHomeRoute() {
 
 	// Project each entry into a list row via its mode descriptor (type-agnostic).
 	const items = useMemo<VaultListItem[]>(
-		() => entries.map((entry) => toListItem(entry, showBreaches)),
-		[entries, showBreaches],
+		() => entries.map((entry) => toListItem(entry, showBreaches, conflicts.get(entry.id))),
+		[entries, showBreaches, conflicts],
 	);
 
 	// replace: typing shouldn't stack history entries.
