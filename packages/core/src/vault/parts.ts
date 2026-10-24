@@ -16,6 +16,9 @@ export type ItemStamps = Partial<Record<ItemList, Record<string, Hlc>>>;
 
 export const ITEM_LISTS: readonly ItemList[] = ["urls", "tags", "passkeys"];
 
+/** The fields this module writes: vault bookkeeping, never content. */
+export const PART_STAMP_FIELDS = ["partStamps", "itemStamps", "partStampsAt"] as const;
+
 /** Fields that change together, so a combine never pairs one side's with the other's. */
 const GROUPS: Record<string, Record<string, readonly string[]>> = {
 	login: { credential: ["username", "password", "totp"] },
@@ -32,9 +35,7 @@ const NOT_PARTS = new Set<string>([
 	"lastUsedAt",
 	"breach",
 	"passwordChangelog",
-	"partStamps",
-	"itemStamps",
-	"partStampsAt",
+	...PART_STAMP_FIELDS,
 	...ITEM_LISTS,
 ]);
 

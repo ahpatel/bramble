@@ -16,6 +16,7 @@
 // are held back for the user to confirm rather than dropped. See docs/encrypted-import.md.
 
 import type { EntryData } from "../hooks/useVault";
+import { PART_STAMP_FIELDS } from "./parts";
 
 /**
  * Vault bookkeeping, stripped at any depth. `createdAt` is included because only some
@@ -23,9 +24,10 @@ import type { EntryData } from "../hooks/useVault";
  * and quietly fail for every format that doesn't carry a creation date. `archivedAt` is
  * included so re-importing the file an entry came from still recognizes the archived copy,
  * and `tags` for the same reason: an import can seed them, but they are curated locally
- * afterwards, and a hand-added tag must not make the source file look like a new entry.
+ * afterwards, and a hand-added tag must not make the source file look like a new entry. Part
+ * stamps are sync bookkeeping every write adds.
  */
-const METADATA_KEYS = new Set([
+const METADATA_KEYS = new Set<string>([
 	"id",
 	"createdAt",
 	"updatedAt",
@@ -33,6 +35,7 @@ const METADATA_KEYS = new Set([
 	"archivedAt",
 	"tags",
 	"breach",
+	...PART_STAMP_FIELDS,
 ]);
 
 /**

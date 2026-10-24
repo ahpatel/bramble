@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Entry, EntryData } from "../hooks/useVault";
 import { entryContentKey, splitAlreadyImported } from "./entry-identity";
+import { withPartStamps } from "./parts";
 
 const login = (over: Partial<Extract<EntryData, { type: "login" }>> = {}): EntryData => ({
 	type: "login",
@@ -18,6 +19,14 @@ const stored = (data: EntryData, at = 1_750_000_000_000): Entry =>
 describe("entryContentKey", () => {
 	it("ignores the id and stamps the vault adds, which is what makes re-import detectable", () => {
 		expect(entryContentKey(stored(login()))).toBe(entryContentKey(login()));
+	});
+
+	// Every write records which write changed each part (docs/sync-conflicts.md, Phase B).
+	it("ignores the part stamps every write records", () => {
+		const hlc = { wall: 1_750_000_000_000, counter: 0, node: "device" };
+		const written = withPartStamps(stored(login({ tags: ["work"] })), undefined, hlc);
+		expect(written.partStampsAt).toEqual(hlc);
+		expect(entryContentKey(written)).toBe(entryContentKey(login()));
 	});
 
 	it("ignores usage metadata picked up after the import", () => {
