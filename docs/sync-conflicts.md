@@ -223,100 +223,207 @@ About 1.5 to 2 weeks:
 Risk is low to medium: the change is additive, the merge stays blind, and older builds behave as
 they do today.
 
-## Phase B: merge field groups
+## Phase B: combine edits to different parts of an entry
+
+Decided with the user 2026-10-23. When two devices change the same entry before they sync,
+changes to **different parts** combine on their own; if both changed the **same part**, the pair
+stays a Phase A conflict for the user to choose. Combining happens during sync (background sync
+included) and when a vault loads, it is silent (a combined entry just looks edited), and it ships
+in two releases (see "Rollout").
+
+The failures that matter even if it "works": an entry nobody wrote (one device's username with
+the other's password), a removal on one device quietly undone by the other's addition, devices
+that never agree on the combined result, and any credential lost to a combine.
+
+### What a part is
+
+A **part** is one top-level field of the decrypted entry, except fields that must move together:
+
+| Part | Fields |
+|------|--------|
+| credential (login) | `username`, `password`, `totp` |
+| card (card) | `cardholderName`, `number`, `brand`, `expMonth`, `expYear`, `cvv` |
+| key (ssh-key) | `publicKey`, `privateKey`, `passphrase`, `keyType` |
+| one part per field | every other field: `name`, `notes`, `customFields`, `archivedAt`, `autofillEnabled`, `autoSubmit`, `subdomainMatch`, and any field this build doesn't know (a newer build's), compared as opaque JSON |
+| item by item | `urls` (by string), `tags` (by `tagKey`), `passkeys` (by `credentialId`) |
+
+Not parts, because they are derived or per-device: `createdAt` (take the earliest), `updatedAt`
+and `lastUsedAt` (take the latest), `breach` (follows whichever credential is kept), and
+`passwordChangelog` (the union of both sides' rows plus any superseded password, through
+`withSupersededPasswords`, still capped). A different `type` on the two sides is a conflict.
+`customFields` has no item ids, so it is one part: both devices editing custom fields is a
+conflict.
+
+### Part stamps
+
+Every write records, inside the encrypted entry JSON (so older builds keep it; see vault-format.md
+"Forward compatibility"):
+
+- `partStamps: Record<part, Hlc>`: the stamp of the write that last changed each part. A write
+  copies the previous stamps and restamps only the parts whose value it changed.
+- `itemStamps: { urls?, tags?, passkeys?: Record<itemKey, Hlc> }`: the stamp of the write that
+  added each list item.
+- `partStampsAt: Hlc`: the version's own stamp at the time it wrote these. A version whose `hlc`
+  differs was rewritten by a build that doesn't keep part stamps (Phase A or older), so all of
+  its parts and items count as changed at its own `hlc`. A version with no part stamps at all
+  counts the same way.
+
+`touch` and the breach refresh don't restamp the version, so they don't touch part stamps.
+
+### Combining two versions
+
+Both versions are siblings, so neither descends from the other. Decisions use the Phase A
+histories with one restriction, **seen** (my call after the builder check):
+
+- A stamp X records through its `vv` (a write that carried a history) counts as seen by Y only
+  if Y's `vv` covers it: `Y.vv[stamp.node] >= stamp`.
+- A stamp X covers only through a `floor` (an older build's write, or one from before the
+  upgrade) counts as seen by Y if Y's `vv` or Y's `floor` covers it.
+
+A `floor` is an older build's last-writer-wins guess. It may stand in for older builds' events,
+which have nothing better, but never for a newer build's change it can't have seen; otherwise an
+older build's edit stamped later could drop a passkey or restore an old password a newer build
+had changed. With the restriction, such a pair is a conflict instead. (A stamp's writer key is its
+`node`, which is why forked writes are restamped; see "Older builds".)
+
+- **A part.** If the values are equal, keep it. Otherwise, if X's part stamp is seen by Y, Y has
+  the newer value: take Y's. If Y's is seen by X, take X's. If neither, both changed it: **the
+  pair doesn't combine** and stays a conflict.
+- **A list.** An item on both sides stays. An item only on X stays if its add stamp is **not**
+  seen by Y (X added it concurrently), and goes if it is (Y saw it and removed it). Symmetric
+  for Y. A re-added item has a new add stamp, so it survives a concurrent removal of the old one.
+  Order: the higher-stamp version's order, then the other side's new items in its order.
+- **Stale stamps** (an older build's edit): every part counts as changed at its `hlc`, a stamp
+  only its own claim covers, so the other side never sees it; it combines only where the values
+  happen to be equal or the other side's change is an older build's too. List items from it count
+  as added at its `hlc`, which errs toward keeping them.
+
+Three or more siblings combine in a fixed order (by stamp, highest first), folding each into the
+result while it combines and leaving it as a sibling when it doesn't.
+
+### The combined version
+
+A combined version is a pure function of the siblings it replaces, so every device that combines
+the same set writes the same version and nothing bounces:
+
+- `vv`: the join of the inputs' histories, plus its own event; `floor`: their max.
+- `hlc`: the highest input's `wall` and `counter + 1`, with a synthetic node,
+  `~merge:<id>`, where `<id>` is a SHA-256 (base64url, 16 bytes) of the inputs' sorted
+  `causalKey`s. The node is unique per input set, so two devices that combined different sets
+  never share a stamp, and it doubles as the writer key, used once.
+- Plaintext: built as above; `partStamps` and `itemStamps` carried from the side each value came
+  from; `partStampsAt` is the combined `hlc`.
+
+Ciphertext differs per device (fresh DEK), the content doesn't. A device that combined a
+different set produces a different version; when they meet they are siblings again and combine
+again, finitely.
+
+**The rules are a wire protocol** (my call after the builder check). Two builds that combine the
+same inputs differently would write different content under one stamp, and devices would keep
+different entries forever without noticing. So:
+
+- `COMBINE_RULES_VERSION` (starting at 1) is the stamp's counter offset: `counter` is the highest
+  input's `counter + COMBINE_RULES_VERSION`. Results for the same inputs share the writer key
+  `~merge:<id>`, so a newer rules version's result descends from an older one's and replaces it,
+  instead of the two bouncing as siblings. A device that already pruned the inputs keeps the
+  older result; that is accepted.
+- Within one rules version the output is frozen: golden test vectors (inputs and expected
+  plaintext) live in the repo, and changing parts, normalization or list rules means bumping the
+  version.
+- A field added later is its own opaque part unless its release also bumps the rules version;
+  builds on older rules treat it as its own part anyway.
+
+### Saving the edit form (decided with the user 2026-10-23)
+
+The edit form keeps the values it opened with, so a change that syncs in while it is open was
+silently overwritten on Save: the save superseded whatever was displayed at that moment. Phase B
+makes that worse, because the overwritten parts would then carry fresh part stamps and win later
+combines too.
+
+So the form records the version it opened (its stamp, history and decrypted data), and saving
+supersedes **that** version, not the displayed one. Part stamps are restamped only where the
+saved value differs from the opened version's. A change that arrived meanwhile is then concurrent
+with the save: the two combine, or conflict where both touched the same part. The pop-out draft
+carries the opened version with its values. This also helps under B1 with combining off: the
+overwrite becomes a visible conflict instead of a silent loss. Phase A's bases table gains a row:
+an edit-form save supersedes the version the form opened.
 
 ### Where it runs
 
-Combining fields needs plaintext, so the merge decrypts both versions **inside the crypto core**,
-the same host that already decrypts entries to show them and already test-decrypts every incoming
-winner (`apply-remote.ts`, `admit`). The vault must be unlocked to merge either way. Nothing
-leaves the core but the re-sealed result. Once this ships, the README and site copy that says the
-winner is picked "from the stamps alone" must change.
+In `applyRemotePayload` after the merge, and in `useVault`'s load after canonicalizing, through a
+new `VaultSyncPort`/crypto hook that decrypts the siblings, combines, and seals the result. On
+desktop and mobile that is the same process that already decrypts entries to show them; in the
+extension it is the background, which already decrypts entries for corner-prompt saves. The
+device witnesses the combined stamp so its next write sorts after it. Only ids with siblings
+are touched, so the cost is negligible.
 
-### Groups, not fields
+Native autofill (Android `VaultReader`, the iOS extension) reads only the displayed version, so
+combining at sync time, not at display time, is what gets the combined password to fill.
 
-A naive per-field merge can produce entries nobody wrote. For example, A switches a login to a new
-account (new username and password) while B rotates the old account's password; field-by-field,
-the result is A's username with B's password, which works for neither account. So the unit is a
-**group** of fields that change together:
+### Older builds
 
-| Type | Groups merged independently |
-|------|------------------------------|
-| all | `name`; `notes`; `archivedAt`; `tags` (set); `customFields` (list) |
-| login | credential `{username, password, totp}`, with `breach` following the credential; `urls` (set); fill settings `{autofillEnabled, autoSubmit, subdomainMatch}`; `passkeys` (keyed by `credentialId`) |
-| card | `{cardholderName, number, brand, expMonth, expYear, cvv}` as one group |
-| ssh-key | `{publicKey, privateKey, passphrase, keyType}` as one group |
-
-The remaining fields merge as follows:
-
-- **Timestamps.** Take the lowest `createdAt` and the highest `updatedAt` and `lastUsedAt`.
-- **`passwordChangelog`.** Combine both sides' rows, then apply the existing cap
-  (`MAX_PASSWORD_CHANGELOG = 5`, newest first). That cap is the one documented loss
-  ([password-changelog.md](password-changelog.md)).
-- **Attachment manifests** (feat/file-attachments, not on main yet). They'll need the same
-  per-item treatment as `passkeys`.
-
-### Group stamps
-
-This section predates the Phase A history model. "The common ancestor" and `meet` must be
-re-derived against floors and fork keys before Phase B starts.
-
-Each group carries the stamp of its last change, stored **inside the encrypted entry JSON** as
-`groupStamps`. Older builds keep unknown keys ([vault-format.md](vault-format.md), "Forward
-compatibility"), which is how `archivedAt` and `tags` shipped, so this needs no format bump. A
-group changed on side X since the common ancestor iff its stamp was made by node `n` and is newer
-than `meet(X.vv, other.vv)[n]`. Then:
-
-- **Only one side changed a group:** take that side's version.
-- **Neither side changed it:** keep the shared value.
-- **Both sides changed it:** don't guess. The pair stays a Phase A conflict.
-
-Sets and lists need per-item add and remove stamps, or a removal comes back. `customFields` have
-no ids today, so they need an identity first.
-
-An older build that edits an entry keeps `groupStamps` but doesn't update them. A stored
-`groupStampsAt` that doesn't match the envelope's `hlc` detects this, and the whole entry is
-treated as changed at that stamp.
-
-### Convergence
-
-Two devices that merge the same pair must produce the same version, or they generate two
-"merged" versions that are concurrent with each other and merge forever. So a merge result is a
-pure function of its inputs:
-
-- **Plaintext.** Deterministic given the two versions.
-- **`vv`.** The exact join of the inputs, with no increment for the merging device.
-- **Stamp.** Derived from the inputs alone, for example the max input stamp with
-  `counter + 1` and a reserved node id, so it can never equal a real device's stamp.
-
-Ciphertext differs per device (fresh DEK and IV), but the content is identical, so the
-same-stamp-same-content invariant holds.
-
-`applyRemotePayload` changes too. Today it only does work when the remote version wins; it would
-have to merge every concurrent pair, decrypting both sides.
+- A Phase A or older build that edits a combined entry keeps `partStamps` (unknown keys survive)
+  but not `partStampsAt`'s meaning, which the mismatch check catches.
+- A combined version stripped by an older build is a legacy copy whose writer is its synthetic
+  node, so descendants still recognise it (the same reason forked writes are restamped).
+- Phase A builds treat a combined version as an ordinary newer version, which it is.
 
 ### Rollout
 
-Ship in two releases so a bug can't spread before enough devices understand the format:
+1. **B1**: every writer records `partStamps`, `itemStamps` and `partStampsAt` (core mutations,
+   resolutions, the extension's corner prompt and passkey placement). The combine code ships
+   too, switched off by a constant (`COMBINE_CONCURRENT_EDITS = false`); tests run it on.
+2. **B2**: flip the constant once most devices write part stamps. The README and site copy
+   ("never compares plaintext", "you choose between both versions") change in that release.
 
-1. **B1.** Write `groupStamps` on every edit. They do nothing yet, and older builds keep them.
-2. **B2.** Turn on the group merge once most devices are on B1 or later.
+### Edge cases (checked against the rules above)
+
+- **Password on the phone, notes on the laptop.** Different parts: combines.
+- **Password on both.** Same part: stays a conflict. Nothing combines for that pair, even its
+  other parts.
+- **Username on one, password on the other.** Same part (credential): conflict, never a mixed
+  credential.
+- **Archive on one, edit on the other.** Different parts: an archived entry with the edit.
+- **Delete on one, edit on the other.** Not a field merge: stays a Phase A delete conflict.
+- **Both add the same URL or tag.** On both sides: kept once. Tags compare by `tagKey`, so "Work"
+  and "work" are one item; the higher-stamp side's spelling wins.
+- **One adds a URL, the other removes a different one.** Item rules: both happen.
+- **One removes a URL the other never had seen added.** The add stamp isn't in the remover's
+  history, so it is kept: a removal can't cancel an addition it never saw.
+- **Both edit custom fields.** One part: conflict.
+- **Passkey created on one device, notes edited on the other.** Combines; the passkey is an item.
+- **The same passkey on both with different `signCount` or `lastUsedAt`.** Same item: the
+  higher-stamp side's copy (counters never go backwards between versions in practice; both are
+  low-stakes).
+- **A field one build doesn't know** (a newer build added it). Its own opaque part: combines
+  when only one side changed it, conflict when both did.
+- **Empty vs absent** (`notes: ""` vs no `notes`). Equal: normalized to absent before comparing.
+- **One side's edit from an older build.** Its stamps are claims only, so they can't count as
+  having seen a newer build's change: a passkey a newer build added survives, and a password a
+  newer build changed against the older build's other edits is a conflict, not a silent revert.
+  An older build can make a combine less likely, never wrong.
+- **An older build relays a stripped copy, or a later version inherits its floor.** Same rule:
+  a floor never covers a newer build's change.
+- **Two builds with different combine rules.** The higher rules version's result replaces the
+  lower one's for the same inputs.
+- **Three devices, two combinable, one conflicting.** The two combine; the third stays a sibling
+  of the result.
+- **Two devices combine at once.** Same inputs, same version: one write, no ping-pong.
+- **Combine, then a resolution elsewhere that didn't see it.** The resolution and the combined
+  version are siblings; they combine or conflict like any pair.
+- **The kept password history.** Rows from both sides survive (capped at 5, the documented loss).
+- **A conflict the user is resolving when a combine lands.** The Phase A `seen` check refuses the
+  stale choice and the compare view reloads.
+- **Key rotation.** A combined version is an ordinary sealed version; rotation re-seals it like
+  any other.
 
 ### Effort
 
-About 3 to 5 weeks on top of Phase A:
-
-- **Group stamps on the single write path (3 to 4 days).** That path is `entry-mutations.ts`; the
-  iOS and Android autofill extensions queue their saves for the main app rather than writing.
-- **The merge in the crypto host (about a week).** Including deterministic results and changing
-  `applyRemotePayload`.
-- **Set and list semantics (about a week).** Including an identity for custom fields.
-- **Convergence tests (about a week).** Property tests across merge orders, a mesh mixing old and
-  new builds, and device testing on all four targets.
-
-Risk is high. This changes how persisted data on users' devices is merged; a convergence bug
-corrupts or ping-pongs vaults, and group stamps can't be taken back out of people's vaults once
-written.
+About 2 weeks: part and item stamps on every writer, the combine function with property tests
+(the Phase A simulator extended with part-level truth), the port hook on each target, and the
+flag. Risk is high, which is why it ships switched off: this changes how persisted data on users'
+devices is merged, a convergence bug corrupts or ping-pongs vaults, and part stamps can't be
+taken back out of people's vaults once written.
 
 ## Order
 
