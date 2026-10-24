@@ -3,6 +3,7 @@
 export const SYNC_LAST_SYNCED_KEY = "sync.lastSyncedAt";
 
 export * from "./apply-remote";
+export * from "./causal";
 export * from "./device-clock";
 export * from "./enrollment";
 export * from "./entries-payload";
