@@ -77,6 +77,12 @@ export interface EntryMutations {
 	 * entry keeps its sync stamp, so the new `lastUsedAt` stays on this device until its next edit.
 	 */
 	touch(current: VaultEntries, id: string): Promise<VaultEntries>;
+	/** Save a re-checked breach status on a login. Not restamped, like `touch`: it is derived, per-device data. */
+	setBreach(
+		current: VaultEntries,
+		id: string,
+		breach: { leaked: boolean; checkedAt: number },
+	): Promise<VaultEntries>;
 	/**
 	 * Write one vault-scoped setting, stamped from this device's clock.
 	 *
@@ -370,6 +376,14 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			}
 			// Not restamped: a use must never outrank an edit made on another device.
 			const entries = current.entries.map((e) => (e.id === id ? { ...e, lastUsedAt: at } : e));
+			return persist({ ...current, entries });
+		},
+
+		setBreach: async (current, id, breach) => {
+			if (!current.entries.some((e) => e.id === id && e.type === "login")) return current;
+			const entries = current.entries.map((e) =>
+				e.id === id && e.type === "login" ? { ...e, breach } : e,
+			);
 			return persist({ ...current, entries });
 		},
 

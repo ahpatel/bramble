@@ -333,6 +333,8 @@ export interface VaultActions {
 	setEntriesTags(ids: string[], change: { add?: string[]; remove?: string[] }): Promise<void>;
 	/** Record a use (copy/fill): bumps only the entry's `lastUsedAt`. */
 	touchEntry(id: string): Promise<void>;
+	/** Save a re-checked breach status on a login without restamping it (see `EntryMutations.setBreach`). */
+	setEntryBreach(id: string, breach: { leaked: boolean; checkedAt: number }): Promise<void>;
 	/** The current entries, read synchronously: includes writes committed before their
 	 * render has landed, so sequential mutations see their own earlier writes. */
 	readEntries(): Entry[];
@@ -1177,6 +1179,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		async (id: string) => commitEntries(await mutations.touch(snapshotEntries(), id)),
 		[mutations, snapshotEntries, commitEntries],
 	);
+	const setEntryBreach = useCallback(
+		async (id: string, breach: { leaked: boolean; checkedAt: number }) =>
+			commitEntries(await mutations.setBreach(snapshotEntries(), id, breach)),
+		[mutations, snapshotEntries, commitEntries],
+	);
 	const readEntries = useCallback((): Entry[] => latestRef.current.entries, []);
 
 	/** Check a password against the slot verifier without unlocking. */
@@ -1762,6 +1769,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			setEntriesArchived,
 			setEntriesTags,
 			touchEntry,
+			setEntryBreach,
 			readEntries,
 			verifyMasterPassword,
 			verifyWithWebauthnKey,
@@ -1800,6 +1808,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			setEntriesArchived,
 			setEntriesTags,
 			touchEntry,
+			setEntryBreach,
 			readEntries,
 			verifyMasterPassword,
 			verifyWithWebauthnKey,

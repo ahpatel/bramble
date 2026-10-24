@@ -270,6 +270,34 @@ describe("createEntryMutations", () => {
 		expect(h.writes()).toBe(0);
 	});
 
+	// Opening a login re-checks a stale breach status and saves it; a restamp there would let
+	// viewing an entry on one device overwrite an edit made to it on another.
+	it("setBreach keeps the sync stamp and updatedAt", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		t = 9000;
+		const next = await h.mutations.setBreach(a, id, { leaked: true, checkedAt: 9000 });
+		expect(next.entries[0]).toMatchObject({
+			breach: { leaked: true, checkedAt: 9000 },
+			updatedAt: 1000,
+		});
+		expect(compareHlc(next.stamps.get(id)!, a.stamps.get(id)!)).toBe(0);
+		const [onDisk] = (await h.mutations.readEntriesPayload()).entries;
+		expect(onDisk!.ciphertext).toContain('"leaked":true');
+	});
+
+	it("setBreach no-ops for an unknown id or a non-login", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), note("n"));
+		const writes = h.writes();
+		const breach = { leaked: true, checkedAt: 1 };
+		expect(await h.mutations.setBreach(a, "nope", breach)).toBe(a);
+		expect(await h.mutations.setBreach(a, a.entries[0]!.id, breach)).toBe(a);
+		expect(h.writes()).toBe(writes);
+	});
+
 	it("rejects invalid entry data before writing", async () => {
 		const h = harness();
 		const bad = { type: "login", name: "x" } as unknown as EntryData; // missing urls/username/password
@@ -628,6 +656,13 @@ describe("createEntryMutations: synced settings survive entry writes", () => {
 			async (h: ReturnType<typeof harness>, s: VaultEntries) => {
 				const a = await h.mutations.add(s, login("x"));
 				return h.mutations.touch(a, a.entries[0]!.id);
+			},
+		],
+		[
+			"setBreach",
+			async (h: ReturnType<typeof harness>, s: VaultEntries) => {
+				const a = await h.mutations.add(s, login("x"));
+				return h.mutations.setBreach(a, a.entries[0]!.id, { leaked: false, checkedAt: 1 });
 			},
 		],
 	])("%s preserves the map, in memory and on disk", async (_name, run) => {
