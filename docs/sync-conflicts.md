@@ -1,6 +1,6 @@
 # Sync conflicts: keep every edit, then merge fields (plan)
 
-**Status:** Phase A built 2026-10-23 (all targets share the core; not yet device-tested, and the new UI strings await translation). Phase B not started.
+**Status:** Phase A built 2026-10-23 (all targets share the core; not yet device-tested, and the new UI strings await translation). The website's sync copy still describes last-writer-wins, on purpose: it deploys on every push, so it changes when a release with Phase A ships. Phase B not started.
 
 Today two devices that edit the same entry before they sync lose one edit whole and say nothing
 (see "Conflict loser" in [p2p-sync.md](p2p-sync.md)). This plan fixes that in two phases:
@@ -154,6 +154,14 @@ consistent order. A newer build editing a legacy base inherits the claim as its 
 - **What degrades.** An older build's genuine edit still dominates every version stamped before
   it, which is exactly today's LWW. In a mixed group the outcome can then depend on merge order,
   but every device converges once gossip settles. Nothing is worse than today.
+- **A stale copy that arrives first.** An older build only relaying a stripped copy is harmless
+  when the original, or a version descending from it, reaches the device first: the copy is then
+  recognised and pruned. If the stripped copy arrives first, its LWW claim can prune versions it
+  never saw, or kill a delete-conflicted edit, on that device, exactly as LWW would. A forked
+  write is stamped with its fork key as the node, so a stripped copy of one still names its
+  writer; otherwise such a copy could even bring back a deleted entry, which is worse than LWW.
+  A property test pins the bound: in a mixed group the version LWW would keep always survives,
+  and an entry every delete saw stays deleted.
 - **Equivalence.** `payloadsEquivalent` must count a `vv` copy as different from a stripped one,
   or a device keeps its stripped copy forever and makes LWW claims it doesn't need to.
 

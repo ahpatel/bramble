@@ -157,7 +157,7 @@ Pair a device once, and from then on any two of your devices sync whenever both 
 
 Two things worth knowing:
 
-- **Edits to the same entry don't combine on their own.** If two devices change the same entry before they sync, you get both versions to choose between rather than one merged version, even if they changed different fields. That's the trade for a merge that never compares plaintext: which versions to keep is decided from the stamps alone. Combining fields would mean decrypting both versions and diffing what's inside them, passwords included. Until every device is updated, an edit from an older version of Bramble still simply wins, the way it always did.
+- **Edits to the same entry don't combine on their own.** If two devices change the same entry before they sync, you get both versions to choose between rather than one merged version, even if they changed different fields. That's the trade for a merge that never compares plaintext: which versions to keep is decided from the stamps alone. Combining fields would mean decrypting both versions and diffing what's inside them, passwords included. Until every device is updated, an older version of Bramble in the mix can still make an edit win, or another one vanish, the way it always could.
 - **Both devices need to be online at once.** No server holds changes for a device that's offline, which also means your vault never sits on someone else's server waiting for it. So a phone mostly syncs while the app is open. Leave the [desktop app](#on-your-desktop) in your tray and your other devices always have something to sync with.
 
 ## How it stacks up against KeePass

@@ -32,7 +32,7 @@
 
 - **Vault switch or lock with conflicts held.** Switching vaults or locking must clear the conflicts and causal state, or one vault's siblings get written into another's blob. Pinned in Task 6.
 - **Key rotation with unresolved conflicts.** `sealAll` must re-seal siblings, or they become undecryptable after a password-to-key rotation. Pinned in Task 6.
-- **An older build relaying stale stripped copies.** Neither a live copy (via top-down pruning) nor a tombstone copy (via the legacy-tombstone rule) may prune a sibling or kill a delete-conflicted edit. Pinned in Task 4.
+- **An older build relaying stale stripped copies.** Neither a live copy (via top-down pruning) nor a tombstone copy (via the legacy-tombstone rule) may prune a sibling or kill a delete-conflicted edit, once the original or a descendant has reached the device. A copy arriving first can, as LWW would (the final review narrowed this; see the spec's "Older builds"). Pinned in Task 4.
 - **The extension popup and background racing on one entry.** They must write under different writer keys, or the per-writer max calls one an ancestor of the other. Pinned in Task 5.
 - **Autofill and passkey lookups.** They read the displayed version only, so a sibling's password is never offered for fill. Pinned in Task 6.
 
