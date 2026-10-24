@@ -33,7 +33,8 @@ function replicaToPayload(state: ReplicaState<EncryptedEntry>): EntriesPayload {
  *
  * Invariant: two envelopes that share an id and an exact stamp must have
  * identical content (they came from the same write), since the stamp is unique
- * per write per device.
+ * per write per device. The one exception is `lastUsedAt`, which a use updates
+ * without restamping (EntryMutations.touch), so it is per-device.
  */
 export function mergeEntriesPayload(a: EntriesPayload, b: EntriesPayload): EntriesPayload {
 	const merged = replicaToPayload(mergeReplicas(payloadToReplica(a), payloadToReplica(b)));

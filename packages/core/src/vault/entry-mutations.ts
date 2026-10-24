@@ -72,7 +72,10 @@ export interface EntryMutations {
 		ids: string[],
 		change: { add?: string[]; remove?: string[] },
 	): Promise<VaultEntries>;
-	/** Record a use (copy/fill): bumps only `lastUsedAt`, coalesced within USE_COALESCE_MS. */
+	/**
+	 * Record a use (copy/fill): bumps only `lastUsedAt`, coalesced within USE_COALESCE_MS. The
+	 * entry keeps its sync stamp, so the new `lastUsedAt` stays on this device until its next edit.
+	 */
 	touch(current: VaultEntries, id: string): Promise<VaultEntries>;
 	/**
 	 * Write one vault-scoped setting, stamped from this device's clock.
@@ -361,17 +364,13 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 		touch: async (current, id) => {
 			const prev = current.entries.find((e) => e.id === id);
 			if (!prev) return current;
-			const c = await clock();
-			const hlc = c.send();
-			if (prev.lastUsedAt !== undefined && hlc.wall - prev.lastUsedAt < USE_COALESCE_MS) {
+			const at = (await clock()).send().wall;
+			if (prev.lastUsedAt !== undefined && at - prev.lastUsedAt < USE_COALESCE_MS) {
 				return current;
 			}
-			const entries = current.entries.map((e) =>
-				e.id === id ? { ...e, lastUsedAt: hlc.wall } : e,
-			);
-			const stamps = new Map(current.stamps);
-			stamps.set(id, hlc);
-			return persist({ ...current, entries, stamps });
+			// Not restamped: a use must never outrank an edit made on another device.
+			const entries = current.entries.map((e) => (e.id === id ? { ...e, lastUsedAt: at } : e));
+			return persist({ ...current, entries });
 		},
 
 		// Write a tombstone so the delete survives a merge instead of being re-added

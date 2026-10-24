@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EntryData, LoginEntryData } from "../hooks/useVault";
-import { compareHlc, HybridClock } from "../sync";
+import { compareHlc, HybridClock, mergeEntriesPayload } from "../sync";
 import { base64ToBytes, bytesToBase64 } from "../util/bytes";
 import {
 	decodeVaultBlob,
@@ -222,6 +222,31 @@ describe("createEntryMutations", () => {
 		const afterUse = await h.mutations.touch(afterAdd, id);
 		expect(afterUse.entries[0]!.lastUsedAt).toBe(200_000);
 		expect(afterUse.entries[0]!.updatedAt).toBe(1000);
+	});
+
+	// A use is not an edit: restamping would let copying a password on one device silently
+	// discard an edit made to the same entry on another before they synced.
+	it("touch keeps the sync stamp, so an edit made elsewhere still wins the merge", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const afterAdd = await h.mutations.add(empty(), login("a"));
+		const id = afterAdd.entries[0]!.id;
+		const added = afterAdd.stamps.get(id)!;
+		const [base] = (await h.mutations.readEntriesPayload()).entries;
+		const remoteEdit = {
+			...base!,
+			ciphertext: "ct:edited elsewhere",
+			hlc: { wall: 2000, counter: 0, node: "device-b" },
+		};
+
+		t = 200_000;
+		const afterUse = await h.mutations.touch(afterAdd, id);
+		expect(afterUse.entries[0]!.lastUsedAt).toBe(200_000);
+		expect(compareHlc(afterUse.stamps.get(id)!, added)).toBe(0);
+
+		const local = await h.mutations.readEntriesPayload();
+		const merged = mergeEntriesPayload(local, { entries: [remoteEdit], tombstones: [] });
+		expect(merged.entries).toEqual([remoteEdit]);
 	});
 
 	it("touch coalesces repeat uses within the window into one write", async () => {
