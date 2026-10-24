@@ -38,6 +38,11 @@ const NOT_PARTS = new Set<string>([
 	...ITEM_LISTS,
 ]);
 
+/** The fields a part covers: a group's fields, or the field the part is named after. */
+export function fieldsOfPart(type: string, part: string): readonly string[] {
+	return GROUPS[type]?.[part] ?? [part];
+}
+
 /** `""`, `[]` and `undefined` are the same value; objects drop keys that normalize away. */
 function normalize(value: unknown): unknown {
 	if (value === undefined || value === null || value === "") return undefined;
