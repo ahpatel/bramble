@@ -52,6 +52,7 @@ const LOGIN_DATA = {
 
 async function withConflict() {
 	const written: string[] = [];
+	const sealed: string[] = [];
 	const offscreen = (msg: Record<string, any>): OffscreenResponse => {
 		switch (msg.type) {
 			case "CRYPTO_DECRYPT_OUTER":
@@ -62,6 +63,7 @@ async function withConflict() {
 			case "CRYPTO_DECRYPT":
 				return { ok: true, data: JSON.stringify(LOGIN_DATA) };
 			case "CRYPTO_ENCRYPT":
+				sealed.push(msg.payload.plaintextJson);
 				return { ok: true, data: { ciphertext: "c2", iv: "i2", wrappedDek: "w2", dekIv: "d2" } };
 			case "CRYPTO_ENCRYPT_OUTER":
 				written.push(msg.payload.plaintext);
@@ -73,7 +75,8 @@ async function withConflict() {
 	await loadBackground({ sessionSeed: { [TEST_VEK_KEY]: "SEED" }, offscreen });
 	const { savePlacement } = await import("./passkey-store");
 	const last = () => JSON.parse(written[written.length - 1] as string);
-	return { savePlacement, last };
+	const lastSealed = () => JSON.parse(sealed[sealed.length - 1] as string);
+	return { savePlacement, last, lastSealed };
 }
 
 describe("savePlacement records history", () => {
@@ -95,5 +98,16 @@ describe("savePlacement records history", () => {
 		expect(env.hlc.node).toMatch(/#bg$/);
 		expect(env.vv).toEqual({ seed, [env.hlc.node]: env.hlc });
 		expect(payload.conflicts).toEqual([SIBLING]);
+	});
+
+	it("attaching a passkey stamps the passkey item at the write's stamp", async () => {
+		const { savePlacement, last, lastSealed } = await withConflict();
+		const passkey = { credentialId: "cred-1", rpId: "example.com" } as never;
+		await savePlacement({ kind: "attach", entryId: "login1", passkeys: [passkey] });
+		const env = last().entries.find((e: { id: string }) => e.id === "login1");
+		const plaintext = lastSealed();
+		expect(plaintext.itemStamps.passkeys).toEqual({ "cred-1": env.hlc });
+		expect(plaintext.partStamps.name).toEqual(seed);
+		expect(plaintext.partStampsAt).toEqual(env.hlc);
 	});
 });

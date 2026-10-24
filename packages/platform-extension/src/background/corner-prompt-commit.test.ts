@@ -420,8 +420,13 @@ describe("commit: background writes record history", () => {
 	const other = { wall: 1, counter: 0, node: "other" };
 	const SIBLING = { ...SHOWN, ciphertext: "s", hlc: other, vv: { other } };
 
-	async function withConflict(): Promise<{ bg: BackgroundHarness; written: string[] }> {
+	async function withConflict(): Promise<{
+		bg: BackgroundHarness;
+		written: string[];
+		sealed: string[];
+	}> {
 		const written: string[] = [];
+		const sealed: string[] = [];
 		const bg = await loadBackground({
 			sessionSeed: { [TEST_VEK_KEY]: "SEED" },
 			offscreen: (msg) => {
@@ -432,11 +437,12 @@ describe("commit: background writes record history", () => {
 					};
 				}
 				if (msg.type === "CRYPTO_ENCRYPT_OUTER") written.push(msg.payload.plaintext);
+				if (msg.type === "CRYPTO_ENCRYPT") sealed.push(msg.payload.plaintextJson);
 				return commitOffscreen(msg);
 			},
 		});
 		await setAutofillIndex(bg, [LOGIN]);
-		return { bg, written };
+		return { bg, written, sealed };
 	}
 
 	it("a corner-prompt update supersedes the displayed version only", async () => {
@@ -477,5 +483,50 @@ describe("commit: background writes record history", () => {
 		expect(env.hlc.node).toMatch(/#bg$/);
 		expect(env.vv).toEqual({ [env.hlc.node]: env.hlc });
 		expect(payload.conflicts).toEqual([SIBLING]);
+	});
+
+	// Part stamps (docs/sync-conflicts.md, Phase B): the update changes only the credential, so
+	// only that part takes the new stamp; the rest keep the replaced version's.
+	it("a corner-prompt update stamps the credential part against the version it replaced", async () => {
+		const { bg, written, sealed } = await withConflict();
+		const cap = await bg.send(
+			{ type: "CORNER_PROMPT_CAPTURE", payload: { username: "alice", password: "ROTATED" } },
+			pageSender("example.com", 5),
+		);
+		await bg.send(
+			{
+				type: "CORNER_PROMPT_RESPONSE",
+				payload: { promptId: cap.resp.data.promptId, action: "update", chosenEntryId: "login1" },
+			},
+			pageSender("example.com", 5),
+		);
+		const env = JSON.parse(written[written.length - 1] as string).entries.find(
+			(e: { id: string }) => e.id === "login1",
+		);
+		const plaintext = JSON.parse(sealed[sealed.length - 1] as string);
+		expect(plaintext.partStampsAt).toEqual(env.hlc);
+		expect(plaintext.partStamps.credential).toEqual(env.hlc);
+		expect(plaintext.partStamps.name).toEqual(seed);
+	});
+
+	it("a new corner-prompt login stamps every part at its own stamp", async () => {
+		const { bg, written, sealed } = await withConflict();
+		const cap = await bg.send(
+			{ type: "CORNER_PROMPT_CAPTURE", payload: { username: "bob", password: "secret" } },
+			pageSender("newsite.com", 5),
+		);
+		await bg.send(
+			{
+				type: "CORNER_PROMPT_RESPONSE",
+				payload: { promptId: cap.resp.data.promptId, action: "save" },
+			},
+			pageSender("newsite.com", 5),
+		);
+		const env = JSON.parse(written[written.length - 1] as string).entries.find(
+			(e: { id: string }) => e.id !== "login1",
+		);
+		const plaintext = JSON.parse(sealed[sealed.length - 1] as string);
+		expect(plaintext.partStampsAt).toEqual(env.hlc);
+		expect(plaintext.partStamps.credential).toEqual(env.hlc);
 	});
 });

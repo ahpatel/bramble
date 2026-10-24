@@ -1287,6 +1287,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 								kind: "use",
 								data: chosen.data,
 								superseded: [...(shown ? [shown] : []), chosen.data, ...others],
+								// Its own stamp and history, so the content taken keeps its part stamps.
+								version: vaultStateRef.current.conflicts.find(
+									(e) => e.id === id && compareHlc(e.hlc, chosen.hlc) === 0,
+								),
 							}
 						: { kind: "keepBoth", data: chosen.data, superseded: others },
 				),

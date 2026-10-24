@@ -6,9 +6,10 @@
 // stamp, re-encrypt the outer payload, write or queue. See docs/passkey-provider.md.
 
 import type { PasskeyAssertion, PasskeyRegistration } from "@core/adapters/crypto";
-import type { Entry, LoginEntryData } from "@core/hooks/useVault";
+import type { Entry, EntryData, LoginEntryData } from "@core/hooks/useVault";
 import { decodeEntriesPayload, heldVersions, nextCausal, nextVersion } from "@core/sync";
 import { normalizeEntryData } from "@core/vault/entry-normalize";
+import { stampedPlaintext } from "@core/vault/parts";
 import type { PasskeyPlacement } from "@core/vault/passkey";
 import { type EncryptedEntry, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
 import { addLoginEntry } from "./autofill-index";
@@ -128,9 +129,12 @@ export async function savePlacement(plan: PasskeyPlacement): Promise<void> {
 	const vaultId = requireActiveVaultId();
 	const base = await readAndDecodeVault(vaultId);
 	if (plan.kind === "create") {
-		const enc = await encryptEntry(vaultId, JSON.stringify(plan.data satisfies LoginEntryData));
 		const id = globalThis.crypto.randomUUID();
 		const hlc = await nextStamp();
+		const enc = await encryptEntry(
+			vaultId,
+			stampedPlaintext(id, plan.data satisfies LoginEntryData, undefined, hlc),
+		);
 		const newEnc: EncryptedEntry = { id, ...enc, hlc, ...nextCausal({ hlc, bases: [], held: [] }) };
 		const outer = await reencryptOuterWithEntryChange(
 			base,
@@ -170,12 +174,15 @@ export async function savePlacement(plan: PasskeyPlacement): Promise<void> {
 					if (!dec.ok || typeof dec.data !== "string") {
 						throw new Error(`decrypt entry failed: ${dec.error ?? "no data"}`);
 					}
-					const data = JSON.parse(dec.data);
-					data.passkeys = plan.passkeys;
-					const reenc = await encryptEntry(vaultId, JSON.stringify(data));
+					const prev = JSON.parse(dec.data) as EntryData;
 					const hlc = await nextStamp();
 					const held = heldVersions(payload, e.id);
 					const v = nextVersion({ hlc, bases: [e], held });
+					const data = { ...prev, passkeys: plan.passkeys } as EntryData;
+					const reenc = await encryptEntry(
+						vaultId,
+						stampedPlaintext(e.id, data, { data: prev, version: e }, v.hlc),
+					);
 					next.push({ id: e.id, ...reenc, hlc: v.hlc, ...v.causal });
 				}
 				return next;

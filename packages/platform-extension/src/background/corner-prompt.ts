@@ -7,7 +7,9 @@ import type {
 	SaveLoginPrompt,
 	UpdateLoginPrompt,
 } from "@core/adapters/autofill";
+import type { EntryData } from "@core/hooks/useVault";
 import { heldVersions, nextCausal, nextVersion } from "@core/sync";
+import { stampedPlaintext } from "@core/vault/parts";
 import { type EncryptedEntry, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
 import { type DedupeOutcome, effectivePort, hostnameMatches, registrableDomain } from "../dedupe";
 import { api } from "../platform-api";
@@ -136,7 +138,14 @@ async function commitCornerSave(
 	// blob. See docs/multiple-vaults.md "Latent cross-vault callers".
 	const vaultId = requireActiveVaultId();
 	const blob = await readAndDecodeVault(vaultId);
-	const plaintext = newLoginPlaintext(capture, editedUsername);
+	const id = globalThis.crypto.randomUUID();
+	const hlc = await nextStamp();
+	const plaintext = stampedPlaintext(
+		id,
+		JSON.parse(newLoginPlaintext(capture, editedUsername)) as EntryData,
+		undefined,
+		hlc,
+	);
 	const encryptedEntryResp = await sendToOffscreen({
 		type: "CRYPTO_ENCRYPT",
 		vaultId,
@@ -146,8 +155,6 @@ async function commitCornerSave(
 		throw new Error(`encrypt new entry failed: ${encryptedEntryResp.error ?? "no data"}`);
 	}
 	const encEntry = encryptedEntryResp.data as Omit<EncryptedEntry, "id" | "hlc">;
-	const id = globalThis.crypto.randomUUID();
-	const hlc = await nextStamp();
 	const newEnc: EncryptedEntry = {
 		id,
 		...encEntry,
@@ -216,21 +223,22 @@ async function commitCornerUpdate(capture: PendingCapture, chosenEntryId: string
 				if (!dec.ok || typeof dec.data !== "string") {
 					throw new Error(`decrypt entry failed: ${dec.error ?? "no data"}`);
 				}
-				const parsed = JSON.parse(dec.data);
-				parsed.username = username;
-				parsed.password = capture.password;
+				const prev = JSON.parse(dec.data) as EntryData;
+				const hlc = await nextStamp();
+				const held = heldVersions(payload, enc.id);
+				const v = nextVersion({ hlc, bases: [enc], held });
+				const updated = { ...prev, username, password: capture.password } as EntryData;
 				const reenc = await sendToOffscreen({
 					type: "CRYPTO_ENCRYPT",
 					vaultId,
-					payload: { plaintextJson: JSON.stringify(parsed) },
+					payload: {
+						plaintextJson: stampedPlaintext(enc.id, updated, { data: prev, version: enc }, v.hlc),
+					},
 				});
 				if (!reenc.ok || !reenc.data) {
 					throw new Error(`reencrypt entry failed: ${reenc.error ?? "no data"}`);
 				}
 				const fresh = reenc.data as Omit<EncryptedEntry, "id" | "hlc">;
-				const hlc = await nextStamp();
-				const held = heldVersions(payload, enc.id);
-				const v = nextVersion({ hlc, bases: [enc], held });
 				next.push({ id: enc.id, ...fresh, hlc: v.hlc, ...v.causal });
 			}
 			return next;

@@ -356,7 +356,10 @@ describe("createEntryMutations", () => {
 		// anyway, and the round-trip through disk must not resurrect the archived state.
 		expect(restored.entries[0]).not.toHaveProperty("archivedAt");
 		const payload = await h.mutations.readEntriesPayload();
-		expect(JSON.stringify(payload)).not.toContain("archivedAt");
+		// The field is gone from the entry itself (its part stamp, recording the restore, stays).
+		expect(
+			payload.entries.map((e) => JSON.parse(e.ciphertext.slice(3)) as Record<string, unknown>),
+		).toEqual([expect.not.objectContaining({ archivedAt: expect.anything() })]);
 	});
 
 	it("archives a whole selection in one write, skipping ids already archived", async () => {
@@ -914,7 +917,8 @@ describe("createEntryMutations: resolving a conflict", () => {
 		const next = await h.mutations.resolve(state, id, { kind: "keep", superseded: [] });
 		expect(next.conflicts).toEqual([]);
 		expect(conflictsOf(next).size).toBe(0);
-		expect(next.entries).toEqual(state.entries);
+		const content = ({ partStampsAt: _at, ...rest }: Entry) => rest;
+		expect(next.entries.map(content)).toEqual(state.entries.map(content));
 		expect(containsHistory(versionOf(next, id), sib(id))).toBe(true);
 		expect(next.tombstones.has(id)).toBe(true);
 		const disk = await h.mutations.readEntriesPayload();
@@ -1003,5 +1007,103 @@ describe("createEntryMutations: resolving a conflict", () => {
 				? next.entries[0]!.passwordChangelog?.map((c) => c.value)
 				: [];
 		expect(values).toEqual(["mine", "phone-interim"]);
+	});
+});
+
+// Every write records which parts it changed (docs/sync-conflicts.md, Phase B), so two devices'
+// edits to different parts can later combine.
+describe("createEntryMutations: part stamps", () => {
+	const at = (wall: number, node = "device-a"): Hlc => ({ wall, counter: 0, node });
+	const stampOf = (s: VaultEntries, id: string) => s.stamps.get(id)!;
+
+	it("add and import stamp every part at the write's stamp", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a", { tags: ["work"] }));
+		const e = a.entries[0]!;
+		const s = stampOf(a, e.id);
+		expect(e.partStamps).toEqual({ name: s, credential: s });
+		expect(e.itemStamps).toEqual({ tags: { work: s } });
+		expect(e.partStampsAt).toEqual(s);
+		t = 2000;
+		const foreign = {
+			...loginWith("b"),
+			partStamps: { name: at(1, "elsewhere") },
+			partStampsAt: at(1, "elsewhere"),
+		};
+		const imported = await h.mutations.importMany(a, [foreign as EntryData]);
+		const b = imported.entries[1]!;
+		expect(b.partStamps?.name).toEqual(stampOf(imported, b.id));
+		expect(b.partStampsAt).toEqual(stampOf(imported, b.id));
+	});
+
+	it("update restamps only the parts it changed", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a", { notes: "x" }));
+		const id = a.entries[0]!.id;
+		const first = stampOf(a, id);
+		t = 2000;
+		const next = await h.mutations.update(a, id, loginWith("a", { notes: "y" }));
+		const second = stampOf(next, id);
+		expect(next.entries[0]!.partStamps).toEqual({ name: first, notes: second, credential: first });
+		expect(next.entries[0]!.partStampsAt).toEqual(second);
+		const [onDisk] = (await h.mutations.readEntriesPayload()).entries;
+		expect(onDisk!.ciphertext).toContain('"partStampsAt"');
+	});
+
+	it("archive stamps archivedAt and tagging stamps the tags it added", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a"));
+		const id = a.entries[0]!.id;
+		const first = stampOf(a, id);
+		t = 2000;
+		const archived = await h.mutations.setArchived(a, [id], true);
+		expect(archived.entries[0]!.partStamps?.archivedAt).toEqual(stampOf(archived, id));
+		expect(archived.entries[0]!.partStamps?.name).toEqual(first);
+		t = 3000;
+		const tagged = await h.mutations.setTags(archived, [id], { add: ["work"] });
+		expect(tagged.entries[0]!.itemStamps?.tags).toEqual({ work: stampOf(tagged, id) });
+		expect(tagged.entries[0]!.partStampsAt).toEqual(stampOf(tagged, id));
+	});
+
+	it("resolve keeps the kept content's stamps and sets partStampsAt to the new stamp", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a"));
+		const id = a.entries[0]!.id;
+		const first = stampOf(a, id);
+		t = 2000;
+		const next = await h.mutations.resolve(a, id, { kind: "keep", superseded: [] });
+		expect(next.entries[0]!.partStamps).toEqual({ name: first, credential: first });
+		expect(next.entries[0]!.partStampsAt).toEqual(stampOf(next, id));
+	});
+
+	it("an edit around its own sibling stamps parts with its fork-key stamp", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), loginWith("a"));
+		const id = a.entries[0]!.id;
+		const seeded: VaultEntries = {
+			...a,
+			stamps: new Map([[id, at(5000, "phone")]]),
+			causal: new Map([[id, { vv: { phone: at(5000, "phone") } }]]),
+			conflicts: [
+				{
+					id,
+					wrappedDek: "w",
+					dekIv: "d",
+					ciphertext: "s",
+					iv: "i",
+					hlc: at(3000),
+					vv: { "device-a": at(3000) },
+				},
+			],
+		};
+		const next = await h.mutations.update(seeded, id, loginWith("a2"));
+		const stamp = stampOf(next, id);
+		expect(stamp.node.startsWith("device-a~")).toBe(true);
+		expect(next.entries[0]!.partStamps?.name).toEqual(stamp);
+		expect(next.entries[0]!.partStampsAt).toEqual(stamp);
 	});
 });

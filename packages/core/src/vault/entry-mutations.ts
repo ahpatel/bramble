@@ -23,6 +23,7 @@ import type { EncryptedEntry, VaultBlob } from "../vault-format";
 import { toAutofillIndex } from "./autofill-index";
 import { createEntriesBlobStore } from "./entries-blob";
 import { entryDataSchema } from "./entry-normalize";
+import { withPartStamps } from "./parts";
 import { withPasswordChangelog, withSupersededPasswords } from "./password-changelog";
 import { normalizeTags, tagKey, tagsEqual } from "./tags";
 
@@ -64,7 +65,7 @@ export interface VaultEntries {
  */
 export type ResolveChoice =
 	| { kind: "keep"; superseded: EntryData[] }
-	| { kind: "use"; data: EntryData; superseded: EntryData[] }
+	| { kind: "use"; data: EntryData; superseded: EntryData[]; version?: Versioned }
 	| { kind: "keepBoth"; data: EntryData; superseded: EntryData[] };
 
 export interface EntryMutationsDeps {
@@ -213,6 +214,13 @@ function heldFor(s: VaultEntries, id: string): Versioned[] {
 		...s.conflicts.filter((e) => e.id === id),
 		...(tomb ? [tomb] : []),
 	];
+}
+
+/** The displayed version of an id with its data, as withPartStamps compares against. */
+function priorOf(s: VaultEntries, id: string): { data: EntryData; version: Versioned } | undefined {
+	const data = s.entries.find((e) => e.id === id);
+	const version = displayedOf(s, id);
+	return data && version ? { data, version } : undefined;
 }
 
 /** An edit's stamp and history: it supersedes only the displayed version, so it may fork. */
@@ -390,9 +398,9 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			const version = editVersion(current, e.id, hlc);
 			stamps.set(e.id, version.hlc);
 			causal.set(e.id, version.causal);
-			if (archived) return { ...e, archivedAt: hlc.wall };
 			const { archivedAt: _archivedAt, ...rest } = e;
-			return rest as Entry;
+			const next = archived ? { ...e, archivedAt: hlc.wall } : (rest as Entry);
+			return withPartStamps(next, priorOf(current, e.id), version.hlc);
 		});
 		return persist({ ...current, entries, stamps, causal });
 	};
@@ -432,13 +440,11 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			const version = editVersion(current, entry.id, c.send());
 			stamps.set(entry.id, version.hlc);
 			causal.set(entry.id, version.causal);
-			const next = changed.get(entry.id);
+			const tags = changed.get(entry.id);
 			// Dropped, not set to empty: an entry with no tags carries no key at all.
-			if (next === undefined) {
-				const { tags: _tags, ...rest } = entry;
-				return rest as Entry;
-			}
-			return { ...entry, tags: next };
+			const { tags: _tags, ...rest } = entry;
+			const next = tags === undefined ? (rest as Entry) : { ...entry, tags };
+			return withPartStamps(next, priorOf(current, entry.id), version.hlc);
 		});
 		return persist({ ...current, entries, stamps, causal });
 	};
@@ -452,16 +458,20 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			const c = await clock();
 			// hlc.wall is physical ms, so it doubles as the timestamp.
 			const hlc = c.send();
-			// No prior entry, so this only strips a caller-supplied changelog.
-			const entry = withPasswordChangelog(
-				{
-					id: globalThis.crypto.randomUUID(),
-					...valid,
-					createdAt: valid.createdAt ?? hlc.wall,
-					updatedAt: hlc.wall,
-				},
+			// No prior entry, so this only strips a caller-supplied changelog and part stamps.
+			const entry = withPartStamps(
+				withPasswordChangelog(
+					{
+						id: globalThis.crypto.randomUUID(),
+						...valid,
+						createdAt: valid.createdAt ?? hlc.wall,
+						updatedAt: hlc.wall,
+					},
+					undefined,
+					hlc.wall,
+				),
 				undefined,
-				hlc.wall,
+				hlc,
 			);
 			const stamps = new Map(current.stamps);
 			stamps.set(entry.id, hlc);
@@ -487,16 +497,20 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 				const id = globalThis.crypto.randomUUID();
 				stamps.set(id, hlc);
 				causal.set(id, nextCausal({ hlc, bases: [], held: [] }));
-				// Imported entries start with no changelog; an import file cannot seed one.
-				return withPasswordChangelog(
-					{
-						id,
-						...data,
-						createdAt: data.createdAt ?? hlc.wall,
-						updatedAt: data.updatedAt ?? hlc.wall,
-					},
+				// Imported entries start with no changelog or part stamps; an import file cannot seed them.
+				return withPartStamps(
+					withPasswordChangelog(
+						{
+							id,
+							...data,
+							createdAt: data.createdAt ?? hlc.wall,
+							updatedAt: data.updatedAt ?? hlc.wall,
+						},
+						undefined,
+						hlc.wall,
+					),
 					undefined,
-					hlc.wall,
+					hlc,
 				);
 			});
 			return persist({
@@ -512,23 +526,27 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			const c = await clock();
 			const hlc = c.send();
 			const prev = current.entries.find((e) => e.id === id);
+			const version = editVersion(current, id, hlc);
 			const entries = current.entries.map((e) =>
 				e.id === id
-					? withPasswordChangelog(
-							{
-								id,
-								...valid,
-								// Preserve create time (backfill legacy) and last-used across the edit.
-								createdAt: prev?.createdAt ?? valid.createdAt ?? hlc.wall,
-								updatedAt: hlc.wall,
-								lastUsedAt: valid.lastUsedAt ?? prev?.lastUsedAt,
-							},
-							prev,
-							hlc.wall,
+					? withPartStamps(
+							withPasswordChangelog(
+								{
+									id,
+									...valid,
+									// Preserve create time (backfill legacy) and last-used across the edit.
+									createdAt: prev?.createdAt ?? valid.createdAt ?? hlc.wall,
+									updatedAt: hlc.wall,
+									lastUsedAt: valid.lastUsedAt ?? prev?.lastUsedAt,
+								},
+								prev,
+								hlc.wall,
+							),
+							priorOf(current, id),
+							version.hlc,
 						)
 					: e,
 			);
-			const version = editVersion(current, id, hlc);
 			const stamps = new Map(current.stamps);
 			stamps.set(id, version.hlc);
 			const causal = new Map(current.causal);
@@ -546,8 +564,15 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			const causal = new Map(current.causal);
 			stamps.set(id, hlc);
 			causal.set(id, nextCausal({ hlc, bases: held, held }));
+			// The kept content keeps its part stamps; only partStampsAt moves to the new version.
 			let entries = current.entries.map((e) =>
-				e.id === id ? withSupersededPasswords(e, choice.superseded, hlc.wall) : e,
+				e.id === id
+					? withPartStamps(
+							withSupersededPasswords(e, choice.superseded, hlc.wall),
+							priorOf(current, id),
+							hlc,
+						)
+					: e,
 			);
 			if (choice.kind === "use") {
 				const valid = validate(choice.data);
@@ -563,8 +588,12 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 					prev,
 					hlc.wall,
 				);
+				// Stamped against the sibling whose content it takes, so that content keeps its stamps.
+				const from = choice.version ? { data: choice.data, version: choice.version } : undefined;
 				entries = entries.map((e) =>
-					e.id === id ? withSupersededPasswords(used, choice.superseded, hlc.wall) : e,
+					e.id === id
+						? withPartStamps(withSupersededPasswords(used, choice.superseded, hlc.wall), from, hlc)
+						: e,
 				);
 			}
 			if (choice.kind === "keepBoth") {
@@ -572,15 +601,19 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 				const copyHlc = c.send();
 				const copyId = globalThis.crypto.randomUUID();
 				// The sibling is its own prior version, so its changelog carries over.
-				const copy = withPasswordChangelog(
-					{
-						id: copyId,
-						...valid,
-						createdAt: valid.createdAt ?? copyHlc.wall,
-						updatedAt: copyHlc.wall,
-					},
-					{ id: copyId, ...valid },
-					copyHlc.wall,
+				const copy = withPartStamps(
+					withPasswordChangelog(
+						{
+							id: copyId,
+							...valid,
+							createdAt: valid.createdAt ?? copyHlc.wall,
+							updatedAt: copyHlc.wall,
+						},
+						{ id: copyId, ...valid },
+						copyHlc.wall,
+					),
+					undefined,
+					copyHlc,
 				);
 				stamps.set(copyId, copyHlc);
 				causal.set(copyId, nextCausal({ hlc: copyHlc, bases: [], held: [] }));

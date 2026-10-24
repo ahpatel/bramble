@@ -139,3 +139,17 @@ export function withPartStamps(
 	}
 	return { ...next, partStamps, itemStamps, partStampsAt: hlc };
 }
+
+/**
+ * The JSON to seal for a write made outside EntryMutations (the extension background): the entry
+ * with its parts stamped against the version it replaces, without its id.
+ */
+export function stampedPlaintext(
+	id: string,
+	next: EntryData,
+	prev: { data: EntryData; version: Versioned } | undefined,
+	hlc: Hlc,
+): string {
+	const { id: _id, ...data } = withPartStamps({ id, ...next } as Entry, prev, hlc);
+	return JSON.stringify(data);
+}
