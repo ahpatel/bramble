@@ -21,6 +21,19 @@ module-level concepts that name good seams.
 - **Sibling**: a version of an entry that no other held version descends from.
   The highest-stamp sibling is displayed; the others are conflicts, kept sealed in
   the payload until someone chooses between them.
+- **Part**: a piece of an entry that combines on its own (`core/vault/parts.ts`):
+  username, password and TOTP move together as one credential part (card and SSH key
+  fields likewise), every other field is its own part, and URLs, tags and passkeys
+  combine item by item.
+- **Part stamps**: `partStamps`, `itemStamps` and `partStampsAt` inside the encrypted
+  entry, saying which write last changed each part and added each item. Only
+  `withPartStamps` writes them. A version whose `partStampsAt` isn't its own stamp was
+  rewritten by an older build, so every part counts as changed at its stamp.
+- **Combined version**: what combining siblings that changed different parts writes
+  (`core/sync/combine.ts`): a pure function of the siblings it replaces, stamped
+  `~merge:<hash>`, so every device that combines the same set writes the same version.
+  The rules are a wire protocol, versioned by `COMBINE_RULES_VERSION`. Switched off by
+  `COMBINE_CONCURRENT_EDITS` until most devices record part stamps.
 - **EntryMutations** — the module (`core/vault/entry-mutations.ts`) that owns every
   local change to VaultEntries: add, import (bulk, one write), update, delete
   (single or bulk), archive/restore. Each mutation is a transition

@@ -467,8 +467,10 @@ versions and keep one or both. A resolution is a write superseding every version
 clears the conflict wherever it syncs. Until every device in a group runs a build with this,
 an older build's edit still wins LWW-style.
 
-**Planned (not built):** merging field groups inside the crypto core, so edits to different
-parts of an entry combine on their own (Phase B).
+**Built, switched off (Phase B):** every write records which write last changed each part of
+the entry, and siblings that changed different parts combine into one version during sync and
+on load, inside the crypto core. It stays off (`COMBINE_CONCURRENT_EDITS`) until most devices
+record part stamps; until then concurrent edits stay a conflict as above.
 
 Not to be confused with the **password changelog** ([password-changelog.md](password-changelog.md)),
 which is already built: that keeps superseded passwords from *local* rotations inside the entry
@@ -502,11 +504,10 @@ plaintext, and a conflict loser still drops its rows like any other edit.
   whose candidates (especially the TCP/TLS variants that beat a UDP-blocking VPN) are gathered and
   checked *last*, so the first cross-network connect may need a retry before it lands — not a failure.
   Same-network / same-machine peers connect instantly.
-- **Field-level merge is deferred** (see above, and the plan in
+- **Concurrent edits are kept, not merged, for now.** Both versions of a same-entry conflict
+  are kept and shown to the user (see "Conflict loser"). Combining edits to different parts is
+  built but switched off until most devices record part stamps (Phase B of
   [sync-conflicts.md](sync-conflicts.md)).
-- **Concurrent edits are kept, not merged.** Both versions of a same-entry conflict are kept
-  and shown to the user (see "Conflict loser"); combining them field by field is Phase B of
-  [sync-conflicts.md](sync-conflicts.md).
 
 ## Device management & revocation
 

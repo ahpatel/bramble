@@ -1,6 +1,6 @@
 # Sync conflicts: keep every edit, then merge fields (plan)
 
-**Status:** Phase A built 2026-10-23 (all targets share the core; not yet device-tested, and the new UI strings await translation). The website's sync copy still describes last-writer-wins, on purpose: it deploys on every push, so it changes when a release with Phase A ships. Phase B not started.
+**Status:** Phase A built 2026-10-23 (all targets share the core; not yet device-tested, and the new UI strings await translation). The website's sync copy still describes last-writer-wins, on purpose: it deploys on every push, so it changes when a release with Phase A ships. Phase B built 2026-10-24 (B1: part stamps recorded; combining switched off by `COMBINE_CONCURRENT_EDITS` until most devices run it; not yet device-tested). Flipping the constant (B2) is a separate release, with the README and site copy.
 
 Today two devices that edit the same entry before they sync lose one edit whole and say nothing
 (see "Conflict loser" in [p2p-sync.md](p2p-sync.md)). This plan fixes that in two phases:
@@ -79,6 +79,7 @@ open on one entry.
 |-------|-------|
 | `add`, `importMany`, a new corner-prompt or passkey login | none |
 | `update`, `setArchived`, `setTags`, a corner-prompt update, a passkey placement | the displayed version only; siblings stay |
+| an edit-form save (Phase B) | the version the form opened; one displayed since then stays, as its sibling |
 | `remove`, `removeMany` | every live version and the tombstone: deleting the entry you see deletes the entry, but edits you haven't received yet still come back as a delete conflict |
 | a resolution | every live version and the tombstone |
 | `touch`, the breach refresh | not a new version: the displayed version keeps its stamp |
