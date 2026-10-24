@@ -1,50 +1,26 @@
 import { describe, expect, it } from "vitest";
-import type { EntryData, LoginEntryData } from "../hooks/useVault";
-import { compareHlc, HybridClock, mergeEntriesPayload } from "../sync";
-import { base64ToBytes, bytesToBase64 } from "../util/bytes";
+import type { Entry, EntryData, LoginEntryData } from "../hooks/useVault";
 import {
-	decodeVaultBlob,
-	encodeVaultBlob,
-	LEN_IV,
-	LEN_SALT,
-	LEN_SLOT_ID,
-	LEN_VERIFIER,
-	LEN_WRAP_IV,
-	LEN_WRAPPED_VEK,
-	type PasswordSlot,
-	SLOT_KIND_PASSWORD,
-} from "../vault-format";
-import { createEntryMutations, type VaultEntries } from "./entry-mutations";
+	compareHlc,
+	containsHistory,
+	decodeEntriesPayload,
+	type EntriesPayload,
+	type Hlc,
+	isAncestor,
+	mergeEntriesPayload,
+} from "../sync";
+import type { EncryptedEntry } from "../vault-format";
+import { conflictsOf, type VaultEntries, vaultEntriesFromPayload } from "./entry-mutations";
+import { harness } from "./entry-mutations.harness";
 
-const te = new TextEncoder();
-const td = new TextDecoder();
-
-function fillBytes(length: number, base = 0): Uint8Array {
-	const arr = new Uint8Array(length);
-	for (let i = 0; i < length; i++) arr[i] = (base + i) & 0xff;
-	return arr;
-}
-
-function passwordSlot(): PasswordSlot {
-	return {
-		kind: SLOT_KIND_PASSWORD,
-		slotId: fillBytes(LEN_SLOT_ID, 0x10),
-		salt: fillBytes(LEN_SALT, 0x20),
-		verifier: fillBytes(LEN_VERIFIER, 0x30),
-		wrapIv: fillBytes(LEN_WRAP_IV, 0x40),
-		wrappedVek: fillBytes(LEN_WRAPPED_VEK, 0x50),
-	};
-}
-
-function emptyVaultBytes(): Uint8Array {
-	return encodeVaultBlob({
-		slots: [passwordSlot()],
-		entriesIv: fillBytes(LEN_IV, 0x70),
-		entriesCiphertext: new Uint8Array(0),
-	});
-}
-
-const empty = (): VaultEntries => ({ entries: [], stamps: new Map(), tombstones: new Map() });
+const empty = (): VaultEntries => ({
+	entries: [],
+	stamps: new Map(),
+	causal: new Map(),
+	tombstones: new Map(),
+	tombstoneCausal: new Map(),
+	conflicts: [],
+});
 const login = (name: string): EntryData => ({
 	type: "login",
 	name,
@@ -62,50 +38,6 @@ const loginWith = (name: string, over: Partial<LoginEntryData> = {}): LoginEntry
 	password: "p",
 	...over,
 });
-
-// Wires the module to a fake crypto/storage/autofill plus an in-memory "disk"
-// that round-trips through the real encode/decode, so the persist primitive is
-// exercised end to end. The clock is a real HybridClock with a frozen wall time,
-// so stamps differ only by their monotonic counter.
-function harness(now: () => number = () => 1000) {
-	let disk = emptyVaultBytes();
-	let writes = 0;
-	const indexCalls: unknown[][] = [];
-	const crypto = {
-		encryptEntry: async (json: string) => ({
-			ciphertext: `ct:${json}`,
-			iv: "iv",
-			wrappedDek: "wd",
-			dekIv: "di",
-		}),
-		encryptWithVek: async (plaintext: string) => ({
-			iv: bytesToBase64(fillBytes(LEN_IV)),
-			ciphertext: bytesToBase64(te.encode(plaintext)),
-		}),
-		decryptWithVek: async (_iv: string, ciphertext: string) => td.decode(base64ToBytes(ciphertext)),
-	};
-	const storage = {
-		writeVaultBlob: async (bytes: Uint8Array) => {
-			disk = bytes;
-			writes++;
-		},
-	};
-	const autofill = {
-		setIndex: async (entries: { type: string }[]) => {
-			indexCalls.push(entries);
-		},
-	};
-	const readDecodedBlob = async () => ({ blob: decodeVaultBlob(disk) });
-	const c = new HybridClock("device-a", now);
-	const mutations = createEntryMutations({
-		crypto,
-		storage,
-		autofill,
-		readDecodedBlob,
-		clock: async () => c,
-	});
-	return { mutations, writes: () => writes, indexCalls };
-}
 
 describe("createEntryMutations", () => {
 	it("add stamps the new entry and writes once", async () => {
@@ -588,8 +520,18 @@ describe("createEntryMutations", () => {
 // invisible locally: the value is still on screen from memory, and only reverts on reload or when
 // a peer merges the emptied payload back.
 describe("createEntryMutations: synced settings survive entry writes", () => {
+	const elsewhere: EncryptedEntry = {
+		id: "elsewhere",
+		wrappedDek: "w",
+		dekIv: "d",
+		ciphertext: "s",
+		iv: "i",
+		hlc: { wall: 400, counter: 0, node: "other" },
+		vv: { other: { wall: 400, counter: 0, node: "other" } },
+	};
 	const withSetting = (): VaultEntries => ({
 		...empty(),
+		conflicts: [elsewhere],
 		settings: {
 			"pref.aliasProvider": {
 				hlc: { wall: 500, counter: 0, node: "other" },
@@ -670,6 +612,9 @@ describe("createEntryMutations: synced settings survive entry writes", () => {
 		const next = await run(h, withSetting());
 		expect(next.settings).toEqual(withSetting().settings);
 		expect(await onDisk(h)).toEqual(withSetting().settings);
+		// Another entry's sibling versions ride every write the same way.
+		expect(next.conflicts).toEqual([elsewhere]);
+		expect((await h.mutations.readEntriesPayload()).conflicts).toEqual([elsewhere]);
 	});
 
 	it("add preserves the map", async () => {
@@ -736,5 +681,178 @@ describe("createEntryMutations: synced settings survive entry writes", () => {
 		const next = await h.mutations.setSetting(added, "pref.aliasProvider", { provider: "addy" });
 		expect(next.entries).toEqual(added.entries);
 		expect(next.stamps).toEqual(added.stamps);
+	});
+});
+
+// Each write records which versions it supersedes (docs/sync-conflicts.md, Phase A): an edit only
+// the displayed one, a delete every version it can see, and nothing written may drop siblings.
+describe("createEntryMutations: version history", () => {
+	const at = (wall: number, node: string): Hlc => ({ wall, counter: 0, node });
+	const sib = (id: string, wall: number, node = "other"): EncryptedEntry => ({
+		id,
+		wrappedDek: "old-wd",
+		dekIv: "d",
+		ciphertext: 'ct:{"type":"note","name":"sibling"}',
+		iv: "i",
+		hlc: at(wall, node),
+		vv: { [node]: at(wall, node) },
+	});
+	const versionOf = (s: VaultEntries, id: string) => ({
+		hlc: s.stamps.get(id)!,
+		...s.causal.get(id),
+	});
+
+	it("add stamps a version of its own", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		expect(a.causal.get(id)).toEqual({ vv: { "device-a": a.stamps.get(id) } });
+		const [onDisk] = (await h.mutations.readEntriesPayload()).entries;
+		expect(onDisk!.vv).toEqual({ "device-a": a.stamps.get(id) });
+	});
+
+	it("update supersedes only the displayed version", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		const seeded = { ...a, conflicts: [sib(id, 500)] };
+		const next = await h.mutations.update(seeded, id, login("a2"));
+		expect(next.conflicts).toEqual([sib(id, 500)]);
+		expect(isAncestor(versionOf(a, id), versionOf(next, id))).toBe(true);
+		expect(isAncestor(sib(id, 500), versionOf(next, id))).toBe(false);
+		const disk = await h.mutations.readEntriesPayload();
+		expect(disk.conflicts).toEqual([sib(id, 500)]);
+		expect(disk.entries[0]!.vv).toEqual(next.causal.get(id)!.vv);
+	});
+
+	it("update of an entry with a legacy version inherits its floor", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		const next = await h.mutations.update({ ...a, causal: new Map() }, id, login("a2"));
+		expect(next.causal.get(id)!.floor).toEqual(a.stamps.get(id));
+	});
+
+	it("archiving and tagging supersede only the displayed version", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		const seeded = { ...a, conflicts: [sib(id, 500)] };
+		const archived = await h.mutations.setArchived(seeded, [id], true);
+		expect(archived.conflicts).toEqual([sib(id, 500)]);
+		expect(archived.causal.get(id)?.floor).toBeUndefined();
+		expect(isAncestor(versionOf(a, id), versionOf(archived, id))).toBe(true);
+		expect(isAncestor(sib(id, 500), versionOf(archived, id))).toBe(false);
+		const tagged = await h.mutations.setTags(archived, [id], { add: ["work"] });
+		expect(tagged.conflicts).toEqual([sib(id, 500)]);
+		expect(isAncestor(versionOf(archived, id), versionOf(tagged, id))).toBe(true);
+		expect(isAncestor(sib(id, 500), versionOf(tagged, id))).toBe(false);
+	});
+
+	it("remove supersedes every sibling and the old tombstone", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		const oldTomb = { hlc: at(300, "z"), vv: { z: at(300, "z") } };
+		const seeded: VaultEntries = {
+			...a,
+			conflicts: [sib(id, 500), sib("other-id", 600)],
+			tombstones: new Map([[id, oldTomb.hlc]]),
+			tombstoneCausal: new Map([[id, { vv: oldTomb.vv }]]),
+		};
+		const next = await h.mutations.remove(seeded, id);
+		expect(next.conflicts).toEqual([sib("other-id", 600)]);
+		expect(next.causal.has(id)).toBe(false);
+		const tomb = { hlc: next.tombstones.get(id)!, ...next.tombstoneCausal.get(id) };
+		expect(containsHistory(tomb, sib(id, 500))).toBe(true);
+		expect(containsHistory(tomb, versionOf(a, id))).toBe(true);
+		expect(containsHistory(tomb, oldTomb)).toBe(true);
+		const disk = await h.mutations.readEntriesPayload();
+		expect(disk.tombstones.find((t) => t.id === id)!.vv).toEqual(tomb.vv);
+	});
+
+	it("a write keeps other entries' history on disk", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const b = await h.mutations.add(a, login("b"));
+		const [idA, idB] = b.entries.map((e) => e.id) as [string, string];
+		await h.mutations.update(b, idB, login("b2"));
+		const disk = await h.mutations.readEntriesPayload();
+		expect(disk.entries.find((e) => e.id === idA)!.vv).toEqual(b.causal.get(idA)!.vv);
+	});
+
+	// Rotation opens the siblings while the old key still exists, then re-seals them under the new
+	// one: sealAll runs after the old key is gone, so it can't open them itself.
+	it("sealAll re-seals conflicts from plaintext opened before the key rotated", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		const seeded = { ...a, conflicts: [sib(id, 500)] };
+		const opened = await h.mutations.openConflicts(seeded);
+		expect(opened).toEqual(['{"type":"note","name":"sibling"}']);
+		const sealed = await h.mutations.sealAll(seeded, opened);
+		const json = new TextDecoder().decode(sealed.entriesCiphertext);
+		const payload: EntriesPayload = decodeEntriesPayload(json);
+		expect(payload.conflicts).toHaveLength(1);
+		expect(payload.conflicts![0]).toMatchObject({
+			id,
+			hlc: sib(id, 500).hlc,
+			vv: sib(id, 500).vv,
+			wrappedDek: "wd",
+			ciphertext: 'ct:{"type":"note","name":"sibling"}',
+		});
+	});
+
+	it("vaultEntriesFromPayload keeps vv, floor and conflicts, and stamps only what decrypted", () => {
+		const env = (id: string, hlc: Hlc, extra: object = {}): EncryptedEntry => ({
+			id,
+			wrappedDek: "w",
+			dekIv: "d",
+			ciphertext: "c",
+			iv: "i",
+			hlc,
+			...extra,
+		});
+		const payload: EntriesPayload = {
+			entries: [
+				env("a", at(10, "n"), { vv: { n: at(10, "n") }, floor: at(5, "q") }),
+				env("b", at(20, "n")),
+				env("gone", at(30, "n")),
+			],
+			tombstones: [
+				{ id: "t", hlc: at(3, "n"), vv: { n: at(3, "n") } },
+				{ id: "u", hlc: at(4, "n") },
+			],
+			conflicts: [sib("a", 1)],
+		};
+		const decrypted = [
+			{ id: "a", type: "note", name: "a" },
+			{ id: "b", type: "note", name: "b" },
+		] as Entry[];
+		const state = vaultEntriesFromPayload(payload, decrypted);
+		expect(state.entries).toBe(decrypted);
+		expect([...state.stamps.keys()]).toEqual(["a", "b"]);
+		expect(state.causal.get("a")).toEqual({ vv: { n: at(10, "n") }, floor: at(5, "q") });
+		expect(state.causal.has("b")).toBe(false);
+		expect(state.tombstoneCausal.get("t")).toEqual({ vv: { n: at(3, "n") } });
+		expect(state.tombstoneCausal.has("u")).toBe(false);
+		expect(state.conflicts).toEqual(payload.conflicts);
+	});
+
+	it("conflictsOf reports siblings and concurrent deletes from memory", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		expect(conflictsOf(a).size).toBe(0);
+		expect(conflictsOf({ ...a, conflicts: [sib(id, 500)] }).get(id)).toEqual({
+			versions: 1,
+			deleted: false,
+		});
+		const concurrentDelete: VaultEntries = {
+			...a,
+			tombstones: new Map([[id, at(400, "z")]]),
+			tombstoneCausal: new Map([[id, { vv: { z: at(400, "z") } }]]),
+		};
+		expect(conflictsOf(concurrentDelete).get(id)).toEqual({ versions: 0, deleted: true });
 	});
 });

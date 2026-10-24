@@ -119,9 +119,18 @@ export function heldVersions(payload: EntriesPayload, id: string): Versioned[] {
 	];
 }
 
+type IdVersion = { readonly id: string } & Versioned;
+
+/** The parts of a payload that say which versions exist, sealed or not. */
+export interface VersionIndex {
+	readonly entries: readonly IdVersion[];
+	readonly conflicts?: readonly IdVersion[];
+	readonly tombstones: readonly IdVersion[];
+}
+
 /** Every displayed entry that has siblings or a concurrent delete. */
-export function entryConflicts(payload: EntriesPayload): Map<string, EntryConflict> {
-	const siblings = new Map<string, EncryptedEntry[]>();
+export function entryConflicts(payload: VersionIndex): Map<string, EntryConflict> {
+	const siblings = new Map<string, IdVersion[]>();
 	for (const e of payload.conflicts ?? []) siblings.set(e.id, [...(siblings.get(e.id) ?? []), e]);
 	const tombs = new Map(payload.tombstones.map((t) => [t.id, t]));
 	const out = new Map<string, EntryConflict>();

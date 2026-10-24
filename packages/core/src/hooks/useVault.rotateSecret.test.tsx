@@ -34,7 +34,9 @@ interface Harness {
 	steps: string[];
 }
 
-function makePlatform(over: { failVerify?: boolean; failWrite?: boolean } = {}): Harness {
+function makePlatform(
+	over: { failVerify?: boolean; failWrite?: boolean; payload?: object } = {},
+): Harness {
 	const h: Harness = {
 		platform: null as unknown as Platform,
 		writes: 0,
@@ -111,8 +113,13 @@ function makePlatform(over: { failVerify?: boolean; failWrite?: boolean } = {}):
 			h.steps.push("seal");
 			return { iv: b64(12), ciphertext: b64(32) };
 		}),
-		decryptWithVek: vi.fn(async () => JSON.stringify({ entries: [], tombstones: [] })),
-		decryptEntries: vi.fn(async () => []),
+		decryptWithVek: vi.fn(async () =>
+			JSON.stringify(over.payload ?? { entries: [], tombstones: [] }),
+		),
+		decryptEntries: vi.fn(async (ps: { ciphertext: string }[]) => {
+			h.steps.push(`decrypt:${ps.map((p) => p.ciphertext).join(",")}`);
+			return ps.map(() => JSON.stringify({ type: "note", name: "n" }));
+		}),
 	};
 	h.platform = {
 		storage,
@@ -155,6 +162,32 @@ describe("rotateSecret", () => {
 		expect(h.writes).toBe(1);
 		expect(h.steps.indexOf("rotate")).toBeLessThan(h.steps.indexOf("seal"));
 		expect(h.steps.indexOf("seal")).toBeLessThan(h.steps.indexOf("write"));
+	});
+
+	// Sibling versions are sealed under DEKs the old key wraps; once it is gone they can't be
+	// opened to re-seal, so rotation has to read them first (docs/sync-conflicts.md).
+	it("opens sibling versions before the old key goes", async () => {
+		const stamp = { wall: 1, counter: 0, node: "n" };
+		const env = (ciphertext: string) => ({
+			id: "a",
+			wrappedDek: "w",
+			dekIv: "d",
+			ciphertext,
+			iv: "i",
+			hlc: { ...stamp, wall: ciphertext === "shown" ? 2 : 1 },
+			vv: { [ciphertext]: { ...stamp, wall: ciphertext === "shown" ? 2 : 1 } },
+		});
+		const h = makePlatform({
+			payload: { entries: [env("shown")], tombstones: [], conflicts: [env("sibling")] },
+		});
+		const get = await actions(h);
+		await act(async () => {
+			await get()
+				.rotateSecret("hunter2")
+				.catch(() => {});
+		});
+		expect(h.steps).toContain("decrypt:sibling");
+		expect(h.steps.indexOf("decrypt:sibling")).toBeLessThan(h.steps.indexOf("rotate"));
 	});
 
 	it("returns a fresh recovery code, because the old one can no longer work", async () => {

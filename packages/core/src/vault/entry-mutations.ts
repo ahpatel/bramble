@@ -8,8 +8,16 @@ import type { AutofillAdapter } from "../adapters/autofill";
 import type { CryptoAdapter } from "../adapters/crypto";
 import type { StorageAdapter } from "../adapters/storage";
 import type { Entry, EntryData } from "../hooks/useVault";
-import type { EntriesPayload, Hlc, HybridClock, SyncedSettings } from "../sync";
-import { encodeEntriesPayload } from "../sync";
+import type {
+	Causal,
+	EntriesPayload,
+	EntryConflict,
+	Hlc,
+	HybridClock,
+	SyncedSettings,
+	Versioned,
+} from "../sync";
+import { encodeEntriesPayload, entryConflicts, nextCausal } from "../sync";
 import { base64ToBytes } from "../util/bytes";
 import type { EncryptedEntry, VaultBlob } from "../vault-format";
 import { toAutofillIndex } from "./autofill-index";
@@ -30,7 +38,16 @@ const USE_COALESCE_MS = 60_000;
 export interface VaultEntries {
 	entries: Entry[];
 	stamps: Map<string, Hlc>;
+	/** Causal history of each displayed version; absent for one written by an older build. */
+	causal: Map<string, Causal>;
 	tombstones: Map<string, Hlc>;
+	/** Causal history of each tombstone; absent for one written by an older build. */
+	tombstoneCausal: Map<string, Causal>;
+	/**
+	 * Concurrent versions not displayed, still sealed. Carried through every write like `settings`,
+	 * or the next entry edit would erase them. See docs/sync-conflicts.md.
+	 */
+	conflicts: EncryptedEntry[];
 	/**
 	 * Vault-scoped settings, carried here for one reason: `buildPayload` reconstructs the whole
 	 * payload from this value on every write, so anything not held here is erased by the next
@@ -41,7 +58,10 @@ export interface VaultEntries {
 }
 
 export interface EntryMutationsDeps {
-	crypto: Pick<CryptoAdapter, "encryptEntry" | "encryptWithVek" | "decryptWithVek">;
+	crypto: Pick<
+		CryptoAdapter,
+		"encryptEntry" | "encryptWithVek" | "decryptWithVek" | "decryptEntries"
+	>;
 	storage: Pick<StorageAdapter, "writeVaultBlob">;
 	autofill: Pick<AutofillAdapter, "beginIndexUpdate" | "setIndex">;
 	readDecodedBlob: () => Promise<{ blob: VaultBlob }>;
@@ -100,7 +120,15 @@ export interface EntryMutations {
 	 * the entries only with the old, and the second write would have already consumed the backup
 	 * that could undo the first.
 	 */
-	sealAll(current: VaultEntries): Promise<{ entriesIv: Uint8Array; entriesCiphertext: Uint8Array }>;
+	sealAll(
+		current: VaultEntries,
+		conflictPlaintexts: readonly (string | null)[],
+	): Promise<{ entriesIv: Uint8Array; entriesCiphertext: Uint8Array }>;
+	/**
+	 * The plaintext of each conflict, in order, or null for one that won't open. Rotation calls
+	 * this while the old key still exists and hands the result to `sealAll`.
+	 */
+	openConflicts(current: VaultEntries): Promise<(string | null)[]>;
 	/** Decrypt the on-disk entries payload (empty for a fresh vault). */
 	readEntriesPayload(): Promise<EntriesPayload>;
 	/**
@@ -109,6 +137,84 @@ export interface EntryMutations {
 	 * the autofill index or local state.
 	 */
 	writeEntriesBlob(payload: EntriesPayload): Promise<void>;
+}
+
+/** A vault with no entries, no history and no conflicts. */
+export function emptyVaultEntries(): VaultEntries {
+	return {
+		entries: [],
+		stamps: new Map(),
+		causal: new Map(),
+		tombstones: new Map(),
+		tombstoneCausal: new Map(),
+		conflicts: [],
+	};
+}
+
+const causalFrom = (v: Versioned): Causal | undefined =>
+	v.vv ? (v.floor ? { vv: v.vv, floor: v.floor } : { vv: v.vv }) : undefined;
+
+/** The in-memory state for a payload; only entries that decrypted get a stamp. */
+export function vaultEntriesFromPayload(payload: EntriesPayload, decrypted: Entry[]): VaultEntries {
+	const ids = new Set(decrypted.map((e) => e.id));
+	const shown = payload.entries.filter((e) => ids.has(e.id));
+	const causal = new Map<string, Causal>();
+	for (const e of shown) {
+		const c = causalFrom(e);
+		if (c) causal.set(e.id, c);
+	}
+	const tombstoneCausal = new Map<string, Causal>();
+	for (const t of payload.tombstones) {
+		const c = causalFrom(t);
+		if (c) tombstoneCausal.set(t.id, c);
+	}
+	const state: VaultEntries = {
+		entries: decrypted,
+		stamps: new Map(shown.map((e) => [e.id, e.hlc])),
+		causal,
+		tombstones: new Map(payload.tombstones.map((t) => [t.id, t.hlc])),
+		tombstoneCausal,
+		conflicts: payload.conflicts ?? [],
+	};
+	return payload.settings ? { ...state, settings: payload.settings } : state;
+}
+
+const displayedOf = (s: VaultEntries, id: string): Versioned | undefined => {
+	const hlc = s.stamps.get(id);
+	return hlc ? { hlc, ...s.causal.get(id) } : undefined;
+};
+
+const tombstoneOf = (s: VaultEntries, id: string): Versioned | undefined => {
+	const hlc = s.tombstones.get(id);
+	return hlc ? { hlc, ...s.tombstoneCausal.get(id) } : undefined;
+};
+
+/** Every version held for an id: displayed, siblings and tombstone. */
+function heldFor(s: VaultEntries, id: string): Versioned[] {
+	const shown = displayedOf(s, id);
+	const tomb = tombstoneOf(s, id);
+	return [
+		...(shown ? [shown] : []),
+		...s.conflicts.filter((e) => e.id === id),
+		...(tomb ? [tomb] : []),
+	];
+}
+
+/** The history of an edit, which supersedes only the displayed version. */
+function editCausal(s: VaultEntries, id: string, hlc: Hlc): Causal {
+	const shown = displayedOf(s, id);
+	return nextCausal({ hlc, bases: shown ? [shown] : [], held: heldFor(s, id) });
+}
+
+/** Each displayed entry with siblings or a concurrent delete, from the in-memory state. */
+export function conflictsOf(s: VaultEntries): Map<string, EntryConflict> {
+	const index = (m: Map<string, Hlc>, causal: Map<string, Causal>) =>
+		[...m].map(([id, hlc]) => ({ id, hlc, ...causal.get(id) }));
+	return entryConflicts({
+		entries: index(s.stamps, s.causal),
+		conflicts: s.conflicts,
+		tombstones: index(s.tombstones, s.tombstoneCausal),
+	});
 }
 
 export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
@@ -137,23 +243,49 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 					ciphertext: enc.ciphertext,
 					iv: enc.iv,
 					hlc,
+					...next.causal.get(id),
 				};
 			}),
 		);
-		const tombstones = [...next.tombstones].map(([id, hlc]) => ({ id, hlc }));
-		// Threaded through rather than rebuilt: this is the seam where a synced setting would
-		// otherwise be dropped by an ordinary entry edit.
-		return next.settings
-			? { entries, tombstones, settings: next.settings }
-			: { entries, tombstones };
+		const tombstones = [...next.tombstones].map(([id, hlc]) => ({
+			id,
+			hlc,
+			...next.tombstoneCausal.get(id),
+		}));
+		// Threaded through rather than rebuilt: this is the seam where a synced setting, or a
+		// sibling version, would otherwise be dropped by an ordinary entry edit.
+		const payload: EntriesPayload = { entries, tombstones };
+		if (next.settings) payload.settings = next.settings;
+		if (next.conflicts.length > 0) payload.conflicts = next.conflicts;
+		return payload;
 	};
 
-	const sealAll = async (current: VaultEntries) => {
+	const openConflicts = (current: VaultEntries) =>
+		crypto.decryptEntries(
+			current.conflicts.map(({ ciphertext, iv, wrappedDek, dekIv }) => ({
+				ciphertext,
+				iv,
+				wrappedDek,
+				dekIv,
+			})),
+		);
+
+	const sealAll = async (current: VaultEntries, conflictPlaintexts: readonly (string | null)[]) => {
 		// Both layers are re-keyed: each entry gets a fresh DEK wrapped by the loaded key, and the
 		// payload holding them is sealed under it too.
-		const { iv, ciphertext } = await crypto.encryptWithVek(
-			encodeEntriesPayload(await buildPayload(current)),
-		);
+		const payload = await buildPayload(current);
+		if (payload.conflicts) {
+			payload.conflicts = await Promise.all(
+				payload.conflicts.map(async (e, i) => {
+					const plaintext = conflictPlaintexts[i];
+					// One that already wouldn't open is carried as it was; re-keying can't lose it further.
+					if (plaintext == null) return e;
+					const enc = await crypto.encryptEntry(plaintext);
+					return { ...e, ...enc };
+				}),
+			);
+		}
+		const { iv, ciphertext } = await crypto.encryptWithVek(encodeEntriesPayload(payload));
 		return { entriesIv: base64ToBytes(iv), entriesCiphertext: base64ToBytes(ciphertext) };
 	};
 
@@ -188,16 +320,26 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 		if (doomed.size === 0) return current;
 		const c = await clock();
 		const stamps = new Map(current.stamps);
+		const causal = new Map(current.causal);
 		const tombstones = new Map(current.tombstones);
+		const tombstoneCausal = new Map(current.tombstoneCausal);
 		for (const id of doomed) {
+			const hlc = c.send();
+			// Supersedes every version this device holds: deleting the entry you see deletes it.
+			const held = heldFor(current, id);
 			stamps.delete(id);
-			tombstones.set(id, c.send());
+			causal.delete(id);
+			tombstones.set(id, hlc);
+			tombstoneCausal.set(id, nextCausal({ hlc, bases: held, held }));
 		}
 		return persist({
 			...current,
 			entries: current.entries.filter((e) => !doomed.has(e.id)),
 			stamps,
+			causal,
 			tombstones,
+			tombstoneCausal,
+			conflicts: current.conflicts.filter((e) => !doomed.has(e.id)),
 		});
 	};
 
@@ -220,16 +362,18 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 		if (changing.size === 0) return current;
 		const c = await clock();
 		const stamps = new Map(current.stamps);
+		const causal = new Map(current.causal);
 		const entries = current.entries.map((e) => {
 			if (!changing.has(e.id)) return e;
 			// hlc.wall is physical ms, so the stamp doubles as the timestamp (as in `add`).
 			const hlc = c.send();
 			stamps.set(e.id, hlc);
+			causal.set(e.id, editCausal(current, e.id, hlc));
 			if (archived) return { ...e, archivedAt: hlc.wall };
 			const { archivedAt: _archivedAt, ...rest } = e;
 			return rest as Entry;
 		});
-		return persist({ ...current, entries, stamps });
+		return persist({ ...current, entries, stamps, causal });
 	};
 
 	// One write for the selection, like setArchived. Tags are not content in the sense
@@ -261,9 +405,12 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 
 		const c = await clock();
 		const stamps = new Map(current.stamps);
+		const causal = new Map(current.causal);
 		const entries = current.entries.map((entry) => {
 			if (!changed.has(entry.id)) return entry;
-			stamps.set(entry.id, c.send());
+			const hlc = c.send();
+			stamps.set(entry.id, hlc);
+			causal.set(entry.id, editCausal(current, entry.id, hlc));
 			const next = changed.get(entry.id);
 			// Dropped, not set to empty: an entry with no tags carries no key at all.
 			if (next === undefined) {
@@ -272,7 +419,7 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			}
 			return { ...entry, tags: next };
 		});
-		return persist({ ...current, entries, stamps });
+		return persist({ ...current, entries, stamps, causal });
 	};
 
 	return {
@@ -297,10 +444,13 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			);
 			const stamps = new Map(current.stamps);
 			stamps.set(entry.id, hlc);
+			const causal = new Map(current.causal);
+			causal.set(entry.id, nextCausal({ hlc, bases: [], held: [] }));
 			return persist({
 				...current,
 				entries: [...current.entries, entry],
 				stamps,
+				causal,
 			});
 		},
 
@@ -310,10 +460,12 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			const valid = items.map(validate);
 			const c = await clock();
 			const stamps = new Map(current.stamps);
+			const causal = new Map(current.causal);
 			const withIds: Entry[] = valid.map((data) => {
 				const hlc = c.send();
 				const id = globalThis.crypto.randomUUID();
 				stamps.set(id, hlc);
+				causal.set(id, nextCausal({ hlc, bases: [], held: [] }));
 				// Imported entries start with no changelog; an import file cannot seed one.
 				return withPasswordChangelog(
 					{
@@ -330,6 +482,7 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 				...current,
 				entries: [...current.entries, ...withIds],
 				stamps,
+				causal,
 			});
 		},
 
@@ -356,7 +509,9 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			);
 			const stamps = new Map(current.stamps);
 			stamps.set(id, hlc);
-			return persist({ ...current, entries, stamps });
+			const causal = new Map(current.causal);
+			causal.set(id, editCausal(current, id, hlc));
+			return persist({ ...current, entries, stamps, causal });
 		},
 
 		setSetting: async (current, key, value) => {
@@ -398,5 +553,7 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 		setTags,
 
 		sealAll,
+
+		openConflicts,
 	};
 }
