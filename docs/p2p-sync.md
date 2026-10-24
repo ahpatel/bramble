@@ -396,9 +396,11 @@ binary layout in `vault-format.ts`:
 
 This is the security property behind entry-level merge. To decide a conflict the host compares
 **outer metadata only** (`id`, HLC). The winning entry is carried over **as its sealed blob**
-(`wrappedDek`, `dekIv`, `ciphertext`, `iv` moved as bytes). No per-entry DEK is unwrapped, no
-password is ever decrypted during merge. The only thing decrypted is the envelope index, which
-holds no secrets.
+(`wrappedDek`, `dekIv`, `ciphertext`, `iv` moved as bytes). Picking the winner unwraps no
+per-entry DEK; the only thing decrypted for it is the envelope index, which holds no secrets.
+Separately, each incoming entry that would win is test-decrypted inside the crypto host to
+confirm it opens under this vault's key, and only the yes/no verdict comes out (`admit` in
+`apply-remote.ts`; see [sync-vault-pinning-and-quarantine.md](sync-vault-pinning-and-quarantine.md)).
 
 (Field-level merge, where concurrent edits to *different fields* of one entry both survive,
 would require unwrapping DEKs and reconciling plaintext fields. That is the only variant that
@@ -434,6 +436,9 @@ change, not a check moved around.
 - **Entry vs tombstone:** compare the entry's HLC against any tombstone for the same id; the
   greater wins. A delete is a stamped tombstone, never a silent removal, so a stale copy on
   another device cannot resurrect it. An edit stamped *after* a delete correctly undeletes.
+- **A use is not an edit:** recording a use (`touch`) updates `lastUsedAt` without restamping,
+  so copying a password on one device can't outrank an edit made on another. `lastUsedAt` is
+  therefore per-device until the entry's next edit carries it.
 - **Slots:** NOT merged. This describes a design that was never built: `mergeReplicas` handles
   entry records only, `apply-remote.ts` has no slot handling, and `OpaqueSlot` is purely a
   `vault-format.ts` parser fall-through for unknown slot kinds, unrelated to sync. Verified on a
@@ -458,10 +463,8 @@ older one is overwritten, and the entry shape (`{id, wrappedDek, dekIv, cipherte
 has no slot to stash a prior version. Nothing is kept in the background and nothing is surfaced
 to the user.
 
-**Planned (not built):** a setting that instead stashes the losing **sealed** version in an
-entry history list, recovering the lost value without ever decrypting it to merge, plus a UI
-that surfaces the conflict rather than resolving it silently. Both require adding a versions
-field to the entry payload; see "Deferred / known limitations".
+**Planned (not built):** keep every concurrent version sealed and surface the conflict, then
+merge field groups inside the crypto core. See [sync-conflicts.md](sync-conflicts.md).
 
 Not to be confused with the **password changelog** ([password-changelog.md](password-changelog.md)),
 which is already built: that keeps superseded passwords from *local* rotations inside the entry
@@ -495,12 +498,12 @@ plaintext, and a conflict loser still drops its rows like any other edit.
   whose candidates (especially the TCP/TLS variants that beat a UDP-blocking VPN) are gathered and
   checked *last*, so the first cross-network connect may need a retry before it lands — not a failure.
   Same-network / same-machine peers connect instantly.
-- **Field-level merge is deferred** (see above).
+- **Field-level merge is deferred** (see above, and the plan in
+  [sync-conflicts.md](sync-conflicts.md)).
 - **Conflict history + surfacing is deferred.** Today a same-entry conflict silently drops the
-  losing version (see "Conflict loser"). Keeping the sealed loser in an entry history list and
-  showing the conflict to the user are both unbuilt; they need a versions field on the entry
-  payload. Deletes are the one exception already covered: tombstones mean a delete is never
-  silently lost or resurrected.
+  losing version (see "Conflict loser"). Keeping concurrent versions and showing the conflict
+  are both unbuilt; [sync-conflicts.md](sync-conflicts.md) is the plan. Deletes are the one
+  exception already covered: tombstones mean a delete is never silently lost or resurrected.
 
 ## Device management & revocation
 
