@@ -17,7 +17,14 @@ import type {
 	SyncedSettings,
 	Versioned,
 } from "../sync";
-import { encodeEntriesPayload, entryConflicts, nextCausal, nextVersion } from "../sync";
+import {
+	compareHlc,
+	encodeEntriesPayload,
+	entryConflicts,
+	isAncestor,
+	nextCausal,
+	nextVersion,
+} from "../sync";
 import { base64ToBytes } from "../util/bytes";
 import type { EncryptedEntry, VaultBlob } from "../vault-format";
 import { toAutofillIndex } from "./autofill-index";
@@ -59,6 +66,14 @@ export interface VaultEntries {
 }
 
 /**
+ * The version an edit form opened: its stamp, history and decrypted data. Saving supersedes this
+ * version, not whatever is displayed by then (docs/sync-conflicts.md, "Saving the edit form").
+ */
+export interface OpenedVersion extends Versioned {
+	data: Entry;
+}
+
+/**
  * How a conflict resolves: the shown version, a sibling's content, or both as separate entries.
  * `superseded` is the data of every version the kept entry replaces, so its passwords can be
  * folded into the changelog instead of being lost.
@@ -83,7 +98,16 @@ export interface EntryMutationsDeps {
 export interface EntryMutations {
 	add(current: VaultEntries, data: EntryData): Promise<VaultEntries>;
 	importMany(current: VaultEntries, items: EntryData[]): Promise<VaultEntries>;
-	update(current: VaultEntries, id: string, data: EntryData): Promise<VaultEntries>;
+	/**
+	 * Save an edit. With `opened`, the save supersedes that version; if another one is displayed
+	 * by then, that one becomes its sibling instead of being overwritten.
+	 */
+	update(
+		current: VaultEntries,
+		id: string,
+		data: EntryData,
+		opened?: OpenedVersion,
+	): Promise<VaultEntries>;
 	remove(current: VaultEntries, id: string): Promise<VaultEntries>;
 	/** Delete a selection in one write (not N), each id getting its own tombstone. */
 	removeMany(current: VaultEntries, ids: string[]): Promise<VaultEntries>;
@@ -521,12 +545,29 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			});
 		},
 
-		update: async (current, id, data) => {
+		update: async (current, id, data, opened) => {
 			const valid = validate(data);
 			const c = await clock();
 			const hlc = c.send();
-			const prev = current.entries.find((e) => e.id === id);
-			const version = editVersion(current, id, hlc);
+			const shown = current.entries.find((e) => e.id === id);
+			const displayed = displayedOf(current, id);
+			const from =
+				opened && displayed && compareHlc(opened.hlc, displayed.hlc) !== 0 ? opened : undefined;
+			const prev = from ? from.data : shown;
+			const version = from
+				? nextVersion({ hlc, bases: [from], held: heldFor(current, id) })
+				: editVersion(current, id, hlc);
+			let conflicts = current.conflicts;
+			if (from && shown && displayed) {
+				// What is displayed now came in after the form opened: it stays, as a sibling.
+				const { id: _id, ...shownData } = shown;
+				const enc = await crypto.encryptEntry(JSON.stringify(shownData));
+				const save = { hlc: version.hlc, ...version.causal };
+				conflicts = [
+					...conflicts.filter((e) => e.id !== id || !isAncestor(e, save)),
+					{ id, ...enc, ...displayed },
+				];
+			}
 			const entries = current.entries.map((e) =>
 				e.id === id
 					? withPartStamps(
@@ -542,7 +583,7 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 								prev,
 								hlc.wall,
 							),
-							priorOf(current, id),
+							from ? { data: from.data, version: from } : priorOf(current, id),
 							version.hlc,
 						)
 					: e,
@@ -551,7 +592,7 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			stamps.set(id, version.hlc);
 			const causal = new Map(current.causal);
 			causal.set(id, version.causal);
-			return persist({ ...current, entries, stamps, causal });
+			return persist({ ...current, entries, stamps, causal, conflicts });
 		},
 
 		resolve: async (current, id, choice) => {

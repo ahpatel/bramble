@@ -10,7 +10,12 @@ import {
 	mergeEntriesPayload,
 } from "../sync";
 import type { EncryptedEntry } from "../vault-format";
-import { conflictsOf, type VaultEntries, vaultEntriesFromPayload } from "./entry-mutations";
+import {
+	conflictsOf,
+	type OpenedVersion,
+	type VaultEntries,
+	vaultEntriesFromPayload,
+} from "./entry-mutations";
 import { harness } from "./entry-mutations.harness";
 
 const empty = (): VaultEntries => ({
@@ -1131,5 +1136,110 @@ describe("createEntryMutations: part stamps", () => {
 		expect(stamp.node.startsWith("device-a~")).toBe(true);
 		expect(next.entries[0]!.partStamps?.name).toEqual(stamp);
 		expect(next.entries[0]!.partStampsAt).toEqual(stamp);
+	});
+});
+
+// The edit form keeps the values it opened with, so its save supersedes the version it opened,
+// not whatever is displayed by then (docs/sync-conflicts.md, "Saving the edit form").
+describe("createEntryMutations: saving from the version the form opened", () => {
+	const at = (wall: number, node: string): Hlc => ({ wall, counter: 0, node });
+
+	/** `id` written here as A, then replaced by the phone's B the way a sync would. */
+	async function openedThenReplaced() {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a"));
+		const id = a.entries[0]!.id;
+		const opened: OpenedVersion = {
+			hlc: a.stamps.get(id)!,
+			...a.causal.get(id),
+			data: a.entries[0]!,
+		};
+		const theirs = at(2000, "phone");
+		const shown = a.entries[0]!;
+		const replaced: VaultEntries = {
+			...a,
+			entries: [
+				{
+					...shown,
+					notes: "theirs",
+					partStamps: { ...shown.partStamps, notes: theirs },
+					partStampsAt: theirs,
+				} as Entry,
+			],
+			stamps: new Map([[id, theirs]]),
+			causal: new Map([[id, { vv: { ...a.causal.get(id)!.vv, phone: theirs } }]]),
+		};
+		t = 3000;
+		return { h, a, id, opened, replaced, theirs };
+	}
+
+	it("a save from a version no longer displayed becomes a sibling of the one that is", async () => {
+		const { h, id, opened, replaced, theirs } = await openedThenReplaced();
+		const next = await h.mutations.update(
+			replaced,
+			id,
+			loginWith("a", { password: "mine" }),
+			opened,
+		);
+		const save = { hlc: next.stamps.get(id)!, ...next.causal.get(id) };
+		expect(next.entries[0]).toMatchObject({ password: "mine" });
+		expect(next.conflicts.map((e) => e.hlc)).toEqual([theirs]);
+		expect(JSON.parse(next.conflicts[0]!.ciphertext.slice(3))).toMatchObject({ notes: "theirs" });
+		expect(next.conflicts[0]!.vv).toEqual(replaced.causal.get(id)!.vv);
+		expect(isAncestor(opened, save)).toBe(true);
+		expect(isAncestor({ hlc: theirs, ...replaced.causal.get(id) }, save)).toBe(false);
+		expect(conflictsOf(next).get(id)).toEqual({ versions: 1, deleted: false });
+		const onDisk = await h.mutations.readEntriesPayload();
+		expect(onDisk.conflicts?.map((e) => e.hlc)).toEqual([theirs]);
+	});
+
+	it("a save from the displayed version works as before", async () => {
+		const { h, a, id, opened } = await openedThenReplaced();
+		const next = await h.mutations.update(a, id, loginWith("a", { password: "mine" }), opened);
+		expect(next.conflicts).toEqual([]);
+		expect(isAncestor(opened, { hlc: next.stamps.get(id)!, ...next.causal.get(id) })).toBe(true);
+	});
+
+	it("the save restamps only parts it changed relative to the version opened", async () => {
+		const { h, id, opened, replaced } = await openedThenReplaced();
+		const next = await h.mutations.update(
+			replaced,
+			id,
+			loginWith("a", { password: "mine" }),
+			opened,
+		);
+		const saved = next.entries[0] as Entry & LoginEntryData;
+		expect(saved.partStamps).toEqual({ name: opened.hlc, credential: next.stamps.get(id) });
+		expect(saved.passwordChangelog?.map((c) => c.value)).toEqual(["p"]);
+	});
+
+	it("a save from a version that became a sibling supersedes it", async () => {
+		const { h, a, id, opened, theirs } = await openedThenReplaced();
+		// The phone's B is concurrent with A and won the display; A was moved aside, sealed.
+		const shown = a.entries[0]!;
+		const sealedA = {
+			id,
+			wrappedDek: "wd",
+			dekIv: "di",
+			iv: "iv",
+			ciphertext: `ct:${JSON.stringify({ ...shown, id: undefined })}`,
+			hlc: opened.hlc,
+			vv: opened.vv,
+		} as EncryptedEntry;
+		const sideways: VaultEntries = {
+			...a,
+			entries: [{ ...shown, notes: "theirs" } as Entry],
+			stamps: new Map([[id, theirs]]),
+			causal: new Map([[id, { vv: { phone: theirs } }]]),
+			conflicts: [sealedA],
+		};
+		const next = await h.mutations.update(
+			sideways,
+			id,
+			loginWith("a", { password: "mine" }),
+			opened,
+		);
+		expect(next.conflicts.map((e) => e.hlc)).toEqual([theirs]);
 	});
 });

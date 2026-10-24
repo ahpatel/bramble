@@ -225,6 +225,7 @@ import {
 	conflictsOf,
 	createEntryMutations,
 	emptyVaultEntries,
+	type OpenedVersion,
 	type VaultEntries,
 	vaultEntriesFromPayload,
 } from "../vault/entry-mutations";
@@ -335,7 +336,13 @@ export interface VaultActions {
 	exportToApp(): Promise<string[]>;
 	addEntry(data: EntryData): Promise<void>;
 	importEntries(items: EntryData[]): Promise<void>;
-	updateEntry(id: string, data: EntryData): Promise<void>;
+	/** The displayed version of an entry, for an edit form to save against (see `updateEntry`). */
+	openVersion(id: string): OpenedVersion | undefined;
+	/**
+	 * Save an edit. Pass the version the form opened: if another one is displayed by the time it
+	 * saves, that one becomes a sibling instead of being overwritten.
+	 */
+	updateEntry(id: string, data: EntryData, opened?: OpenedVersion): Promise<void>;
 	deleteEntry(id: string): Promise<void>;
 	/** Delete a bulk selection in one write. Each id is tombstoned, as with `deleteEntry`. */
 	deleteEntries(ids: string[]): Promise<void>;
@@ -1217,9 +1224,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			commitEntries(await mutations.importMany(snapshotEntries(), items)),
 		[mutations, snapshotEntries, commitEntries],
 	);
+	const openVersion = useCallback((id: string): OpenedVersion | undefined => {
+		const data = latestRef.current.entries.find((e) => e.id === id);
+		const hlc = vaultStateRef.current.stamps.get(id);
+		return data && hlc ? { hlc, ...vaultStateRef.current.causal.get(id), data } : undefined;
+	}, []);
 	const updateEntry = useCallback(
-		async (id: string, data: EntryData) =>
-			commitEntries(await mutations.update(snapshotEntries(), id, data)),
+		async (id: string, data: EntryData, opened?: OpenedVersion) =>
+			commitEntries(await mutations.update(snapshotEntries(), id, data, opened)),
 		[mutations, snapshotEntries, commitEntries],
 	);
 	const deleteEntry = useCallback(
@@ -1909,6 +1921,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			exportToApp,
 			addEntry,
 			importEntries,
+			openVersion,
 			updateEntry,
 			deleteEntry,
 			deleteEntries,
@@ -1950,6 +1963,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			exportToApp,
 			addEntry,
 			importEntries,
+			openVersion,
 			updateEntry,
 			deleteEntry,
 			deleteEntries,
@@ -2048,4 +2062,4 @@ export function useVault(): UseVault {
 	return { ...useVaultState(), ...useVaultActions() };
 }
 
-export type { EncryptedEntry };
+export type { EncryptedEntry, OpenedVersion };

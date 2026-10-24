@@ -138,6 +138,18 @@ it("loading a payload with a conflict exposes it", async () => {
 	await waitFor(() => expect(state().conflicts.get("a")).toEqual({ versions: 1, deleted: false }));
 });
 
+it("openVersion snapshots the displayed version", async () => {
+	const { platform } = makePlatform({ entries: [SHOWN], tombstones: [], conflicts: [SIBLING] });
+	const { actions } = await opened(platform);
+	await waitFor(() => expect(actions().openVersion("a")).toBeDefined());
+	expect(actions().openVersion("a")).toEqual({
+		hlc: SHOWN.hlc,
+		vv: SHOWN.vv,
+		data: expect.objectContaining({ id: "a", password: "shown-pw" }),
+	});
+	expect(actions().openVersion("missing")).toBeUndefined();
+});
+
 it("a stored payload with siblings but no displayed version is canonicalized on load", async () => {
 	const { platform } = makePlatform({ entries: [], tombstones: [], conflicts: [SHOWN, SIBLING] });
 	const { state } = await opened(platform);
