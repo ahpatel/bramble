@@ -17,7 +17,7 @@ import type {
 	SyncedSettings,
 	Versioned,
 } from "../sync";
-import { encodeEntriesPayload, entryConflicts, nextCausal } from "../sync";
+import { encodeEntriesPayload, entryConflicts, nextCausal, nextVersion } from "../sync";
 import { base64ToBytes } from "../util/bytes";
 import type { EncryptedEntry, VaultBlob } from "../vault-format";
 import { toAutofillIndex } from "./autofill-index";
@@ -211,10 +211,10 @@ function heldFor(s: VaultEntries, id: string): Versioned[] {
 	];
 }
 
-/** The history of an edit, which supersedes only the displayed version. */
-function editCausal(s: VaultEntries, id: string, hlc: Hlc): Causal {
+/** An edit's stamp and history: it supersedes only the displayed version, so it may fork. */
+function editVersion(s: VaultEntries, id: string, hlc: Hlc): { hlc: Hlc; causal: Causal } {
 	const shown = displayedOf(s, id);
-	return nextCausal({ hlc, bases: shown ? [shown] : [], held: heldFor(s, id) });
+	return nextVersion({ hlc, bases: shown ? [shown] : [], held: heldFor(s, id) });
 }
 
 /** Each displayed entry with siblings or a concurrent delete, from the in-memory state. */
@@ -378,8 +378,9 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			if (!changing.has(e.id)) return e;
 			// hlc.wall is physical ms, so the stamp doubles as the timestamp (as in `add`).
 			const hlc = c.send();
-			stamps.set(e.id, hlc);
-			causal.set(e.id, editCausal(current, e.id, hlc));
+			const version = editVersion(current, e.id, hlc);
+			stamps.set(e.id, version.hlc);
+			causal.set(e.id, version.causal);
 			if (archived) return { ...e, archivedAt: hlc.wall };
 			const { archivedAt: _archivedAt, ...rest } = e;
 			return rest as Entry;
@@ -419,9 +420,9 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 		const causal = new Map(current.causal);
 		const entries = current.entries.map((entry) => {
 			if (!changed.has(entry.id)) return entry;
-			const hlc = c.send();
-			stamps.set(entry.id, hlc);
-			causal.set(entry.id, editCausal(current, entry.id, hlc));
+			const version = editVersion(current, entry.id, c.send());
+			stamps.set(entry.id, version.hlc);
+			causal.set(entry.id, version.causal);
 			const next = changed.get(entry.id);
 			// Dropped, not set to empty: an entry with no tags carries no key at all.
 			if (next === undefined) {
@@ -518,10 +519,11 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 						)
 					: e,
 			);
+			const version = editVersion(current, id, hlc);
 			const stamps = new Map(current.stamps);
-			stamps.set(id, hlc);
+			stamps.set(id, version.hlc);
 			const causal = new Map(current.causal);
-			causal.set(id, editCausal(current, id, hlc));
+			causal.set(id, version.causal);
 			return persist({ ...current, entries, stamps, causal });
 		},
 

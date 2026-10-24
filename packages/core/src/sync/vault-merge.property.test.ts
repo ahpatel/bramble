@@ -5,9 +5,9 @@
 import { describe, expect, it } from "vitest";
 import type { EncryptedEntry } from "../vault-format";
 import { payloadsEquivalent } from "./apply-remote";
-import { causalKey, isAncestor, nextCausal, type Versioned } from "./causal";
+import { causalKey, isAncestor, nextCausal, nextVersion, type Versioned } from "./causal";
 import type { EntriesPayload, Tombstone } from "./entries-payload";
-import { type Hlc, HybridClock } from "./hlc";
+import { compareHlc, type Hlc, HybridClock } from "./hlc";
 import { olderBuildMerge } from "./older-build.harness";
 import { entryConflicts, heldVersions, mergeEntriesPayload } from "./vault-merge";
 
@@ -124,12 +124,11 @@ class Sim {
 
 	edit(d: Device, id: string): void {
 		const shown = d.payload.entries.find((e) => e.id === id)!;
-		const hlc = d.clock.send();
 		const label = this.label();
-		const causal = d.older
-			? {}
-			: nextCausal({ hlc, bases: [shown], held: heldVersions(d.payload, id) });
-		const env = this.envelope(id, label, hlc, causal);
+		const version = d.older
+			? { hlc: d.clock.send(), causal: {} }
+			: nextVersion({ hlc: d.clock.send(), bases: [shown], held: heldVersions(d.payload, id) });
+		const env = this.envelope(id, label, version.hlc, version.causal);
 		this.versions.set(label, { label, id, v: env, ancestors: this.inherit(d, id, [shown], false) });
 		this.apply(d, { entries: [env], tombstones: [] });
 	}
@@ -273,6 +272,39 @@ describe("sibling merge properties", () => {
 					kept.some((k) => sim.versions.get(k)!.ancestors.has(x.label)) ||
 					deletes.some((d) => d.id === x.id && d.ancestors.has(x.label));
 				if (!seen) throw new Error(`seed ${seed}: ${x.label} was lost`);
+			}
+		}
+	});
+
+	// With an older build in the group, a stale copy it relays before the original arrives can still
+	// prune versions (docs/sync-conflicts.md, "Older builds"), but never below today's LWW: the
+	// version LWW would keep survives, and an entry every delete saw stays deleted.
+	it("a mixed group never does worse than LWW", () => {
+		for (const seed of SEEDS) {
+			const sim = run(seed, 1);
+			sim.gossip(20);
+			const final = sim.devices[0]!.payload;
+			const kept = new Set([...final.entries, ...(final.conflicts ?? [])].map((e) => e.ciphertext));
+			const byId = new Map<string, Version[]>();
+			for (const v of sim.versions.values()) byId.set(v.id, [...(byId.get(v.id) ?? []), v]);
+			for (const [id, versions] of byId) {
+				const live = versions.filter((v) => "ciphertext" in v.v);
+				const deletes = versions.filter((v) => !("ciphertext" in v.v));
+				const newest = live.reduce((a, b) => (compareHlc(a.v.hlc, b.v.hlc) >= 0 ? a : b));
+				const lastDelete = deletes.reduce<Version | undefined>(
+					(a, b) => (!a || compareHlc(b.v.hlc, a.v.hlc) > 0 ? b : a),
+					undefined,
+				);
+				if (!lastDelete || compareHlc(newest.v.hlc, lastDelete.v.hlc) > 0) {
+					expect(kept.has(newest.label), `seed ${seed}: LWW keeps ${newest.label}`).toBe(true);
+				}
+				const allSeen = live.every((v) => deletes.some((d) => d.ancestors.has(v.label)));
+				if (allSeen) {
+					expect(
+						final.entries.some((e) => e.id === id),
+						`seed ${seed}: ${id} came back after deletes saw every version`,
+					).toBe(false);
+				}
 			}
 		}
 	});

@@ -7,7 +7,7 @@ import type {
 	SaveLoginPrompt,
 	UpdateLoginPrompt,
 } from "@core/adapters/autofill";
-import { heldVersions, nextCausal } from "@core/sync";
+import { heldVersions, nextCausal, nextVersion } from "@core/sync";
 import { type EncryptedEntry, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
 import { type DedupeOutcome, effectivePort, hostnameMatches, registrableDomain } from "../dedupe";
 import { api } from "../platform-api";
@@ -230,7 +230,8 @@ async function commitCornerUpdate(capture: PendingCapture, chosenEntryId: string
 				const fresh = reenc.data as Omit<EncryptedEntry, "id" | "hlc">;
 				const hlc = await nextStamp();
 				const held = heldVersions(payload, enc.id);
-				next.push({ id: enc.id, ...fresh, hlc, ...nextCausal({ hlc, bases: [enc], held }) });
+				const v = nextVersion({ hlc, bases: [enc], held });
+				next.push({ id: enc.id, ...fresh, hlc: v.hlc, ...v.causal });
 			}
 			return next;
 		},

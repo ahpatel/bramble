@@ -725,6 +725,24 @@ describe("createEntryMutations: version history", () => {
 		expect(disk.entries[0]!.vv).toEqual(next.causal.get(id)!.vv);
 	});
 
+	it("an edit around this device's own sibling is stamped under its fork key", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		// The phone's version is shown; this device's own earlier edit is the sibling.
+		const seeded: VaultEntries = {
+			...a,
+			stamps: new Map([[id, at(5000, "phone")]]),
+			causal: new Map([[id, { vv: { phone: at(5000, "phone") } }]]),
+			conflicts: [{ ...sib(id, 3000, "device-a") }],
+		};
+		const next = await h.mutations.update(seeded, id, login("a2"));
+		const stamp = next.stamps.get(id)!;
+		expect(stamp.node.startsWith("device-a~")).toBe(true);
+		expect(next.causal.get(id)!.vv[stamp.node]).toEqual(stamp);
+		expect(next.conflicts).toHaveLength(1);
+	});
+
 	it("update of an entry with a legacy version inherits its floor", async () => {
 		const h = harness();
 		const a = await h.mutations.add(empty(), login("a"));

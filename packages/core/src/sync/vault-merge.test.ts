@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EncryptedEntry } from "../vault-format";
-import { nextCausal, type VersionVector } from "./causal";
+import { nextCausal, nextVersion, type VersionVector } from "./causal";
 import type { EntriesPayload, Tombstone } from "./entries-payload";
 import type { Hlc } from "./hlc";
 import { entryConflicts, heldVersions, mergeEntriesPayload } from "./vault-merge";
@@ -293,5 +293,41 @@ describe("mergeEntriesPayload siblings", () => {
 		const t = tomb("e", hlc(1, "c"), { c: hlc(1, "c") });
 		const held = heldVersions(withConflicts(payload([y], [t]), [x]), "e");
 		expect(held).toEqual([y, x, t]);
+	});
+
+	// A forked edit is stamped under its fork key, so a copy an older build strips still names the
+	// writer that its descendants and deletes recorded (final review, finding A1).
+	describe("a stale stripped copy of a fork-written edit", () => {
+		const mine = ver("e", "mine", hlc(2, "a"), { a: hlc(2, "a") });
+		const theirs = ver("e", "theirs", hlc(3, "b"), { b: hlc(3, "b") });
+		const write = (ct: string, at: Hlc, bases: EncryptedEntry[], held: EncryptedEntry[]) => {
+			const v = nextVersion({ hlc: at, bases, held });
+			return { ...env("e", ct, v.hlc), ...v.causal };
+		};
+		const fork = write("fork", hlc(4, "a"), [theirs], [mine, theirs]);
+
+		it("doesn't prune the sibling the fork went around", () => {
+			const r = write("r", hlc(5, "b"), [fork], [fork, mine]);
+			const local = withConflicts(payload([r]), [mine]);
+			for (const merged of [
+				mergeEntriesPayload(local, payload([strip(fork)])),
+				mergeEntriesPayload(payload([strip(fork)]), local),
+			]) {
+				expect(cts(merged.entries)).toEqual(["r"]);
+				expect(cts(merged.conflicts)).toEqual(["mine"]);
+			}
+		});
+
+		it("doesn't bring a deleted entry back", () => {
+			const v = nextVersion({ hlc: hlc(6, "b"), bases: [fork, mine], held: [fork, mine] });
+			const deleted = payload([], [tomb("e", v.hlc, v.causal.vv, v.causal.floor)]);
+			for (const merged of [
+				mergeEntriesPayload(deleted, payload([strip(fork)])),
+				mergeEntriesPayload(payload([strip(fork)]), deleted),
+			]) {
+				expect(merged.entries).toEqual([]);
+				expect(entryConflicts(merged).size).toBe(0);
+			}
+		});
 	});
 });

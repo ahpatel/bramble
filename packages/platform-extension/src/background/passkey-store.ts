@@ -7,7 +7,7 @@
 
 import type { PasskeyAssertion, PasskeyRegistration } from "@core/adapters/crypto";
 import type { Entry, LoginEntryData } from "@core/hooks/useVault";
-import { decodeEntriesPayload, heldVersions, nextCausal } from "@core/sync";
+import { decodeEntriesPayload, heldVersions, nextCausal, nextVersion } from "@core/sync";
 import { normalizeEntryData } from "@core/vault/entry-normalize";
 import type { PasskeyPlacement } from "@core/vault/passkey";
 import { type EncryptedEntry, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
@@ -175,7 +175,8 @@ export async function savePlacement(plan: PasskeyPlacement): Promise<void> {
 					const reenc = await encryptEntry(vaultId, JSON.stringify(data));
 					const hlc = await nextStamp();
 					const held = heldVersions(payload, e.id);
-					next.push({ id: e.id, ...reenc, hlc, ...nextCausal({ hlc, bases: [e], held }) });
+					const v = nextVersion({ hlc, bases: [e], held });
+					next.push({ id: e.id, ...reenc, hlc: v.hlc, ...v.causal });
 				}
 				return next;
 			},

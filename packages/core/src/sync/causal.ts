@@ -120,6 +120,23 @@ export function nextCausal(a: {
 	return joined.floor ? { vv, floor: joined.floor } : { vv };
 }
 
+/**
+ * A new write's stamp and history (see nextCausal). A forked write is stamped with its fork key as
+ * the node, so a copy an older build strips of its vv still names the writer key its descendants
+ * and deletes recorded; otherwise that copy would claim, LWW-style, versions it never saw.
+ */
+export function nextVersion(a: {
+	hlc: Hlc;
+	bases: readonly Versioned[];
+	held: readonly Versioned[];
+}): { hlc: Hlc; causal: Causal } {
+	const causal = nextCausal(a);
+	const writer = writerOf({ hlc: a.hlc, ...causal });
+	if (writer === a.hlc.node) return { hlc: a.hlc, causal };
+	const hlc = { ...a.hlc, node: writer };
+	return { hlc, causal: { ...causal, vv: { ...causal.vv, [writer]: hlc } } };
+}
+
 /** Whether any stamp a version carries is implausibly far in the future. */
 export function isFutureVersion(v: Versioned, now: number = Date.now()): boolean {
 	if (isFutureStamp(v.hlc, now)) return true;
