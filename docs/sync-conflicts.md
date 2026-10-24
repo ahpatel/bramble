@@ -1,6 +1,6 @@
 # Sync conflicts: keep every edit, then merge fields (plan)
 
-**Status:** not started. The prerequisite (a use no longer restamps an entry) landed 2026-10-23.
+**Status:** Phase A built 2026-10-23 (all targets share the core; not yet device-tested, and the new UI strings await translation). Phase B not started.
 
 Today two devices that edit the same entry before they sync lose one edit whole and say nothing
 (see "Conflict loser" in [p2p-sync.md](p2p-sync.md)). This plan fixes that in two phases:

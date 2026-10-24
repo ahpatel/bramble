@@ -370,7 +370,7 @@ believing it already found the other. Frequent socket drops used to hide this by
 hello every minute or two — which the keepalive above removes. So the mesh now re-announces every
 30s, first forgetting any peer it holds no transport for (`Mesh.announce`).
 
-## Merge engine: entry-level last-writer-wins
+## Merge engine: entry-level, keeping concurrent versions
 
 ### Stamps
 
@@ -431,11 +431,14 @@ change, not a check moved around.
 
 ### Rules
 
-- **Entry vs entry:** for a given `id`, the greatest HLC wins; the whole losing entry is
-  **discarded** (see "Conflict loser" below). The loser is not kept anywhere.
-- **Entry vs tombstone:** compare the entry's HLC against any tombstone for the same id; the
-  greater wins. A delete is a stamped tombstone, never a silent removal, so a stale copy on
-  another device cannot resurrect it. An edit stamped *after* a delete correctly undeletes.
+- **Entry vs entry:** each version carries its causal history, so a version that descends from
+  another replaces it, and two concurrent versions are both kept: the higher stamp is displayed
+  and the other waits, sealed, in `conflicts` until someone chooses (see "Conflict loser"
+  below and [sync-conflicts.md](sync-conflicts.md)). A version from an older build carries no
+  history and claims, LWW-style, everything stamped before it.
+- **Entry vs tombstone:** a delete is a stamped tombstone with the history of the versions it
+  saw, never a silent removal, so a stale copy on another device cannot resurrect it. A
+  version the delete didn't see survives, flagged as a delete conflict.
 - **A use is not an edit:** recording a use (`touch`) updates `lastUsedAt` without restamping,
   so copying a password on one device can't outrank an edit made on another. `lastUsedAt` is
   therefore per-device until the entry's next edit carries it.
@@ -457,14 +460,15 @@ change, not a check moved around.
 
 ### Conflict loser
 
-When two devices edit the same entry, the losing whole-entry version is **dropped**. This is
-the current behaviour, full stop: `mergeReplicas` keeps only the max-HLC record per id and the
-older one is overwritten, and the entry shape (`{id, wrappedDek, dekIv, ciphertext, iv, hlc}`)
-has no slot to stash a prior version. Nothing is kept in the background and nothing is surfaced
-to the user.
+When two devices edit the same entry before they sync, neither version is dropped any more
+(Phase A of [sync-conflicts.md](sync-conflicts.md)). The higher stamp is displayed, the other is
+kept sealed in the payload's `conflicts`, and the entry is badged so the user can compare the
+versions and keep one or both. A resolution is a write superseding every version held, so it
+clears the conflict wherever it syncs. Until every device in a group runs a build with this,
+an older build's edit still wins LWW-style.
 
-**Planned (not built):** keep every concurrent version sealed and surface the conflict, then
-merge field groups inside the crypto core. See [sync-conflicts.md](sync-conflicts.md).
+**Planned (not built):** merging field groups inside the crypto core, so edits to different
+parts of an entry combine on their own (Phase B).
 
 Not to be confused with the **password changelog** ([password-changelog.md](password-changelog.md)),
 which is already built: that keeps superseded passwords from *local* rotations inside the entry
@@ -500,10 +504,9 @@ plaintext, and a conflict loser still drops its rows like any other edit.
   Same-network / same-machine peers connect instantly.
 - **Field-level merge is deferred** (see above, and the plan in
   [sync-conflicts.md](sync-conflicts.md)).
-- **Conflict history + surfacing is deferred.** Today a same-entry conflict silently drops the
-  losing version (see "Conflict loser"). Keeping concurrent versions and showing the conflict
-  are both unbuilt; [sync-conflicts.md](sync-conflicts.md) is the plan. Deletes are the one
-  exception already covered: tombstones mean a delete is never silently lost or resurrected.
+- **Concurrent edits are kept, not merged.** Both versions of a same-entry conflict are kept
+  and shown to the user (see "Conflict loser"); combining them field by field is Phase B of
+  [sync-conflicts.md](sync-conflicts.md).
 
 ## Device management & revocation
 

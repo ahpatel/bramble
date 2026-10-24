@@ -88,5 +88,5 @@ export function harness(now: () => number = () => 1000, node = "device-a") {
 		readDecodedBlob,
 		clock: async () => c,
 	});
-	return { mutations, writes: () => writes, indexCalls };
+	return { mutations, writes: () => writes, indexCalls, crypto, clock: c };
 }

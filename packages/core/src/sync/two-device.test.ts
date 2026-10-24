@@ -1,0 +1,172 @@
+// Two devices end to end: real EntryMutations on each, syncing through applyRemotePayload over
+// createVaultSyncPort, the path every platform's sync takes. See docs/sync-conflicts.md, Phase A.
+
+import { describe, expect, it } from "vitest";
+import type { Entry, EntryData } from "../hooks/useVault";
+import { conflictsOf, type VaultEntries, vaultEntriesFromPayload } from "../vault/entry-mutations";
+import { harness } from "../vault/entry-mutations.harness";
+import { applyRemotePayload, createVaultSyncPort } from "./apply-remote";
+import type { EntriesPayload } from "./entries-payload";
+import { olderBuildMerge } from "./older-build.harness";
+
+type Device = ReturnType<typeof harness>;
+
+const login = (name: string, password = "pw"): EntryData => ({
+	type: "login",
+	name,
+	urls: [],
+	username: "u",
+	password,
+});
+
+/** What the device would load after a write: the decrypted entries plus their sync state. */
+async function load(d: Device): Promise<VaultEntries> {
+	const payload = await d.mutations.readEntriesPayload();
+	const decrypted = payload.entries.map(
+		(e) => ({ id: e.id, ...JSON.parse(e.ciphertext.slice(3)) }) as Entry,
+	);
+	return vaultEntriesFromPayload(payload, decrypted);
+}
+
+/** `to` takes in what `from` holds, as a peer broadcast would deliver it. */
+async function sync(from: Device, to: Device): Promise<void> {
+	const port = createVaultSyncPort({
+		store: to.mutations,
+		crypto: to.crypto,
+		witnessRemote: async (stamps) => {
+			for (const s of stamps) to.clock.witness(s);
+		},
+	});
+	await applyRemotePayload(port, await from.mutations.readEntriesPayload());
+}
+
+async function both(a: Device, b: Device): Promise<void> {
+	await sync(a, b);
+	await sync(b, a);
+}
+
+/** A laptop and a phone sharing one login, in sync. The clock is shared and settable. */
+async function pair() {
+	const time = { now: 1000 };
+	const laptop = harness(() => time.now, "laptop");
+	const phone = harness(() => time.now, "phone");
+	const seeded = await laptop.mutations.add(await load(laptop), login("GitHub"));
+	const id = seeded.entries[0]!.id;
+	await sync(laptop, phone);
+	return { time, laptop, phone, id };
+}
+
+const shown = (s: VaultEntries, id: string) => s.entries.find((e) => e.id === id);
+
+describe("two devices", () => {
+	it("both devices edit one login, sync, and both show the same conflict", async () => {
+		const { time, laptop, phone, id } = await pair();
+		time.now = 2000;
+		await laptop.mutations.update(await load(laptop), id, login("GitHub", "laptop-pw"));
+		time.now = 3000;
+		await phone.mutations.update(await load(phone), id, login("GitHub", "phone-pw"));
+		await both(laptop, phone);
+
+		for (const d of [laptop, phone]) {
+			const s = await load(d);
+			expect(conflictsOf(s).get(id)).toEqual({ versions: 1, deleted: false });
+			expect(shown(s, id)).toMatchObject({ password: "phone-pw" });
+		}
+	});
+
+	it("resolving on one device clears it on the other after a sync", async () => {
+		const { time, laptop, phone, id } = await pair();
+		time.now = 2000;
+		await laptop.mutations.update(await load(laptop), id, login("GitHub", "laptop-pw"));
+		time.now = 3000;
+		await phone.mutations.update(await load(phone), id, login("GitHub", "phone-pw"));
+		await both(laptop, phone);
+
+		time.now = 4000;
+		await laptop.mutations.resolve(await load(laptop), id, {
+			kind: "use",
+			data: login("GitHub", "laptop-pw"),
+		});
+		await sync(laptop, phone);
+
+		const s = await load(phone);
+		expect(conflictsOf(s).size).toBe(0);
+		expect(shown(s, id)).toMatchObject({ password: "laptop-pw" });
+	});
+
+	it("phone deletes while laptop edits: the entry stays, flagged deleted, on both", async () => {
+		const { time, laptop, phone, id } = await pair();
+		time.now = 2000;
+		await laptop.mutations.update(await load(laptop), id, login("GitHub", "laptop-pw"));
+		time.now = 3000;
+		await phone.mutations.remove(await load(phone), id);
+		await both(laptop, phone);
+
+		for (const d of [laptop, phone]) {
+			const s = await load(d);
+			expect(shown(s, id)).toMatchObject({ password: "laptop-pw" });
+			expect(conflictsOf(s).get(id)).toEqual({ versions: 0, deleted: true });
+		}
+	});
+
+	it("laptop edits around its own unresolved conflict and the sibling survives", async () => {
+		const { time, laptop, phone, id } = await pair();
+		time.now = 2000;
+		await laptop.mutations.update(await load(laptop), id, login("GitHub", "laptop-pw"));
+		time.now = 3000;
+		await phone.mutations.update(await load(phone), id, login("GitHub", "phone-pw"));
+		await both(laptop, phone);
+
+		// The laptop's own edit lost the display; it edits the phone's version without resolving.
+		time.now = 4000;
+		await laptop.mutations.update(await load(laptop), id, login("GitHub Work", "phone-pw"));
+		await both(laptop, phone);
+
+		for (const d of [laptop, phone]) {
+			const s = await load(d);
+			expect(shown(s, id)).toMatchObject({ name: "GitHub Work" });
+			expect(conflictsOf(s).get(id)).toEqual({ versions: 1, deleted: false });
+			const [sibling] = s.conflicts;
+			expect(sibling!.ciphertext).toContain("laptop-pw");
+		}
+	});
+
+	it("an older build in the group degrades to LWW and never crashes", async () => {
+		const { time, laptop, phone, id } = await pair();
+		time.now = 2000;
+		await laptop.mutations.update(await load(laptop), id, login("GitHub", "laptop-pw"));
+		time.now = 3000;
+		await phone.mutations.update(await load(phone), id, login("GitHub", "phone-pw"));
+		await both(laptop, phone);
+
+		// An older build merges last-writer-wins over what it can parse, then edits that.
+		let older: EntriesPayload = olderBuildMerge(
+			{ entries: [], tombstones: [] },
+			await phone.mutations.readEntriesPayload(),
+		);
+		const [current] = older.entries;
+		const edited = {
+			...current!,
+			ciphertext: `ct:${JSON.stringify(login("GitHub", "older-pw"))}`,
+			hlc: { wall: 5000, counter: 0, node: "older" },
+		};
+		older = olderBuildMerge(older, { entries: [edited], tombstones: [] });
+		expect(older.conflicts).toBeUndefined();
+
+		const port = (to: Device) =>
+			createVaultSyncPort({
+				store: to.mutations,
+				crypto: to.crypto,
+				witnessRemote: async () => {},
+			});
+		await applyRemotePayload(port(laptop), older);
+		await applyRemotePayload(port(phone), older);
+
+		for (const d of [laptop, phone]) {
+			const s = await load(d);
+			// Its write claims everything stamped before it, the way LWW always has.
+			expect(shown(s, id)).toMatchObject({ password: "older-pw" });
+			expect(conflictsOf(s).size).toBe(0);
+		}
+	});
+});
