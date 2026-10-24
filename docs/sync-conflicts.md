@@ -21,6 +21,14 @@ and stamp may disagree on (`sync/vault-merge.ts`).
 
 ## Phase A: keep the losing version, show the conflict
 
+### Prerequisite: a breach refresh is not an edit either
+
+Opening a login whose breach status is over a week old re-checks it and saves the result through
+`updateEntry` (`EntryDetailRoute`), which restamps the entry exactly as `touch` used to. Today that
+lets viewing a login on one device overwrite an edit made on another; under Phase A it would raise
+a conflict nobody caused. The refresh must write `breach` without restamping, making it per-device
+like `lastUsedAt`.
+
 ### Telling a conflict from an ordinary edit
 
 LWW replaces a version every time anything is edited, so "the loser" is usually just the
@@ -28,65 +36,169 @@ previous version. A conflict is a loser that is **concurrent** with the winner, 
 cannot tell the two apart: device B holding an old version S1 that receives A's S3 (edited S1 to
 S2 to S3) must not see S1 as a conflict.
 
-So each envelope gains a **version vector**: `vv: Record<nodeId, Hlc>`, the stamp of the last edit
-each device made in this entry's lineage. An edit sets `vv = { ...base.vv, [self]: newStamp }`.
-Version X is an ancestor of Y iff `Y.vv >= X.vv` component-wise; otherwise they are concurrent. The
-vector is bounded by the number of devices that ever edited the entry.
+So each version carries its **causal history**, `H(V)`, in two parts:
+
+- `vv: Record<writerId, Hlc>`: per writer, the stamp of its latest event in V's history.
+- `floor?: Hlc`: every event stamped at or before it is in V's history. Only lineages that pass
+  through a version written by an older build have one (see "Older builds" below).
+
+A version's own event is `(writer, hlc)`, where `writer` is the `vv` key whose value equals the
+version's `hlc`. **X is an ancestor of Y iff X's own event is in H(Y)**: `X.hlc <= Y.floor`, or
+`X.hlc <= Y.vv[writer(X)]`. Two copies with the same id and `hlc` are the same version.
+
+A write's history is the union of the histories of the versions it supersedes (its **bases**)
+plus its own event: `vv` is the component-wise max of the bases' `vv`s plus `{ [writer]: hlc }`,
+and `floor` is the max of the bases' floors.
+
+**Each writer's events on one entry must form a chain**: every event a writer makes descends from
+all its earlier ones on that entry. The per-writer max is only exact under that rule. The rule
+breaks when a device edits the displayed version while its own earlier edit sits in an unresolved
+sibling. A naive `vv` would then claim the new version descends from that sibling, and the merge
+would prune it. So the writer key is the device's node id unless the bases don't contain that
+key's latest event on this entry. In that case the device writes under a **fork key**,
+`<nodeId>~<formatHlc(stamp)>`, reusing an existing fork key of its own whose latest event the bases
+do contain. A writer's latest event on an entry is the max over every version held for that id
+(displayed, sibling and tombstone) of `vv[key]`, plus the own event of any version with no `vv`.
+
+The vector stays small: one key per device that ever edited the entry, plus a fork key for each
+time a device edited around an unresolved conflict.
+
+**A writer key must belong to one sequential writer.** Node ids are random per device and per
+vault (`ensureDeviceId`), so two devices never share one. The extension is the exception: its
+popup and its background service worker each build a clock from the same device id, and both
+write entries. A corner-prompt update landing while the popup holds a stale copy would make two
+concurrent versions under one key, and the per-writer max would call the earlier one an ancestor
+and prune it. So the background clock uses its own node, `<deviceId>#bg`. The extension's UI
+contexts (popup, options page, pop-out) still share the device's node. Two of them editing the
+same entry at the same instant can still lose one edit, as today; that race needs two windows
+open on one entry.
+
+### Which versions a write supersedes
+
+| Write | Bases |
+|-------|-------|
+| `add`, `importMany`, a new corner-prompt or passkey login | none |
+| `update`, `setArchived`, `setTags`, a corner-prompt update, a passkey placement | the displayed version only; siblings stay |
+| `remove`, `removeMany` | every live version and the tombstone: deleting the entry you see deletes the entry, but edits you haven't received yet still come back as a delete conflict |
+| a resolution | every live version and the tombstone |
+| `touch`, the breach refresh | not a new version: the displayed version keeps its stamp |
 
 ### Siblings, not a loser list
 
-An entry id holds a set of **siblings**: the versions no other held version descends from (the
-maximal elements under the vv order). The highest stamp is the one displayed and autofilled, as
-today; the rest are conflicts to show. Merging is union, then drop any sibling another one
-descends from. That is a multi-value register (Dynamo/Riak siblings), so it is commutative,
-associative and idempotent by construction, and devices that detect the same conflict converge on
-the same set.
+An entry id holds a set of **siblings**: the versions no other held version descends from. That
+is a multi-value register (Dynamo/Riak siblings). Merging is union, then prune **top-down by
+stamp**: walk the versions from the highest stamp down, and keep one unless it is dead under the
+tombstone or is an ancestor of a version already kept. On histories built by the rules above,
+"ancestor" is inclusion of histories, a partial order, so this equals dropping every ancestor,
+and the merge is commutative, associative and idempotent. Pruning is also what makes it
+associative: without it, merging (X, Y) then Z keeps X even when Z descends from X, while
+merging (X, Z) then Y doesn't. Property tests over random histories and every merge order are
+required, and the simulator must check `isAncestor` against the true ancestry it tracked.
 
-The pruning step is what makes it associative. Without it, merging (X, Y) then Z keeps X as a
-conflict even when Z descends from X, while merging (X, Z) then Y does not. Property tests for
-every merge order are required, not optional.
+Top-down matters once older builds are involved, where legacy claims make "ancestor"
+non-transitive. Suppose an older build relays a stripped copy of X after X was edited into R
+elsewhere, and a sibling Y stamped below X is still held. Dropping every ancestor at once lets
+the stale copy's claim prune Y, a version it never saw. Top-down prunes the stale copy under R
+first, so it never gets the chance.
+
+Deletes merge into **one tombstone per id**: `hlc` is the max, `vv` the component-wise max, and
+`floor` the max. By the chain rule its history is exactly the union of the deletes' histories.
+One exception: a legacy tombstone whose own event is already in the other tombstone's history
+adds nothing. It is a stripped copy of a delete already known (an older build relaying an old
+tombstone after a later delete raised the stamp), and joining its claim would kill every
+delete-conflicted edit stamped below it.
+
+- A live version is **dead** iff its own event is in the tombstone's history.
+- A tombstone is **superseded** iff some surviving live version's history contains all of it:
+  `T.floor <= E.floor`, and every `T.vv[k] <= max(E.vv[k], E.floor)`. A superseded tombstone stays
+  in the graveyard, as tombstones do today, but raises nothing.
+
+The highest-stamp surviving live version is displayed and autofilled, exactly as today; the other
+surviving live versions are **conflicts**. An entry also has a **delete conflict** when it is
+visible and its tombstone is not superseded ("deleted on your laptop, edited on your phone",
+decided 2026-10-23). It stays visible until someone chooses: hiding it would make the edit just
+as invisible as dropping it. There's no cap: siblings only come from real concurrency, and
+capping them would silently drop data.
 
 ### Wire format
 
-- `vv` on each envelope (outer index, so the merge stays blind).
-- `conflicts: EncryptedEntry[]` on the payload: the non-displayed siblings, still sealed.
-- Resolution writes a new edit whose `vv` joins every sibling it resolves, so they all become
-  ancestors and prune away. No separate resolution tombstone is needed.
+- `vv` and `floor` on each `EncryptedEntry` and each tombstone, in the outer index, so choosing
+  versions stays blind.
+- `conflicts: EncryptedEntry[]` on the payload: the surviving live versions that aren't displayed,
+  still sealed.
+- No separate resolution record: a resolution is a write whose bases are all the siblings.
 
-Both are new outer fields, and `EntriesPayloadSchema`/`EncryptedEntrySchema` are plain
-`z.object`s, so older builds strip them on read and on write-back. The synced-settings rule
-carries over ([synced-settings.md](synced-settings.md)): **absent means no opinion**. A version
-with no `vv` (written by an older build) is ordered by stamp alone and never flagged, which is
-exactly today's behaviour, so a mixed mesh degrades to LWW rather than corrupting anything.
+`vv` values are full `Hlc` objects, like every other stamp in the payload. That costs roughly 120
+bytes per writer per edited entry, a 7 to 17% larger outer payload for a vault whose entries have
+all been edited once. Entries nobody has touched since the upgrade carry nothing.
 
-`VaultEntries` must carry `vv` and the siblings, and `buildPayload` must thread them through, or
-the next local write erases them. This is the same trap the settings map hit in the extension's
-background writes; every write site needs a test that the new fields survive it.
+### Older builds
+
+`EntriesPayloadSchema`, `EncryptedEntrySchema` and `TombstoneSchema` are plain `z.object`s, so
+older builds strip `vv`, `floor` and `conflicts` on read and on write-back. The synced-settings
+rule carries over ([synced-settings.md](synced-settings.md)): an absent `conflicts` means no
+opinion, never "resolved".
+
+A version with no `vv` is treated as an LWW claim: its history is **every event stamped at or
+before its `hlc`** (`vv = {}`, `floor = hlc`), and its writer is `hlc.node`. That is what an older
+build means by a write. Unlike "compare legacy versions by stamp", it keeps ancestry a single
+consistent order. A newer build editing a legacy base inherits the claim as its `floor`.
+
+- **Same-stamp copies.** A legacy copy with the same id and `hlc` as a version that has a `vv` is
+  the same version stripped, so the merge keeps the `vv` copy and ignores the copy's claim. That
+  matters for tombstones in particular: joining a stripped copy's floor in would silently turn
+  every delete conflict back into "the delete wins".
+- **What degrades.** An older build's genuine edit still dominates every version stamped before
+  it, which is exactly today's LWW. In a mixed group the outcome can then depend on merge order,
+  but every device converges once gossip settles. Nothing is worse than today.
+- **Equivalence.** `payloadsEquivalent` must count a `vv` copy as different from a stripped one,
+  or a device keeps its stripped copy forever and makes LWW claims it doesn't need to.
+
+### Everything that carries the payload
+
+`VaultEntries` must carry each version's `vv`/`floor`, each tombstone's, and the conflicts, and
+`buildPayload` must thread them through, or the next local write erases them. That is the trap
+the settings map hit in the extension background, so every write site needs a test that the new
+fields survive it. The sites are:
+
+- `entry-mutations.ts` and `useVault`'s load path. The load path also canonicalizes the stored
+  payload by merging it with an empty one before decrypting. A quarantine that set aside an
+  undecryptable displayed version can otherwise leave its siblings with nothing displayed.
+- The extension's background writers (`corner-prompt.ts`, `passkey-store.ts`, through
+  `vault-io.ts`), which must also witness the conflicts' stamps before writing.
+- The merge-side admission check, which must also test-decrypt incoming conflicts, and the clock,
+  which must witness their stamps and every `vv` component.
+- The remote sanitizer, which must drop any version whose `hlc`, `floor` or any `vv` component is
+  future-dated.
+- `sealAll`. Conflicts are sealed under DEKs wrapped by the current vault key, so rotating the key
+  must re-seal them as well.
 
 ### UI
 
-A conflict badge on the entry, and a compare view that decrypts the siblings on demand
-(`decryptEntries` already exists). The view offers three actions:
+A conflict badge on the entry in the list, and on the detail screen a banner with a compare view
+that decrypts the siblings on demand (`decryptEntries` already exists). Each version renders
+through its type's existing `mode.Detail` body, with a copy handler that doesn't record a use. It
+offers:
 
-- **Keep this one.** Dismisses the siblings.
-- **Use the other.** Writes it as a new edit.
-- **Keep both.** The sibling becomes a new entry with a new id.
+- **Keep this one.** Resolves with the displayed content.
+- **Use this one.** On a sibling: resolves with that sibling's content, through the same
+  password-changelog rule as an edit.
+- **Keep both.** The sibling becomes a new entry with a new id, and the original resolves with
+  the displayed content.
 
-The UI is shared across targets; run `pnpm i18n:extract` for the new strings.
+A delete conflict offers **Keep it** and **Delete it**. When an entry has both sibling versions
+and a delete conflict, the banner says both and the compare view also offers **Delete it**. The
+UI is shared across targets; run `pnpm i18n:extract` for the new strings.
 
-### Edit vs delete (decided 2026-10-23: a conflict)
+Known limits, not built in Phase A:
 
-Tombstones are plain stamps today, so an edit concurrent with a delete loses silently whenever
-the delete is later. In Phase A a tombstone gets a `vv` too and takes part as a sibling: a delete
-that descends from an edit wins outright, as now, but a delete concurrent with an edit leaves both
-("deleted on your laptop, edited on your phone"). The entry stays visible with the edit and a
-conflict badge until someone chooses to delete it or keep it, because hiding it would make the
-edit just as invisible as dropping it.
-
-### No cap
-
-Siblings only come from real concurrency, so they stay small, and capping them would silently
-drop data. They stay uncapped.
+- **Fill only sees the displayed version.** Autofill and every passkey lookup (extension
+  background, Android `VaultReader`) read the displayed version only. A passkey created inside a
+  version that lost the display can't be used until the conflict is resolved, but today it's
+  lost outright.
+- **Some exports leave the other versions out.** A selection export (.bramble) and a KeePass
+  export include only the displayed version. The export dialogs say how many conflicted entries
+  that affects. A full backup is the sealed vault and keeps everything.
 
 ### Effort
 
@@ -134,6 +246,9 @@ The remaining fields merge as follows:
   per-item treatment as `passkeys`.
 
 ### Group stamps
+
+This section predates the Phase A history model. "The common ancestor" and `meet` must be
+re-derived against floors and fork keys before Phase B starts.
 
 Each group carries the stamp of its last change, stored **inside the encrypted entry JSON** as
 `groupStamps`. Older builds keep unknown keys ([vault-format.md](vault-format.md), "Forward
