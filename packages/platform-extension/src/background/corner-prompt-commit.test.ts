@@ -403,3 +403,79 @@ describe("commit: CORNER_FLUSH_HANDOFF after unlock", () => {
 		expect(find.resp.data.logins.map((l: any) => l.secondary)).toContain("bob");
 	});
 });
+
+// Background writes must record which version they supersede, under their own writer key, or a
+// conflicting version elsewhere is pruned as if it had been seen. See docs/sync-conflicts.md.
+describe("commit: background writes record history", () => {
+	const seed = { wall: 1, counter: 0, node: "seed" };
+	const SHOWN = {
+		id: "login1",
+		ciphertext: "c",
+		iv: "i",
+		wrappedDek: "w",
+		dekIv: "d",
+		hlc: seed,
+		vv: { seed },
+	};
+	const other = { wall: 1, counter: 0, node: "other" };
+	const SIBLING = { ...SHOWN, ciphertext: "s", hlc: other, vv: { other } };
+
+	async function withConflict(): Promise<{ bg: BackgroundHarness; written: string[] }> {
+		const written: string[] = [];
+		const bg = await loadBackground({
+			sessionSeed: { [TEST_VEK_KEY]: "SEED" },
+			offscreen: (msg) => {
+				if (msg.type === "CRYPTO_DECRYPT_OUTER") {
+					return {
+						ok: true,
+						data: JSON.stringify({ entries: [SHOWN], tombstones: [], conflicts: [SIBLING] }),
+					};
+				}
+				if (msg.type === "CRYPTO_ENCRYPT_OUTER") written.push(msg.payload.plaintext);
+				return commitOffscreen(msg);
+			},
+		});
+		await setAutofillIndex(bg, [LOGIN]);
+		return { bg, written };
+	}
+
+	it("a corner-prompt update supersedes the displayed version only", async () => {
+		const { bg, written } = await withConflict();
+		const cap = await bg.send(
+			{ type: "CORNER_PROMPT_CAPTURE", payload: { username: "alice", password: "ROTATED" } },
+			pageSender("example.com", 5),
+		);
+		await bg.send(
+			{
+				type: "CORNER_PROMPT_RESPONSE",
+				payload: { promptId: cap.resp.data.promptId, action: "update", chosenEntryId: "login1" },
+			},
+			pageSender("example.com", 5),
+		);
+		const payload = JSON.parse(written[written.length - 1] as string);
+		const env = payload.entries.find((e: { id: string }) => e.id === "login1");
+		expect(env.hlc.node).toMatch(/#bg$/);
+		expect(env.vv).toEqual({ seed, [env.hlc.node]: env.hlc });
+		expect(payload.conflicts).toEqual([SIBLING]);
+	});
+
+	it("a new corner-prompt login gets its own vv", async () => {
+		const { bg, written } = await withConflict();
+		const cap = await bg.send(
+			{ type: "CORNER_PROMPT_CAPTURE", payload: { username: "bob", password: "secret" } },
+			pageSender("newsite.com", 5),
+		);
+		await bg.send(
+			{
+				type: "CORNER_PROMPT_RESPONSE",
+				payload: { promptId: cap.resp.data.promptId, action: "save" },
+			},
+			pageSender("newsite.com", 5),
+		);
+		const payload = JSON.parse(written[written.length - 1] as string);
+		const env = payload.entries.find((e: { id: string }) => e.id !== "login1");
+		expect(env.hlc.node).toMatch(/#bg$/);
+		expect(env.vv).toEqual({ [env.hlc.node]: env.hlc });
+		expect(payload.conflicts).toEqual([SIBLING]);
+	});
+});

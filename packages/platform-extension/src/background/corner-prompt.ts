@@ -7,6 +7,7 @@ import type {
 	SaveLoginPrompt,
 	UpdateLoginPrompt,
 } from "@core/adapters/autofill";
+import { heldVersions, nextCausal } from "@core/sync";
 import { type EncryptedEntry, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
 import { type DedupeOutcome, effectivePort, hostnameMatches, registrableDomain } from "../dedupe";
 import { api } from "../platform-api";
@@ -146,7 +147,13 @@ async function commitCornerSave(
 	}
 	const encEntry = encryptedEntryResp.data as Omit<EncryptedEntry, "id" | "hlc">;
 	const id = globalThis.crypto.randomUUID();
-	const newEnc: EncryptedEntry = { id, ...encEntry, hlc: await nextStamp() };
+	const hlc = await nextStamp();
+	const newEnc: EncryptedEntry = {
+		id,
+		...encEntry,
+		hlc,
+		...nextCausal({ hlc, bases: [], held: [] }),
+	};
 	const outer = await reencryptOuterWithEntryChange(
 		blob,
 		async (entries) => [...entries, newEnc],
@@ -189,7 +196,7 @@ async function commitCornerUpdate(capture: PendingCapture, chosenEntryId: string
 	const blob = await readAndDecodeVault(vaultId);
 	const outer = await reencryptOuterWithEntryChange(
 		blob,
-		async (entries) => {
+		async (entries, payload) => {
 			const next: EncryptedEntry[] = [];
 			for (const enc of entries) {
 				if (enc.id !== chosenEntryId) {
@@ -221,7 +228,9 @@ async function commitCornerUpdate(capture: PendingCapture, chosenEntryId: string
 					throw new Error(`reencrypt entry failed: ${reenc.error ?? "no data"}`);
 				}
 				const fresh = reenc.data as Omit<EncryptedEntry, "id" | "hlc">;
-				next.push({ id: enc.id, ...fresh, hlc: await nextStamp() });
+				const hlc = await nextStamp();
+				const held = heldVersions(payload, enc.id);
+				next.push({ id: enc.id, ...fresh, hlc, ...nextCausal({ hlc, bases: [enc], held }) });
 			}
 			return next;
 		},

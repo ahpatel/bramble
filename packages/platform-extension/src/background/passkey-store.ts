@@ -7,7 +7,7 @@
 
 import type { PasskeyAssertion, PasskeyRegistration } from "@core/adapters/crypto";
 import type { Entry, LoginEntryData } from "@core/hooks/useVault";
-import { decodeEntriesPayload } from "@core/sync";
+import { decodeEntriesPayload, heldVersions, nextCausal } from "@core/sync";
 import { normalizeEntryData } from "@core/vault/entry-normalize";
 import type { PasskeyPlacement } from "@core/vault/passkey";
 import { type EncryptedEntry, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
@@ -130,7 +130,8 @@ export async function savePlacement(plan: PasskeyPlacement): Promise<void> {
 	if (plan.kind === "create") {
 		const enc = await encryptEntry(vaultId, JSON.stringify(plan.data satisfies LoginEntryData));
 		const id = globalThis.crypto.randomUUID();
-		const newEnc: EncryptedEntry = { id, ...enc, hlc: await nextStamp() };
+		const hlc = await nextStamp();
+		const newEnc: EncryptedEntry = { id, ...enc, hlc, ...nextCausal({ hlc, bases: [], held: [] }) };
 		const outer = await reencryptOuterWithEntryChange(
 			base,
 			async (entries) => [...entries, newEnc],
@@ -149,7 +150,7 @@ export async function savePlacement(plan: PasskeyPlacement): Promise<void> {
 	} else {
 		const outer = await reencryptOuterWithEntryChange(
 			base,
-			async (entries) => {
+			async (entries, payload) => {
 				const next: EncryptedEntry[] = [];
 				for (const e of entries) {
 					if (e.id !== plan.entryId) {
@@ -172,7 +173,9 @@ export async function savePlacement(plan: PasskeyPlacement): Promise<void> {
 					const data = JSON.parse(dec.data);
 					data.passkeys = plan.passkeys;
 					const reenc = await encryptEntry(vaultId, JSON.stringify(data));
-					next.push({ id: e.id, ...reenc, hlc: await nextStamp() });
+					const hlc = await nextStamp();
+					const held = heldVersions(payload, e.id);
+					next.push({ id: e.id, ...reenc, hlc, ...nextCausal({ hlc, bases: [e], held }) });
 				}
 				return next;
 			},

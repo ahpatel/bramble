@@ -89,4 +89,50 @@ describe("a background entry write preserves the rest of the payload", () => {
 		expect(written.entries).toHaveLength(1); // the save really happened
 		expect(written.settings).toEqual(SETTINGS); // and did not cost the settings
 	});
+
+	it("keeps conflicts when the corner prompt saves a login", async () => {
+		const stamp = { wall: 1, counter: 0, node: "other" };
+		const SIBLING = {
+			id: "x",
+			ciphertext: "s",
+			iv: "i",
+			wrappedDek: "w",
+			dekIv: "d",
+			hlc: stamp,
+			vv: { other: stamp },
+		};
+		const encrypted: string[] = [];
+		const offscreen = (msg: Record<string, any>): OffscreenResponse => {
+			switch (msg.type) {
+				case "CRYPTO_DECRYPT_OUTER":
+					return {
+						ok: true,
+						data: JSON.stringify({ entries: [], tombstones: [], conflicts: [SIBLING] }),
+					};
+				case "CRYPTO_ENCRYPT":
+					return { ok: true, data: { ciphertext: "c", iv: "i", wrappedDek: "w", dekIv: "d" } };
+				case "CRYPTO_ENCRYPT_OUTER":
+					encrypted.push(msg.payload.plaintext);
+					return { ok: true, data: { iv: "oi", ciphertext: "oc" } };
+				default:
+					return defaultOffscreen(msg);
+			}
+		};
+		const bg = await loadBackground({ sessionSeed: { [TEST_VEK_KEY]: "SEED" }, offscreen });
+		await setAutofillIndex(bg, []);
+		const cap = await bg.send(
+			{ type: "CORNER_PROMPT_CAPTURE", payload: { username: "bob", password: "secret" } },
+			pageSender("newsite.com", 5),
+		);
+		await bg.send(
+			{
+				type: "CORNER_PROMPT_RESPONSE",
+				payload: { promptId: cap.resp.data.promptId, action: "save" },
+			},
+			pageSender("newsite.com", 5),
+		);
+		const written = JSON.parse(encrypted[encrypted.length - 1] as string);
+		expect(written.entries).toHaveLength(1);
+		expect(written.conflicts).toEqual([SIBLING]);
+	});
 });
