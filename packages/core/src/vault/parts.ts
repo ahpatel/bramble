@@ -116,31 +116,46 @@ export function effectivePartStamps(
 /**
  * Stamp a new entry's parts and items against the version it replaces: unchanged parts keep their
  * stamp, changed ones (cleared included) take `hlc`, new items take `hlc`, removed items go.
+ *
+ * A resolution also replaces the versions the user chose against (`superseded`): wherever one of
+ * them disagrees, the kept value is a choice made at `hlc`, so it takes `hlc` too. Keeping the old
+ * stamp would let a later combine with an edit of a dropped version bring its value back.
  */
 export function withPartStamps(
 	next: Entry,
 	prev: { data: EntryData; version: Versioned } | undefined,
 	hlc: Hlc,
+	superseded: readonly EntryData[] = [],
 ): Entry {
 	const nextParts = partsOf(next);
 	const before = prev ? effectivePartStamps(prev.data, prev.version) : undefined;
 	const prevParts = prev ? partsOf(prev.data) : new Map<string, unknown>();
+	const otherParts = superseded.map(partsOf);
 	const partStamps: PartStamps = {};
 	const names = new Set([
 		...nextParts.keys(),
 		...prevParts.keys(),
 		...Object.keys(before?.parts ?? {}),
+		...otherParts.flatMap((parts) => [...parts.keys()]),
 	]);
 	for (const name of names) {
 		const stamp = before?.parts[name];
-		if (stamp && partsEqual(prevParts.get(name), nextParts.get(name))) partStamps[name] = stamp;
-		else if (nextParts.get(name) !== undefined || stamp) partStamps[name] = hlc;
+		const value = nextParts.get(name);
+		const chosen = otherParts.some((parts) => !partsEqual(parts.get(name), value));
+		if (stamp && !chosen && partsEqual(prevParts.get(name), value)) partStamps[name] = stamp;
+		else if (value !== undefined || stamp || chosen) partStamps[name] = hlc;
 	}
 	const itemStamps: ItemStamps = {};
 	for (const list of ITEM_LISTS) {
 		const keys = [...itemsOf(next, list).keys()];
 		if (keys.length === 0) continue;
-		itemStamps[list] = Object.fromEntries(keys.map((k) => [k, before?.items[list][k] ?? hlc]));
+		const otherItems = superseded.map((data) => itemsOf(data, list));
+		itemStamps[list] = Object.fromEntries(
+			keys.map((k) => [
+				k,
+				otherItems.some((items) => !items.has(k)) ? hlc : (before?.items[list][k] ?? hlc),
+			]),
+		);
 	}
 	return { ...next, partStamps, itemStamps, partStampsAt: hlc };
 }

@@ -270,6 +270,13 @@ Every write records, inside the encrypted entry JSON (so older builds keep it; s
 
 `touch` and the breach refresh don't restamp the version, so they don't touch part stamps.
 
+A resolution supersedes every version the user compared, not just the one it keeps. Wherever one
+of them disagrees with the kept content (a part's value, or an item it lacks), keeping that value
+was a choice, so the resolution restamps it at its own stamp. Otherwise the kept value would carry
+an older stamp than the dropped one, and a later combine with an edit of the dropped version
+(which never saw the resolution) would bring the dropped value back. The combine property tests
+found this.
+
 ### Combining two versions
 
 Both versions are siblings, so neither descends from the other. Decisions use the Phase A

@@ -146,6 +146,20 @@ describe("withPartStamps", () => {
 		expect(next.partStamps).toEqual({ name: at(4), notes: at(8), credential: at(4) });
 	});
 
+	it("a part or item a superseded version disagrees with is restamped, as a resolution's choice", () => {
+		const sibling = { ...base, notes: "other", tags: ["work"] } as Entry;
+		const next = withPartStamps(base, { data: base, version: { hlc: s1 } }, at(7), [sibling]);
+		expect(next.partStamps).toEqual({ name: s1, notes: at(7), credential: s1 });
+		expect(next.itemStamps?.tags).toEqual({ work: s1, home: at(7) });
+	});
+
+	it("a part only a superseded version has is recorded as cleared", () => {
+		const { notes: _n, ...plain } = base as Entry & { notes?: string };
+		const kept = { ...plain, partStamps: { name: s1, credential: s1 } } as Entry;
+		const next = withPartStamps(kept, { data: kept, version: { hlc: s1 } }, at(7), [base]);
+		expect(next.partStamps?.notes).toEqual(at(7));
+	});
+
 	it("clearing a field restamps it, so the clear can win a combine", () => {
 		const next = withPartStamps(
 			{ ...base, notes: undefined } as Entry,

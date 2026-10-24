@@ -1080,6 +1080,32 @@ describe("createEntryMutations: part stamps", () => {
 		expect(next.entries[0]!.partStampsAt).toEqual(stampOf(next, id));
 	});
 
+	it("resolve restamps the parts a superseded version disagreed with", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a"));
+		const id = a.entries[0]!.id;
+		const first = stampOf(a, id);
+		t = 2000;
+		const kept = await h.mutations.resolve(a, id, {
+			kind: "keep",
+			superseded: [loginWith("a", { notes: "theirs" })],
+		});
+		expect(kept.entries[0]!.partStamps).toEqual({
+			name: first,
+			credential: first,
+			notes: stampOf(kept, id),
+		});
+		t = 3000;
+		// Keeping both: the chosen version became a copy, so the original chose against it too.
+		const both = await h.mutations.resolve(a, id, {
+			kind: "keepBoth",
+			data: loginWith("b"),
+			superseded: [],
+		});
+		expect(both.entries[0]!.partStamps?.name).toEqual(stampOf(both, id));
+	});
+
 	it("an edit around its own sibling stamps parts with its fork-key stamp", async () => {
 		const h = harness();
 		const a = await h.mutations.add(empty(), loginWith("a"));

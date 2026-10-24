@@ -50,6 +50,19 @@ function edit(prev: Sibling, changes: Record<string, unknown>, stamp: Hlc): Sibl
 	return { envelope: envelope("e", { hlc: stamp, ...causal }), data };
 }
 
+/** A "keep" resolution of `kept` over `dropped`, the way EntryMutations.resolve writes one. */
+function resolveKeep(kept: Sibling, dropped: Sibling[], stamp: Hlc): Sibling {
+	const bases = [kept.envelope, ...dropped.map((d) => d.envelope)];
+	const causal = nextCausal({ hlc: stamp, bases, held: bases });
+	const data = withPartStamps(
+		{ ...kept.data, id: "e" } as Entry,
+		{ data: kept.data, version: kept.envelope },
+		stamp,
+		dropped.map((d) => d.data),
+	);
+	return { envelope: envelope("e", { hlc: stamp, ...causal }), data };
+}
+
 const login = (over: Record<string, unknown> = {}): EntryData =>
 	({ type: "login", name: "GitHub", urls: [], username: "u", password: "p", ...over }) as EntryData;
 const as = (c: Combined | null) => c?.data as Record<string, unknown> | undefined;
@@ -103,6 +116,29 @@ describe("combineSiblings", () => {
 		const removed = edit(tagged, { tags: undefined }, at(25, "b"));
 		const y = edit(removed, { tags: ["a"] }, at(30, "b"));
 		expect(as(await combineSiblings([x, y]))?.tags).toEqual(["a"]);
+	});
+
+	// The user kept one version over another; an edit of the dropped one that never saw the
+	// resolution must not bring the dropped value back.
+	it("a resolution's choice survives a combine with an edit of the version it dropped", async () => {
+		const dropped = edit(base, { notes: "nx" }, at(20, "a"));
+		const kept = edit(base, { password: "py" }, at(30, "b"));
+		const resolved = resolveKeep(kept, [dropped], at(40, "b"));
+		const later = edit(dropped, { name: "nz" }, at(50, "a"));
+		expect(as(await combineSiblings([resolved, later]))).toMatchObject({
+			notes: "n0",
+			password: "py",
+			name: "nz",
+		});
+	});
+
+	it("a tag a resolution kept survives a combine with an edit of the version that removed it", async () => {
+		const tagged = edit(base, { tags: ["a"] }, at(15, "a"));
+		const dropped = edit(tagged, { tags: undefined }, at(20, "a"));
+		const kept = edit(tagged, { password: "py" }, at(30, "b"));
+		const resolved = resolveKeep(kept, [dropped], at(40, "b"));
+		const later = edit(dropped, { name: "nz" }, at(50, "a"));
+		expect(as(await combineSiblings([resolved, later]))?.tags).toEqual(["a"]);
 	});
 
 	it("both edit custom fields: no combine", async () => {

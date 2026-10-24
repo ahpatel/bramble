@@ -564,13 +564,17 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			const causal = new Map(current.causal);
 			stamps.set(id, hlc);
 			causal.set(id, nextCausal({ hlc, bases: held, held }));
-			// The kept content keeps its part stamps; only partStampsAt moves to the new version.
+			// Every version the resolution chose against; keeping both, the copied one too.
+			const against =
+				choice.kind === "keepBoth" ? [...choice.superseded, choice.data] : choice.superseded;
+			// The kept content keeps its part stamps except where a version it replaces disagreed.
 			let entries = current.entries.map((e) =>
 				e.id === id
 					? withPartStamps(
 							withSupersededPasswords(e, choice.superseded, hlc.wall),
 							priorOf(current, id),
 							hlc,
+							against,
 						)
 					: e,
 			);
@@ -592,7 +596,12 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 				const from = choice.version ? { data: choice.data, version: choice.version } : undefined;
 				entries = entries.map((e) =>
 					e.id === id
-						? withPartStamps(withSupersededPasswords(used, choice.superseded, hlc.wall), from, hlc)
+						? withPartStamps(
+								withSupersededPasswords(used, choice.superseded, hlc.wall),
+								from,
+								hlc,
+								against,
+							)
 						: e,
 				);
 			}
