@@ -99,3 +99,16 @@ it("a popped-out form keeps the version the original window opened", async () =>
 	await h.form!.onSave(login("mine"));
 	expect(h.updateEntry).toHaveBeenCalledWith("e", expect.anything(), original);
 });
+
+// A restored popup route can render before the vault's entries load.
+it("a form that mounts before the entries load records the version it then opens", async () => {
+	const opened = version(1000, "p");
+	h.entries = [];
+	h.openVersion.mockReturnValue(undefined);
+	const { rerender } = render(<EntryEditRoute />);
+	h.entries = [login("p")];
+	h.openVersion.mockReturnValue(opened);
+	rerender(<EntryEditRoute />);
+	await h.form!.onSave(login("mine"));
+	expect(h.updateEntry).toHaveBeenCalledWith("e", expect.anything(), opened);
+});

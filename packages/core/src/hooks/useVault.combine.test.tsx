@@ -152,3 +152,21 @@ it("a load whose combine fails still opens, with the conflict kept", async () =>
 	expect(state().entries[0]).toMatchObject({ notes: "ny", password: "p" });
 	expect(disk().conflicts).toHaveLength(1);
 });
+
+// An edit-form save over a version a sync replaced meanwhile leaves the two as siblings; when
+// they changed different parts they combine right away, not at the next sync or unlock.
+it("a save that leaves combinable siblings combines them", async () => {
+	const { platform, disk } = makePlatform({ entries: [NOTES.envelope], tombstones: [] });
+	const { state, actions } = await opened(platform);
+	await waitFor(() => expect(state().entries).toHaveLength(1));
+	const openedVersion = {
+		hlc: base.envelope.hlc,
+		vv: base.envelope.vv,
+		data: { id: "a", ...base.data } as Entry,
+	};
+	const form = { type: "login", name: "A", urls: [], username: "u", password: "px", notes: "n0" };
+	await actions().updateEntry("a", form as never, openedVersion);
+	await waitFor(() => expect(state().entries[0]).toMatchObject({ password: "px", notes: "ny" }));
+	expect(state().conflicts.size).toBe(0);
+	expect(disk().conflicts).toBeUndefined();
+});

@@ -640,6 +640,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			const { blob } = await readDecodedBlob();
 			if (blob.entriesCiphertext.length === 0) {
 				vaultStateRef.current = emptyVaultSyncState();
+				latestRef.current = { ...latestRef.current, entries: [] };
 				setConflicts(NO_CONFLICTS);
 				setSyncedSettings(undefined);
 				setEntries([]);
@@ -745,7 +746,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			}
 			const loaded = vaultEntriesFromPayload(payload, decrypted);
 			const { entries: _entries, ...syncState } = loaded;
+			// Stamps and entries change together, as in commitEntries: a write or an opened version
+			// read before the render lands would otherwise pair new stamps with old content.
 			vaultStateRef.current = syncState;
+			latestRef.current = { ...latestRef.current, entries: decrypted };
 			setConflicts(conflictsOf(loaded));
 			setEntries(decrypted);
 			await publishIndex(toAutofillIndex(decrypted), indexLease);
@@ -1230,9 +1234,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 		return data && hlc ? { hlc, ...vaultStateRef.current.causal.get(id), data } : undefined;
 	}, []);
 	const updateEntry = useCallback(
-		async (id: string, data: EntryData, opened?: OpenedVersion) =>
-			commitEntries(await mutations.update(snapshotEntries(), id, data, opened)),
-		[mutations, snapshotEntries, commitEntries],
+		async (id: string, data: EntryData, opened?: OpenedVersion) => {
+			const next = await mutations.update(snapshotEntries(), id, data, opened);
+			commitEntries(next);
+			// A save that left siblings may combine with them: a load combines and writes it back.
+			if (COMBINE_CONCURRENT_EDITS && next.conflicts.some((e) => e.id === id)) {
+				await loadEntries();
+			}
+		},
+		[mutations, snapshotEntries, commitEntries, loadEntries],
 	);
 	const deleteEntry = useCallback(
 		async (id: string) => commitEntries(await mutations.remove(snapshotEntries(), id)),

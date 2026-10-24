@@ -1,7 +1,7 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { usePrefs } from "../../hooks/usePrefs";
-import { type EntryData, useVault } from "../../hooks/useVault";
+import { type EntryData, type OpenedVersion, useVault } from "../../hooks/useVault";
 import { checkPasswordBreach } from "../../util/pwned";
 import { getEntryMode } from "../entry-modes";
 import { usePopOut } from "../hooks/usePopOut";
@@ -18,8 +18,14 @@ export function EntryEditRoute() {
 	const { registerDraftGetter, takeInitialDraft } = usePopOut();
 	// Pop-out draft takes precedence over the stored entry; consumed once on mount.
 	const [draft] = useState(() => readEditDraft(takeInitialDraft()));
-	// The version the form opened, which the save supersedes; a pop-out keeps the original's.
-	const [opened] = useState(() => draft?.opened ?? openVersion(entryId));
+	const stored = entries.find((e) => e.id === entryId);
+	// The version the form opened, which the save supersedes: a pop-out keeps the original's,
+	// otherwise it's taken on the first render the entry exists, the one the form's values come from.
+	const openedRef = useRef<{ version?: OpenedVersion } | null>(
+		draft?.opened ? { version: draft.opened } : null,
+	);
+	if (openedRef.current === null && stored) openedRef.current = { version: openVersion(entryId) };
+	const opened = openedRef.current?.version;
 	const registerDraft = useCallback(
 		(getter: (() => EntryFormDraft) | null) =>
 			registerDraftGetter(getter && ((): EditDraft => ({ values: getter(), opened }))),
@@ -28,7 +34,6 @@ export function EntryEditRoute() {
 	// An authenticator key routed here from the TOTP setup screen. Seeded into the form
 	// rather than written: an OS handoff never saves on its own. See docs/totp-uri-handler.md.
 	const [handedTotp] = useState(() => takeTotpForEntry(entryId));
-	const stored = entries.find((e) => e.id === entryId);
 
 	if (!stored) return null;
 
