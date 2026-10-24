@@ -4,11 +4,15 @@ import { Plural, Trans } from "@lingui/react/macro";
 import { FileDown } from "lucide-react";
 import { usePlatform } from "../../context/PlatformContext";
 import { sealPortableVaultFile } from "../../export/portable-vault";
+import { useVault } from "../../hooks/useVault";
 import { FilePasswordDialog } from "../components/ui/file-password-dialog";
 import type { BulkAction, BulkActionDialogProps } from "./types";
 
 function ExportDialog({ open, onClose, onDone, entries, hiddenCount }: BulkActionDialogProps) {
 	const { crypto, shell } = usePlatform();
+	const { conflicts } = useVault();
+	// Only the shown version goes into the file, so say when there are others it leaves out.
+	const conflicted = entries.filter((e) => (conflicts.get(e.id)?.versions ?? 0) > 0).length;
 
 	const run = async (password: string) => {
 		const bytes = await sealPortableVaultFile(crypto, entries, password);
@@ -47,6 +51,16 @@ function ExportDialog({ open, onClose, onDone, entries, hiddenCount }: BulkActio
 								value={hiddenCount}
 								one="# of them is hidden by the current filter."
 								other="# of them are hidden by the current filter."
+							/>
+						</>
+					)}
+					{conflicted > 0 && (
+						<>
+							{" "}
+							<Plural
+								value={conflicted}
+								one="# of these entries has a sync conflict. Only the version you see is exported."
+								other="# of these entries have a sync conflict. Only the version you see is exported."
 							/>
 						</>
 					)}

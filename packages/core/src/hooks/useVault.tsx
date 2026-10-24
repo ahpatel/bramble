@@ -184,6 +184,7 @@ import { backupTargetsKeyFor } from "../backup/config";
 import { exportToOs } from "../exchange";
 import { toKdbxEntries } from "../export/kdbx";
 import {
+	compareHlc,
 	DEVICE_ID_KEY,
 	decodeEntriesPayload,
 	decodePairingCode,
@@ -191,6 +192,7 @@ import {
 	type EntryConflict,
 	emptyEntriesPayload,
 	ensureDeviceId,
+	type Hlc,
 	type HybridClock,
 	makeClock,
 	mergeEntriesPayload,
@@ -344,6 +346,10 @@ export interface VaultActions {
 	touchEntry(id: string): Promise<void>;
 	/** Save a re-checked breach status on a login without restamping it (see `EntryMutations.setBreach`). */
 	setEntryBreach(id: string, breach: { leaked: boolean; checkedAt: number }): Promise<void>;
+	/** The entry's sibling versions, decrypted, newest first. */
+	readConflictVersions(id: string): Promise<ConflictVersion[]>;
+	/** Resolve the entry's conflict; every version this device holds is superseded. */
+	resolveConflict(id: string, choice: ConflictChoice): Promise<void>;
 	/** The current entries, read synchronously: includes writes committed before their
 	 * render has landed, so sequential mutations see their own earlier writes. */
 	readEntries(): Entry[];
@@ -393,6 +399,18 @@ export interface VaultActions {
 
 /** The full vault API: reactive state plus actions. */
 export interface UseVault extends VaultState, VaultActions {}
+
+/** One sibling version of an entry, decrypted for the compare view. */
+export interface ConflictVersion {
+	hlc: Hlc;
+	data: EntryData;
+}
+
+/** A resolution as the UI states it: a sibling is named by its stamp. */
+export type ConflictChoice =
+	| { kind: "keep" }
+	| { kind: "use"; hlc: Hlc }
+	| { kind: "keepBoth"; hlc: Hlc };
 
 /** Everything a vault's entry state holds besides the decrypted entries. */
 type VaultSyncState = Omit<VaultEntries, "entries">;
@@ -1196,6 +1214,45 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			commitEntries(await mutations.setBreach(snapshotEntries(), id, breach)),
 		[mutations, snapshotEntries, commitEntries],
 	);
+	// Decrypted on demand only: siblings never reach the list, autofill or the index.
+	const readConflictVersions = useCallback(
+		async (id: string): Promise<ConflictVersion[]> => {
+			const siblings = vaultStateRef.current.conflicts
+				.filter((e) => e.id === id)
+				.sort((a, b) => compareHlc(b.hlc, a.hlc));
+			const plaintexts = await crypto.decryptEntries(
+				siblings.map(({ ciphertext, iv, wrappedDek, dekIv }) => ({
+					ciphertext,
+					iv,
+					wrappedDek,
+					dekIv,
+				})),
+			);
+			return siblings.flatMap((e, i) => {
+				const plaintext = plaintexts[i];
+				return plaintext == null
+					? []
+					: [{ hlc: e.hlc, data: normalizeEntryData(JSON.parse(plaintext)) }];
+			});
+		},
+		[crypto],
+	);
+	const resolveConflict = useCallback(
+		async (id: string, choice: ConflictChoice) => {
+			if (choice.kind === "keep") {
+				commitEntries(await mutations.resolve(snapshotEntries(), id, choice));
+				return;
+			}
+			const version = (await readConflictVersions(id)).find(
+				(v) => compareHlc(v.hlc, choice.hlc) === 0,
+			);
+			if (!version) throw new Error(t`That version is no longer here. It may have synced away.`);
+			commitEntries(
+				await mutations.resolve(snapshotEntries(), id, { kind: choice.kind, data: version.data }),
+			);
+		},
+		[mutations, snapshotEntries, commitEntries, readConflictVersions, t],
+	);
 	const readEntries = useCallback((): Entry[] => latestRef.current.entries, []);
 
 	/** Check a password against the slot verifier without unlocking. */
@@ -1786,6 +1843,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			setEntriesTags,
 			touchEntry,
 			setEntryBreach,
+			readConflictVersions,
+			resolveConflict,
 			readEntries,
 			verifyMasterPassword,
 			verifyWithWebauthnKey,
@@ -1825,6 +1884,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			setEntriesTags,
 			touchEntry,
 			setEntryBreach,
+			readConflictVersions,
+			resolveConflict,
 			readEntries,
 			verifyMasterPassword,
 			verifyWithWebauthnKey,

@@ -192,3 +192,31 @@ it("the autofill index holds only displayed versions", async () => {
 	expect(JSON.stringify(indexed)).toContain("shown-pw");
 	expect(JSON.stringify(indexed)).not.toContain("sib-pw");
 });
+
+it("readConflictVersions decrypts every sibling, newest first", async () => {
+	const newer = { ...sealed("sibling", 15, "tablet") };
+	const { platform } = makePlatform({
+		entries: [SHOWN],
+		tombstones: [],
+		conflicts: [SIBLING, newer],
+	});
+	const { actions, state } = await opened(platform);
+	await waitFor(() => expect(state().conflicts.size).toBe(1));
+	const versions = await actions().readConflictVersions("a");
+	expect(versions.map((v) => v.hlc.wall)).toEqual([15, 10]);
+	expect(versions[0]!.data).toMatchObject({ type: "login", password: "sib-pw" });
+});
+
+it("resolveConflict writes the chosen sibling and clears the conflict", async () => {
+	const { platform, disk } = makePlatform({
+		entries: [SHOWN],
+		tombstones: [],
+		conflicts: [SIBLING],
+	});
+	const { actions, state } = await opened(platform);
+	await waitFor(() => expect(state().conflicts.size).toBe(1));
+	await actions().resolveConflict("a", { kind: "use", hlc: SIBLING.hlc });
+	await waitFor(() => expect(state().conflicts.size).toBe(0));
+	expect(state().entries[0]).toMatchObject({ id: "a", password: "sib-pw" });
+	expect(disk().conflicts).toBeUndefined();
+});

@@ -856,3 +856,87 @@ describe("createEntryMutations: version history", () => {
 		expect(conflictsOf(concurrentDelete).get(id)).toEqual({ versions: 0, deleted: true });
 	});
 });
+
+// A resolution supersedes every version held for the entry, siblings and tombstone alike, so the
+// conflict disappears on every device it reaches (docs/sync-conflicts.md).
+describe("createEntryMutations: resolving a conflict", () => {
+	const at = (wall: number, node: string): Hlc => ({ wall, counter: 0, node });
+	const sib = (id: string): EncryptedEntry => ({
+		id,
+		wrappedDek: "w",
+		dekIv: "d",
+		ciphertext: "s",
+		iv: "i",
+		hlc: at(500, "other"),
+		vv: { other: at(500, "other") },
+	});
+	const conflicted = async (
+		h: ReturnType<typeof harness>,
+		data = loginWith("a", { password: "mine" }),
+	) => {
+		const a = await h.mutations.add(empty(), data);
+		const id = a.entries[0]!.id;
+		const state: VaultEntries = {
+			...a,
+			conflicts: [sib(id)],
+			tombstones: new Map([[id, at(400, "z")]]),
+			tombstoneCausal: new Map([[id, { vv: { z: at(400, "z") } }]]),
+		};
+		return { state, id };
+	};
+	const versionOf = (s: VaultEntries, id: string) => ({
+		hlc: s.stamps.get(id)!,
+		...s.causal.get(id),
+	});
+
+	it("keep supersedes every sibling and the tombstone with the displayed content", async () => {
+		const h = harness();
+		const { state, id } = await conflicted(h);
+		expect(conflictsOf(state).get(id)).toEqual({ versions: 1, deleted: true });
+		const next = await h.mutations.resolve(state, id, { kind: "keep" });
+		expect(next.conflicts).toEqual([]);
+		expect(conflictsOf(next).size).toBe(0);
+		expect(next.entries).toEqual(state.entries);
+		expect(containsHistory(versionOf(next, id), sib(id))).toBe(true);
+		expect(next.tombstones.has(id)).toBe(true);
+		const disk = await h.mutations.readEntriesPayload();
+		expect(disk.conflicts).toBeUndefined();
+	});
+
+	it("use writes the sibling's content and keeps the displayed password in the changelog", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const { state, id } = await conflicted(h);
+		t = 2000;
+		const next = await h.mutations.resolve(state, id, {
+			kind: "use",
+			data: loginWith("a", { password: "theirs" }),
+		});
+		const e = next.entries[0]!;
+		expect(e.type === "login" && e.password).toBe("theirs");
+		expect(e.type === "login" && e.passwordChangelog?.map((c) => c.value)).toEqual(["mine"]);
+		expect(e.updatedAt).toBe(2000);
+		expect(next.conflicts).toEqual([]);
+	});
+
+	it("keepBoth adds the sibling as a new entry and resolves the original", async () => {
+		const h = harness();
+		const { state, id } = await conflicted(h);
+		const writes = h.writes();
+		const next = await h.mutations.resolve(state, id, { kind: "keepBoth", data: note("other") });
+		expect(h.writes()).toBe(writes + 1);
+		expect(next.entries.map((e) => e.name)).toEqual(["a", "other"]);
+		expect(next.entries[1]!.id).not.toBe(id);
+		expect(next.conflicts).toEqual([]);
+		expect(conflictsOf(next).size).toBe(0);
+	});
+
+	it("resolve is one write and no-ops for an entry that isn't shown", async () => {
+		const h = harness();
+		const { state, id } = await conflicted(h);
+		const writes = h.writes();
+		await h.mutations.resolve(state, id, { kind: "keep" });
+		expect(h.writes()).toBe(writes + 1);
+		expect(await h.mutations.resolve(state, "nope", { kind: "keep" })).toBe(state);
+	});
+});

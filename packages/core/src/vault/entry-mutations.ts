@@ -57,6 +57,12 @@ export interface VaultEntries {
 	settings?: SyncedSettings;
 }
 
+/** How a conflict resolves: the shown version, a sibling's content, or both as separate entries. */
+export type ResolveChoice =
+	| { kind: "keep" }
+	| { kind: "use"; data: EntryData }
+	| { kind: "keepBoth"; data: EntryData };
+
 export interface EntryMutationsDeps {
 	crypto: Pick<
 		CryptoAdapter,
@@ -92,6 +98,11 @@ export interface EntryMutations {
 		ids: string[],
 		change: { add?: string[]; remove?: string[] },
 	): Promise<VaultEntries>;
+	/**
+	 * Resolve a conflict in one write: a new version superseding every version held for the entry,
+	 * siblings and tombstone alike. `keepBoth` also adds the sibling's content as a new entry.
+	 */
+	resolve(current: VaultEntries, id: string, choice: ResolveChoice): Promise<VaultEntries>;
 	/**
 	 * Record a use (copy/fill): bumps only `lastUsedAt`, coalesced within USE_COALESCE_MS. The
 	 * entry keeps its sync stamp, so the new `lastUsedAt` stays on this device until its next edit.
@@ -512,6 +523,61 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			const causal = new Map(current.causal);
 			causal.set(id, editCausal(current, id, hlc));
 			return persist({ ...current, entries, stamps, causal });
+		},
+
+		resolve: async (current, id, choice) => {
+			const prev = current.entries.find((e) => e.id === id);
+			if (!prev) return current;
+			const c = await clock();
+			const hlc = c.send();
+			const held = heldFor(current, id);
+			const stamps = new Map(current.stamps);
+			const causal = new Map(current.causal);
+			stamps.set(id, hlc);
+			causal.set(id, nextCausal({ hlc, bases: held, held }));
+			let entries = current.entries;
+			if (choice.kind === "use") {
+				const valid = validate(choice.data);
+				// The same changelog rule as an edit: the shown password becomes history.
+				const used = withPasswordChangelog(
+					{
+						id,
+						...valid,
+						createdAt: prev.createdAt ?? valid.createdAt ?? hlc.wall,
+						updatedAt: hlc.wall,
+						lastUsedAt: valid.lastUsedAt ?? prev.lastUsedAt,
+					},
+					prev,
+					hlc.wall,
+				);
+				entries = entries.map((e) => (e.id === id ? used : e));
+			}
+			if (choice.kind === "keepBoth") {
+				const valid = validate(choice.data);
+				const copyHlc = c.send();
+				const copyId = globalThis.crypto.randomUUID();
+				// The sibling is its own prior version, so its changelog carries over.
+				const copy = withPasswordChangelog(
+					{
+						id: copyId,
+						...valid,
+						createdAt: valid.createdAt ?? copyHlc.wall,
+						updatedAt: copyHlc.wall,
+					},
+					{ id: copyId, ...valid },
+					copyHlc.wall,
+				);
+				stamps.set(copyId, copyHlc);
+				causal.set(copyId, nextCausal({ hlc: copyHlc, bases: [], held: [] }));
+				entries = [...entries, copy];
+			}
+			return persist({
+				...current,
+				entries,
+				stamps,
+				causal,
+				conflicts: current.conflicts.filter((e) => e.id !== id),
+			});
 		},
 
 		setSetting: async (current, key, value) => {

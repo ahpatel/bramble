@@ -1,4 +1,4 @@
-import { Trans } from "@lingui/react/macro";
+import { Plural, Trans } from "@lingui/react/macro";
 import { useVault } from "../../../../hooks/useVault";
 import { FilePasswordDialog } from "../../../components/ui/file-password-dialog";
 
@@ -10,7 +10,9 @@ import { FilePasswordDialog } from "../../../components/ui/file-password-dialog"
  * than the format. The .bramble export in the vault list's bulk actions is the lossless route.
  */
 export function KdbxExportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-	const { exportKdbx } = useVault();
+	const { exportKdbx, conflicts } = useVault();
+	// Only the shown version goes into the file, so say when there are others it leaves out.
+	const conflicted = [...conflicts.values()].filter((c) => c.versions > 0).length;
 
 	return (
 		<FilePasswordDialog
@@ -22,6 +24,15 @@ export function KdbxExportDialog({ open, onClose }: { open: boolean; onClose: ()
 					Pick a password for the exported file. It's separate from your master password, and it's
 					the only way to open the file — we don't keep a copy.
 				</Trans>
+			}
+			detail={
+				conflicted > 0 ? (
+					<Plural
+						value={conflicted}
+						one="# entry has a sync conflict. Only the version you see is exported."
+						other="# entries have a sync conflict. Only the version you see is exported."
+					/>
+				) : undefined
 			}
 			submitLabel={<Trans>Export</Trans>}
 			busyLabel={<Trans>Exporting…</Trans>}
