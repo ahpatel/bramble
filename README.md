@@ -94,7 +94,7 @@ What it cannot do yet, and says so rather than failing quietly: Touch ID unlock,
 - **Unlock your way.** Master password, a hardware key (YubiKey, Touch ID, Windows Hello via WebAuthn PRF, in the browser extension), biometrics on mobile, or a recovery code. Use them alongside your password, or turn the password off and make one your only way in.
 - **Recovery codes.** Every vault gets a high-entropy recovery code at setup: a printable backup that unlocks it independently of your master password. Shown once, stored offline, never kept in plaintext. Reset it any time.
 - **TOTP / 2FA codes.** Paste an `otpauth://` URI or bare secret and Bramble generates the six-digit codes.
-- **Peer-to-peer sync.** Mirror your vault directly between your own devices over an end-to-end encrypted connection. No cloud, no relay holding your data.
+- **Peer-to-peer sync.** Mirror your vault directly between your own devices over an end-to-end encrypted connection, [merged entry by entry](#how-sync-works). No cloud, no relay holding your data.
 - **Breach checking.** Optional Have I Been Pwned lookup using k-anonymity, so nothing about your password leaves your machine.
 - **Auto-lock.** Locks after idle time by default (configurable).
 - **Import from the others.** Bring entries over from 1Password, Bitwarden, Proton Pass, LastPass, Enpass, AliasVault, KeePass (KDBX4 key files included), Apple Passwords, or Google Password Manager.
@@ -145,12 +145,28 @@ flowchart TD
 
 Your master password is only ever used to derive keys inside the crypto core, and the KEK and decrypted keys are wiped from memory after use. In storage, only the vault header is readable; everything else is ciphertext.
 
+## How sync works
+
+Pair a device once, and from then on any two of your devices sync whenever both are online and unlocked at the same time. A relay passes them just enough to find each other, then they connect directly (or through a TURN server that forwards the still-encrypted channel when a network blocks a direct link) and merge their vaults.
+
+- **Entry by entry, never the whole vault.** Bramble never replaces one device's vault with another's. Each login, card, note, and key syncs on its own, so if you change your Google password on your phone and add a GitHub login on your laptop, both devices end up with both changes.
+- **The newest edit wins.** Every entry carries a stamp from a hybrid logical clock: the time, a counter, and the device that made the change. When two devices hold different versions of the same entry, the newer stamp wins. Each device always stamps its next change after the newest one it has seen, so a clock that's a few minutes off can't make an old edit win. A device more than five minutes ahead has its changes refused and is told to fix its clock.
+- **The same result everywhere.** The rules give the same answer whatever order your devices sync in, so three devices that each sync with whichever one is nearby still end up with identical vaults.
+- **Entries travel sealed.** Every entry is encrypted on its own, with its own key, and the winning version is copied across exactly as it was encrypted. Picking the winner reads only the stamps.
+- **Deletes stay deleted.** Deleting an entry leaves a tombstone, a small record of the entry's ID and when it was deleted, which syncs like any other change. A device that was offline when you deleted something can't bring it back the next time it connects, and since tombstones are kept for good, neither can one that sat in a drawer for months. Edit an entry *after* it was deleted on another device, though, and that newer edit brings it back.
+
+Two things worth knowing:
+
+- **Edits to the same entry don't combine.** If two devices change the same entry before they sync, the later edit replaces the whole entry, even if the two changed different fields, and the earlier edit is not kept. That's the trade for a merge that never compares plaintext: the winner is picked from the stamps alone. Combining fields would mean decrypting both versions and diffing what's inside them, passwords included.
+- **Both devices need to be online at once.** No server holds changes for a device that's offline, which also means your vault never sits on someone else's server waiting for it. So a phone mostly syncs while the app is open. Leave the [desktop app](#on-your-desktop) in your tray and your other devices always have something to sync with.
+
 ## How it stacks up against KeePass
 
 If you love KeePass, you'll feel at home: your encrypted database, your control, no cloud middleman. Bramble even imports your KDBX4 files. Where it's different:
 
 - **🌐 It meets you where you are.** A browser extension, a desktop app, and native iOS and Android apps, all on one vault. No plugin bridge to wire up between a desktop program and your browser, and no fiddling to get autofill working on your phone.
 - **Autofill just works.** Domain matching and an on-page dropdown in the browser, plus system autofill and passkeys on mobile, built in rather than bolted on.
+- **Sync that merges instead of copying files.** Syncing a `.kdbx` with Syncthing or Dropbox moves the whole file, so when two devices both changed it you get a conflict copy to merge by hand. Bramble [merges entry by entry](#how-sync-works), automatically, so edits to different entries on different devices just combine.
 - **One opinionated, modern build** instead of a sprawl of plugins and forks. Argon2id and AES-256-GCM out of the box.
 - **Modern UI.** KeePass looks like it escaped from 2003 (no disrespect). Bramble is clean and fast, with dark mode and a layout that won't make you wince.
 
