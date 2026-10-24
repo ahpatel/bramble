@@ -406,11 +406,20 @@ export interface ConflictVersion {
 	data: EntryData;
 }
 
-/** A resolution as the UI states it: a sibling is named by its stamp. */
+/**
+ * A resolution as the UI states it: a sibling is named by its stamp, and `seen` lists the stamps
+ * of every sibling the user compared, so a version that synced in meanwhile isn't superseded unseen.
+ */
 export type ConflictChoice =
-	| { kind: "keep" }
-	| { kind: "use"; hlc: Hlc }
-	| { kind: "keepBoth"; hlc: Hlc };
+	| { kind: "keep"; seen: Hlc[] }
+	| { kind: "use"; hlc: Hlc; seen: Hlc[] }
+	| { kind: "keepBoth"; hlc: Hlc; seen: Hlc[] };
+
+/** The entry's versions changed after the user looked at them; show them again before resolving. */
+export class ConflictChangedError extends Error {}
+
+const sameStamps = (a: readonly Hlc[], b: readonly Hlc[]) =>
+	a.length === b.length && a.every((x) => b.some((y) => compareHlc(x, y) === 0));
 
 /** Everything a vault's entry state holds besides the decrypted entries. */
 type VaultSyncState = Omit<VaultEntries, "entries">;
@@ -1239,16 +1248,42 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	);
 	const resolveConflict = useCallback(
 		async (id: string, choice: ConflictChoice) => {
+			const versions = await readConflictVersions(id);
+			const changed = () =>
+				new ConflictChangedError(
+					t`These versions changed while you were comparing them. Have another look.`,
+				);
+			if (
+				!sameStamps(
+					versions.map((v) => v.hlc),
+					choice.seen,
+				)
+			)
+				throw changed();
+			// Every version the kept entry replaces, so its passwords go into the changelog.
+			const siblings = versions.map((v) => v.data);
 			if (choice.kind === "keep") {
-				commitEntries(await mutations.resolve(snapshotEntries(), id, choice));
+				commitEntries(
+					await mutations.resolve(snapshotEntries(), id, { kind: "keep", superseded: siblings }),
+				);
 				return;
 			}
-			const version = (await readConflictVersions(id)).find(
-				(v) => compareHlc(v.hlc, choice.hlc) === 0,
-			);
-			if (!version) throw new Error(t`That version is no longer here. It may have synced away.`);
+			const chosen = versions.find((v) => compareHlc(v.hlc, choice.hlc) === 0);
+			if (!chosen) throw changed();
+			const others = versions.filter((v) => v !== chosen).map((v) => v.data);
+			const shown = latestRef.current.entries.find((e) => e.id === id);
 			commitEntries(
-				await mutations.resolve(snapshotEntries(), id, { kind: choice.kind, data: version.data }),
+				await mutations.resolve(
+					snapshotEntries(),
+					id,
+					choice.kind === "use"
+						? {
+								kind: "use",
+								data: chosen.data,
+								superseded: [...(shown ? [shown] : []), chosen.data, ...others],
+							}
+						: { kind: "keepBoth", data: chosen.data, superseded: others },
+				),
 			);
 		},
 		[mutations, snapshotEntries, commitEntries, readConflictVersions, t],
@@ -1382,8 +1417,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			// From here the old key is gone. Everything below re-derives from plaintext held in
 			// memory, and any failure has to end in a restore.
 			let code: string;
+			let resealed: EncryptedEntry[] = [];
 			try {
-				const sealed = await mutations.sealAll(snapshot, conflictPlaintexts);
+				const { conflicts: resealedConflicts, ...sealed } = await mutations.sealAll(
+					snapshot,
+					conflictPlaintexts,
+				);
+				resealed = resealedConflicts;
 				code = makeRecoveryCode();
 				const withPassword = upsertPasswordSlot(
 					{ ...blob, ...sealed },
@@ -1425,6 +1465,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			// Committed: the file is written and verified. Refreshing the view comes after the
 			// rollback boundary on purpose — failing to re-read entries is a display problem, and
 			// undoing a good rotation over it would invalidate a recovery code the user was shown.
+			// The siblings in memory are still under the old key until that reload, so swap in the
+			// re-sealed ones now, or a failed reload lets the next write put them back on disk.
+			vaultStateRef.current = { ...vaultStateRef.current, conflicts: resealed };
 			await refreshSlotMetadata().catch(() => {});
 			await loadEntries().catch(() => {});
 			return code;

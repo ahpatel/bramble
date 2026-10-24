@@ -1745,6 +1745,22 @@ msgstr "Ist dies Ihr Gerät?"
 msgid "It calls itself \"{0}\". Only the symbols above prove who it is."
 msgstr "Es nennt sich „{0}“. Nur die Symbole oben beweisen, wer es ist."
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "It holds {extra} passkeys the version shown doesn't."
+msgstr ""
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "It holds {shownOnly} passkeys the other version doesn't."
+msgstr ""
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "It holds a passkey the other version doesn't."
+msgstr ""
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "It holds a passkey the version shown doesn't."
+msgstr ""
+
 #: packages/core/src/app/components/ReviewNudgeCard.tsx
 #~ msgid "It's free and open source, and a review is how most people find it. If something is wrong instead, the issue tracker is the place that gets it fixed."
 #~ msgstr "Es ist kostenlos und Open Source, und die meisten Menschen finden es über Bewertungen. Wenn stattdessen etwas nicht stimmt, ist der Issue-Tracker der Ort, an dem es behoben wird."
@@ -1765,6 +1781,10 @@ msgstr "Elemente ({0})"
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Its credentials were entered in another vault, so this one cannot open them. Edit the target and enter them again to back up now."
 msgstr "Die zugehörigen Zugangsdaten wurden in einem anderen Tresor eingegeben, daher kann dieser sie nicht öffnen. Bearbeiten Sie das Ziel und geben Sie sie erneut ein, um jetzt zu sichern."
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Its password is different from the version shown."
+msgstr ""
 
 #: packages/core/src/app/screens/VaultSetup/components/ModeTabs.tsx
 #: packages/core/src/app/screens/VaultSetup/components/SetupHeader.tsx
@@ -3231,8 +3251,8 @@ msgid "That transfer didn't go through."
 msgstr "Diese Übertragung ist fehlgeschlagen."
 
 #: packages/core/src/hooks/useVault.tsx
-msgid "That version is no longer here. It may have synced away."
-msgstr ""
+#~ msgid "That version is no longer here. It may have synced away."
+#~ msgstr ""
 
 #: packages/core/src/app/entry-modes/card.tsx
 msgid "That year is outside the range cards use."
@@ -3297,6 +3317,10 @@ msgstr "Es gibt keinen Reset durch den Anbieter. Merken Sie sich dieses Passwort
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "These destinations belong to the vault you're in. Every vault keeps its own targets and its own backup folder."
 msgstr "Diese Ziele gehören zu dem Tresor, in dem Sie sich befinden. Jeder Tresor verwaltet seine eigenen Ziele und seinen eigenen Sicherungsordner."
+
+#: packages/core/src/hooks/useVault.tsx
+msgid "These versions changed while you were comparing them. Have another look."
+msgstr ""
 
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "They match, approve"

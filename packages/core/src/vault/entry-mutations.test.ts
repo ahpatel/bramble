@@ -911,7 +911,7 @@ describe("createEntryMutations: resolving a conflict", () => {
 		const h = harness();
 		const { state, id } = await conflicted(h);
 		expect(conflictsOf(state).get(id)).toEqual({ versions: 1, deleted: true });
-		const next = await h.mutations.resolve(state, id, { kind: "keep" });
+		const next = await h.mutations.resolve(state, id, { kind: "keep", superseded: [] });
 		expect(next.conflicts).toEqual([]);
 		expect(conflictsOf(next).size).toBe(0);
 		expect(next.entries).toEqual(state.entries);
@@ -926,9 +926,11 @@ describe("createEntryMutations: resolving a conflict", () => {
 		const h = harness(() => t);
 		const { state, id } = await conflicted(h);
 		t = 2000;
+		const theirs = loginWith("a", { password: "theirs" });
 		const next = await h.mutations.resolve(state, id, {
 			kind: "use",
-			data: loginWith("a", { password: "theirs" }),
+			data: theirs,
+			superseded: [state.entries[0]!, theirs],
 		});
 		const e = next.entries[0]!;
 		expect(e.type === "login" && e.password).toBe("theirs");
@@ -941,7 +943,11 @@ describe("createEntryMutations: resolving a conflict", () => {
 		const h = harness();
 		const { state, id } = await conflicted(h);
 		const writes = h.writes();
-		const next = await h.mutations.resolve(state, id, { kind: "keepBoth", data: note("other") });
+		const next = await h.mutations.resolve(state, id, {
+			kind: "keepBoth",
+			data: note("other"),
+			superseded: [],
+		});
 		expect(h.writes()).toBe(writes + 1);
 		expect(next.entries.map((e) => e.name)).toEqual(["a", "other"]);
 		expect(next.entries[1]!.id).not.toBe(id);
@@ -953,8 +959,49 @@ describe("createEntryMutations: resolving a conflict", () => {
 		const h = harness();
 		const { state, id } = await conflicted(h);
 		const writes = h.writes();
-		await h.mutations.resolve(state, id, { kind: "keep" });
+		await h.mutations.resolve(state, id, { kind: "keep", superseded: [] });
 		expect(h.writes()).toBe(writes + 1);
-		expect(await h.mutations.resolve(state, "nope", { kind: "keep" })).toBe(state);
+		expect(await h.mutations.resolve(state, "nope", { kind: "keep", superseded: [] })).toBe(state);
+	});
+
+	// Resolving must not lose a credential: every discarded version's password, and its own
+	// changelog rows, go into the kept entry's changelog (final review, finding B2).
+	it("keep folds a discarded version's password and changelog into the changelog", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const { state, id } = await conflicted(h);
+		t = 3000;
+		const theirs = loginWith("a", {
+			password: "theirs",
+			passwordChangelog: [{ value: "older-theirs", changedAt: 1500 }],
+		});
+		const next = await h.mutations.resolve(state, id, { kind: "keep", superseded: [theirs] });
+		const e = next.entries[0]!;
+		expect(e.type === "login" && e.password).toBe("mine");
+		expect(e.type === "login" && e.passwordChangelog?.map((c) => c.value)).toEqual([
+			"theirs",
+			"older-theirs",
+		]);
+	});
+
+	it("use keeps the chosen version's own changelog as well as the shown password", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const { state, id } = await conflicted(h);
+		t = 3000;
+		const theirs = loginWith("a", {
+			password: "theirs",
+			passwordChangelog: [{ value: "phone-interim", changedAt: 2000 }],
+		});
+		const next = await h.mutations.resolve(state, id, {
+			kind: "use",
+			data: theirs,
+			superseded: [state.entries[0]!, theirs],
+		});
+		const values =
+			next.entries[0]!.type === "login"
+				? next.entries[0]!.passwordChangelog?.map((c) => c.value)
+				: [];
+		expect(values).toEqual(["mine", "phone-interim"]);
 	});
 });

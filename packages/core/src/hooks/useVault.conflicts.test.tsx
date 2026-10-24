@@ -5,6 +5,7 @@ import type { Platform } from "../context/PlatformContext";
 import type { EntriesPayload } from "../sync";
 import { mountVault } from "../test/vault-harness";
 import { VAULT_REGISTRY_KEY } from "../vault/vault-registry";
+import { ConflictChangedError } from "./useVault";
 
 afterEach(cleanup);
 
@@ -215,8 +216,37 @@ it("resolveConflict writes the chosen sibling and clears the conflict", async ()
 	});
 	const { actions, state } = await opened(platform);
 	await waitFor(() => expect(state().conflicts.size).toBe(1));
-	await actions().resolveConflict("a", { kind: "use", hlc: SIBLING.hlc });
+	await actions().resolveConflict("a", { kind: "use", hlc: SIBLING.hlc, seen: [SIBLING.hlc] });
 	await waitFor(() => expect(state().conflicts.size).toBe(0));
 	expect(state().entries[0]).toMatchObject({ id: "a", password: "sib-pw" });
 	expect(disk().conflicts).toBeUndefined();
+});
+
+// A sync can land while the user compares; a resolution must not supersede versions they never
+// saw (final review, finding B4).
+it("resolveConflict refuses when the versions changed since the user looked", async () => {
+	const { platform, disk } = makePlatform({
+		entries: [SHOWN],
+		tombstones: [],
+		conflicts: [SIBLING],
+	});
+	const { actions, state } = await opened(platform);
+	await waitFor(() => expect(state().conflicts.size).toBe(1));
+	await expect(actions().resolveConflict("a", { kind: "keep", seen: [] })).rejects.toBeInstanceOf(
+		ConflictChangedError,
+	);
+	expect(state().conflicts.size).toBe(1);
+	expect(disk().conflicts).toHaveLength(1);
+});
+
+it("keeping the shown version keeps the other version's password in the changelog", async () => {
+	const { platform } = makePlatform({ entries: [SHOWN], tombstones: [], conflicts: [SIBLING] });
+	const { actions, state } = await opened(platform);
+	await waitFor(() => expect(state().conflicts.size).toBe(1));
+	await actions().resolveConflict("a", { kind: "keep", seen: [SIBLING.hlc] });
+	await waitFor(() => expect(state().conflicts.size).toBe(0));
+	expect(state().entries[0]).toMatchObject({
+		password: "shown-pw",
+		passwordChangelog: [expect.objectContaining({ value: "sib-pw" })],
+	});
 });

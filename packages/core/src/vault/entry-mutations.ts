@@ -23,7 +23,7 @@ import type { EncryptedEntry, VaultBlob } from "../vault-format";
 import { toAutofillIndex } from "./autofill-index";
 import { createEntriesBlobStore } from "./entries-blob";
 import { entryDataSchema } from "./entry-normalize";
-import { withPasswordChangelog } from "./password-changelog";
+import { withPasswordChangelog, withSupersededPasswords } from "./password-changelog";
 import { normalizeTags, tagKey, tagsEqual } from "./tags";
 
 // Coalesce a burst of uses into one write.
@@ -57,11 +57,15 @@ export interface VaultEntries {
 	settings?: SyncedSettings;
 }
 
-/** How a conflict resolves: the shown version, a sibling's content, or both as separate entries. */
+/**
+ * How a conflict resolves: the shown version, a sibling's content, or both as separate entries.
+ * `superseded` is the data of every version the kept entry replaces, so its passwords can be
+ * folded into the changelog instead of being lost.
+ */
 export type ResolveChoice =
-	| { kind: "keep" }
-	| { kind: "use"; data: EntryData }
-	| { kind: "keepBoth"; data: EntryData };
+	| { kind: "keep"; superseded: EntryData[] }
+	| { kind: "use"; data: EntryData; superseded: EntryData[] }
+	| { kind: "keepBoth"; data: EntryData; superseded: EntryData[] };
 
 export interface EntryMutationsDeps {
 	crypto: Pick<
@@ -134,7 +138,7 @@ export interface EntryMutations {
 	sealAll(
 		current: VaultEntries,
 		conflictPlaintexts: readonly (string | null)[],
-	): Promise<{ entriesIv: Uint8Array; entriesCiphertext: Uint8Array }>;
+	): Promise<{ entriesIv: Uint8Array; entriesCiphertext: Uint8Array; conflicts: EncryptedEntry[] }>;
 	/**
 	 * The plaintext of each conflict, in order, or null for one that won't open. Rotation calls
 	 * this while the old key still exists and hands the result to `sealAll`.
@@ -297,7 +301,12 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			);
 		}
 		const { iv, ciphertext } = await crypto.encryptWithVek(encodeEntriesPayload(payload));
-		return { entriesIv: base64ToBytes(iv), entriesCiphertext: base64ToBytes(ciphertext) };
+		// The re-sealed siblings too: the caller's in-memory copies are still under the old key.
+		return {
+			entriesIv: base64ToBytes(iv),
+			entriesCiphertext: base64ToBytes(ciphertext),
+			conflicts: payload.conflicts ?? [],
+		};
 	};
 
 	// Persist a new state in one write, then refresh the autofill index so it can
@@ -537,7 +546,9 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 			const causal = new Map(current.causal);
 			stamps.set(id, hlc);
 			causal.set(id, nextCausal({ hlc, bases: held, held }));
-			let entries = current.entries;
+			let entries = current.entries.map((e) =>
+				e.id === id ? withSupersededPasswords(e, choice.superseded, hlc.wall) : e,
+			);
 			if (choice.kind === "use") {
 				const valid = validate(choice.data);
 				// The same changelog rule as an edit: the shown password becomes history.
@@ -552,7 +563,9 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 					prev,
 					hlc.wall,
 				);
-				entries = entries.map((e) => (e.id === id ? used : e));
+				entries = entries.map((e) =>
+					e.id === id ? withSupersededPasswords(used, choice.superseded, hlc.wall) : e,
+				);
 			}
 			if (choice.kind === "keepBoth") {
 				const valid = validate(choice.data);

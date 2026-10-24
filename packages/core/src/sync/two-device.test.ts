@@ -86,6 +86,7 @@ describe("two devices", () => {
 		await laptop.mutations.resolve(await load(laptop), id, {
 			kind: "use",
 			data: login("GitHub", "laptop-pw"),
+			superseded: [login("GitHub", "phone-pw")],
 		});
 		await sync(laptop, phone);
 
