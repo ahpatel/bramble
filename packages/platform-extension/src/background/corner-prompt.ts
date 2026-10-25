@@ -7,9 +7,11 @@ import type {
 	SaveLoginPrompt,
 	UpdateLoginPrompt,
 } from "@core/adapters/autofill";
-import type { EntryData } from "@core/hooks/useVault";
+import type { Entry, EntryData } from "@core/hooks/useVault";
 import { heldVersions, nextCausal, nextVersion } from "@core/sync";
+import { normalizeEntryData } from "@core/vault/entry-normalize";
 import { stampedPlaintext } from "@core/vault/parts";
+import { withPasswordChangelog } from "@core/vault/password-changelog";
 import { type EncryptedEntry, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
 import { type DedupeOutcome, effectivePort, hostnameMatches, registrableDomain } from "../dedupe";
 import { api } from "../platform-api";
@@ -223,11 +225,22 @@ async function commitCornerUpdate(capture: PendingCapture, chosenEntryId: string
 				if (!dec.ok || typeof dec.data !== "string") {
 					throw new Error(`decrypt entry failed: ${dec.error ?? "no data"}`);
 				}
-				const prev = JSON.parse(dec.data) as EntryData;
+				const prev = normalizeEntryData(JSON.parse(dec.data));
 				const hlc = await nextStamp();
 				const held = heldVersions(payload, enc.id);
 				const v = nextVersion({ hlc, bases: [enc], held });
-				const updated = { ...prev, username, password: capture.password } as EntryData;
+				// As an edit in the app: the replaced password goes into the history.
+				const updated: EntryData = withPasswordChangelog(
+					{
+						...prev,
+						id: enc.id,
+						username,
+						password: capture.password,
+						updatedAt: v.hlc.wall,
+					} as Entry,
+					{ ...prev, id: enc.id } as Entry,
+					v.hlc.wall,
+				);
 				const reenc = await sendToOffscreen({
 					type: "CRYPTO_ENCRYPT",
 					vaultId,

@@ -155,7 +155,9 @@ describe("handleCreate", () => {
 		const plan = (d.savePlacement as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
 		expect(plan.kind).toBe("attach");
 		expect(plan.entryId).toBe("login-1");
-		expect(plan.passkeys).toHaveLength(2); // existing + the new one
+		// Only the new passkey: the write adds it to the login's list as it is then.
+		expect(plan.passkey.rpId).toBe("github.com");
+		expect(plan).not.toHaveProperty("passkeys");
 	});
 
 	it("creates a new login when the ceremony picks 'new'", async () => {

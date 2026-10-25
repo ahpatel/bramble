@@ -51,7 +51,7 @@ const LOGIN_DATA = {
 	password: "",
 };
 
-async function withConflict() {
+async function withConflict(decrypted: Record<string, unknown> = LOGIN_DATA) {
 	const written: string[] = [];
 	const sealed: string[] = [];
 	const offscreen = (msg: Record<string, any>): OffscreenResponse => {
@@ -62,7 +62,7 @@ async function withConflict() {
 					data: JSON.stringify({ entries: [SHOWN], tombstones: [], conflicts: [SIBLING] }),
 				};
 			case "CRYPTO_DECRYPT":
-				return { ok: true, data: JSON.stringify(LOGIN_DATA) };
+				return { ok: true, data: JSON.stringify(decrypted) };
 			case "CRYPTO_ENCRYPT":
 				sealed.push(msg.payload.plaintextJson);
 				return { ok: true, data: { ciphertext: "c2", iv: "i2", wrappedDek: "w2", dekIv: "d2" } };
@@ -93,7 +93,11 @@ describe("savePlacement records history", () => {
 
 	it("attaching a passkey supersedes the displayed version only", async () => {
 		const { savePlacement, last } = await withConflict();
-		await savePlacement({ kind: "attach", entryId: "login1", passkeys: [] });
+		await savePlacement({
+			kind: "attach",
+			entryId: "login1",
+			passkey: { credentialId: "k" } as never,
+		});
 		const payload = last();
 		const env = payload.entries.find((e: { id: string }) => e.id === "login1");
 		expect(env.hlc.node).toMatch(/#bg$/);
@@ -104,11 +108,24 @@ describe("savePlacement records history", () => {
 	it("attaching a passkey stamps the passkey item at the write's stamp", async () => {
 		const { savePlacement, last, lastSealed } = await withConflict();
 		const passkey = { credentialId: "cred-1", rpId: "example.com" } as never;
-		await savePlacement({ kind: "attach", entryId: "login1", passkeys: [passkey] });
+		await savePlacement({ kind: "attach", entryId: "login1", passkey });
 		const env = last().entries.find((e: { id: string }) => e.id === "login1");
 		const plaintext = lastSealed();
 		expect(effectivePartStamps(plaintext, env).items.passkeys).toEqual({ "cred-1": env.hlc });
 		expect(effectivePartStamps(plaintext, env).parts.name).toEqual(seed);
 		expect(plaintext.partStampsAt).toEqual(env.hlc);
+	});
+
+	// The plan is made before the ceremony; a passkey that synced in meanwhile is in the entry the
+	// write decrypts, and must stay.
+	it("attaching keeps a passkey that synced in after the plan was made", async () => {
+		const synced = { credentialId: "synced", rpId: "example.com" };
+		const { savePlacement, lastSealed } = await withConflict({ ...LOGIN_DATA, passkeys: [synced] });
+		const passkey = { credentialId: "cred-1", rpId: "example.com" } as never;
+		await savePlacement({ kind: "attach", entryId: "login1", passkey });
+		expect(lastSealed().passkeys.map((p: { credentialId: string }) => p.credentialId)).toEqual([
+			"synced",
+			"cred-1",
+		]);
 	});
 });

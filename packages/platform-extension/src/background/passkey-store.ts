@@ -10,7 +10,7 @@ import type { Entry, EntryData, LoginEntryData } from "@core/hooks/useVault";
 import { decodeEntriesPayload, heldVersions, nextCausal, nextVersion } from "@core/sync";
 import { normalizeEntryData } from "@core/vault/entry-normalize";
 import { stampedPlaintext } from "@core/vault/parts";
-import type { PasskeyPlacement } from "@core/vault/passkey";
+import { type PasskeyPlacement, withPasskey } from "@core/vault/passkey";
 import { type EncryptedEntry, encodeVaultBlob, type VaultBlob } from "@core/vault-format";
 import { addLoginEntry } from "./autofill-index";
 import { sendToOffscreen } from "./offscreen-client";
@@ -178,7 +178,9 @@ export async function savePlacement(plan: PasskeyPlacement): Promise<void> {
 					const hlc = await nextStamp();
 					const held = heldVersions(payload, e.id);
 					const v = nextVersion({ hlc, bases: [e], held });
-					const data = { ...prev, passkeys: plan.passkeys } as EntryData;
+					// Added to the list as it is now: one that synced in since the plan stays.
+					const passkeys = withPasskey((prev as LoginEntryData).passkeys, plan.passkey);
+					const data = { ...prev, passkeys } as EntryData;
 					const reenc = await encryptEntry(
 						vaultId,
 						stampedPlaintext(e.id, data, { data: prev, version: e }, v.hlc),

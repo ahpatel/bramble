@@ -10,6 +10,7 @@ import type { CryptoAdapter } from "../adapters/crypto";
 import type { EntryData } from "../hooks/useVault";
 import type { EntriesPayload } from "../sync";
 import { base64ToBytes, bytesToBase64 } from "../util/bytes";
+import { PART_STAMP_FIELDS } from "../vault/parts";
 import {
 	decodeVaultBlob,
 	encodeVaultBlob,
@@ -33,10 +34,15 @@ export interface PortableVaultPayload {
 	entries: EntryData[];
 }
 
-/** Drop the vault-local id from an entry, leaving the content the file is meant to carry. */
+/**
+ * Drop the vault-local id and part stamps from an entry, leaving the content the file is meant to
+ * carry. Part stamps name this vault's devices and when each field changed; the importer stamps
+ * afresh anyway.
+ */
 function withoutId(entry: EntryData & { id?: string }): EntryData {
-	const { id: _id, ...data } = entry;
-	return data as EntryData;
+	const { id: _id, ...data } = entry as unknown as Record<string, unknown>;
+	for (const field of PART_STAMP_FIELDS) delete data[field];
+	return data as unknown as EntryData;
 }
 
 /** Seal `entries` into .bramble bytes under a password chosen for the file. */

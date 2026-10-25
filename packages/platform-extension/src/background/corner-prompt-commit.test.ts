@@ -510,6 +510,30 @@ describe("commit: background writes record history", () => {
 		expect(effectivePartStamps(plaintext, env).parts.name).toEqual(seed);
 	});
 
+	// The same rule as an edit in the app: the password it replaces goes into the history, so a
+	// change the site didn't accept can be undone.
+	it("a corner-prompt update keeps the replaced password in the history", async () => {
+		const { bg, written, sealed } = await withConflict();
+		const cap = await bg.send(
+			{ type: "CORNER_PROMPT_CAPTURE", payload: { username: "alice", password: "ROTATED" } },
+			pageSender("example.com", 5),
+		);
+		await bg.send(
+			{
+				type: "CORNER_PROMPT_RESPONSE",
+				payload: { promptId: cap.resp.data.promptId, action: "update", chosenEntryId: "login1" },
+			},
+			pageSender("example.com", 5),
+		);
+		const env = JSON.parse(written[written.length - 1] as string).entries.find(
+			(e: { id: string }) => e.id === "login1",
+		);
+		const plaintext = JSON.parse(sealed[sealed.length - 1] as string);
+		expect(plaintext.password).toBe("ROTATED");
+		expect(plaintext.passwordChangelog).toEqual([{ value: "pw1", changedAt: env.hlc.wall }]);
+		expect(plaintext.updatedAt).toBe(env.hlc.wall);
+	});
+
 	it("a new corner-prompt login stamps every part at its own stamp", async () => {
 		const { bg, written, sealed } = await withConflict();
 		const cap = await bg.send(

@@ -64,6 +64,24 @@ describe("sealPortableVaultFile", () => {
 		expect(JSON.parse(arg.entriesJson).entries[0]).not.toHaveProperty("id");
 	});
 
+	// Sync bookkeeping names this vault's devices and when each field changed; a file made to be
+	// handed to someone carries the content only (the importer stamps afresh anyway).
+	it("strips part stamps", async () => {
+		const crypto = fakeCrypto();
+		const at = { wall: 5, counter: 0, node: "device-uuid" };
+		const stamped = {
+			...login("a"),
+			id: "vault-local",
+			partStamps: { notes: at },
+			itemStamps: { urls: { "https://a.example": at } },
+			partStampsAt: at,
+		};
+		await sealPortableVaultFile(crypto, [stamped], "pw");
+		const arg = crypto.sealPortableVault.mock.calls[0]?.[0];
+		if (!arg) throw new Error("the core was never asked to seal anything");
+		expect(JSON.parse(arg.entriesJson).entries[0]).toEqual(login("a"));
+	});
+
 	it("refuses where the platform has no sealing call", async () => {
 		await expect(sealPortableVaultFile({}, [login("a")], "pw")).rejects.toThrow(/isn't available/);
 	});

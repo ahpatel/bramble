@@ -104,12 +104,23 @@ export function passkeyAttachTarget(
  * normal encrypt + write path, so id generation and encryption stay in the mutation layer.
  */
 export type PasskeyPlacement =
-	| { kind: "attach"; entryId: string; passkeys: PasskeyCredential[] }
+	| { kind: "attach"; entryId: string; passkey: PasskeyCredential }
 	| { kind: "create"; data: LoginEntryData };
 
-/** Attach a passkey to an existing login (returns its new passkeys[]). */
+/** A login's passkeys with `passkey` added, replacing one with the same credential id. */
+export function withPasskey(
+	passkeys: readonly PasskeyCredential[] | undefined,
+	passkey: PasskeyCredential,
+): PasskeyCredential[] {
+	return [...(passkeys ?? []).filter((p) => p.credentialId !== passkey.credentialId), passkey];
+}
+
+/**
+ * Attach a passkey to an existing login. Only the new passkey travels: the write adds it to the
+ * login's list as it is then (`withPasskey`), which may have changed since this was planned.
+ */
 export function attachPasskeyTo(login: LoginEntry, passkey: PasskeyCredential): PasskeyPlacement {
-	return { kind: "attach", entryId: login.id, passkeys: [...(login.passkeys ?? []), passkey] };
+	return { kind: "attach", entryId: login.id, passkey };
 }
 
 /** A fresh standalone login holding only this passkey. */
