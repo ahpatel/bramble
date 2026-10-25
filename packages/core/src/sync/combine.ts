@@ -31,8 +31,11 @@ import type { EntriesPayload } from "./entries-payload";
 import { compareHlc, type Hlc } from "./hlc";
 import { mergeEntriesPayload } from "./vault-merge";
 
-/** Off until most devices record part stamps (release B2 flips it). */
-export const COMBINE_CONCURRENT_EDITS = false;
+/** Release B2 sets this to true, once most devices record part stamps. */
+const SHIPPED_ON = false;
+/** Whether combining runs. A test build turns it on with VITE_COMBINE_CONCURRENT_EDITS=1. */
+export const COMBINE_CONCURRENT_EDITS =
+	SHIPPED_ON || import.meta.env.VITE_COMBINE_CONCURRENT_EDITS === "1";
 /** The combine rules' version; a newer one's result descends from an older one's. */
 export const COMBINE_RULES_VERSION = 1;
 
