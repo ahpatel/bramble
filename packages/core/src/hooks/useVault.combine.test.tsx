@@ -72,7 +72,13 @@ const base = version(
 const PASSWORD = version({ ...base.data, password: "px" }, at(20, "laptop"), base);
 const NOTES = version({ ...base.data, notes: "ny" }, at(30, "phone"), base);
 
-function makePlatform(initial: EntriesPayload, { failSeal = false } = {}) {
+function makePlatform(
+	initial: EntriesPayload,
+	{
+		failSeal = false,
+		duringSeal,
+	}: { failSeal?: boolean; duringSeal?: (disk: EntriesPayload) => EntriesPayload } = {},
+) {
 	const meta = new Map<string, unknown>([
 		[VAULT_REGISTRY_KEY, { vaults: [{ id: "vault-1", label: "", createdAt: 1 }] }],
 	]);
@@ -102,6 +108,8 @@ function makePlatform(initial: EntriesPayload, { failSeal = false } = {}) {
 			},
 			encryptEntry: async (json: string) => {
 				if (failSeal) throw new Error("seal failed");
+				// Another writer (the extension background) lands while this one is sealing.
+				if (duringSeal) disk = JSON.stringify(duringSeal(JSON.parse(disk)));
 				return { ciphertext: `ct:${json}`, iv: "i", wrappedDek: "w", dekIv: "d" };
 			},
 			decryptEntries: async (ps: { ciphertext: string }[]) =>
@@ -168,5 +176,33 @@ it("a save that leaves combinable siblings combines them", async () => {
 	await actions().updateEntry("a", form as never, openedVersion);
 	await waitFor(() => expect(state().entries[0]).toMatchObject({ password: "px", notes: "ny" }));
 	expect(state().conflicts.size).toBe(0);
+	expect(disk().conflicts).toBeUndefined();
+});
+
+// The background writes the same blob without coordinating with this view, so the combined
+// version goes into what's on disk at write time rather than over it.
+it("a background write that lands while loading combines is kept", async () => {
+	const saved = version(
+		{ type: "login", name: "B", urls: [], username: "u2", password: "p2" },
+		at(40, "laptop#bg"),
+	);
+	const bg = { ...saved.envelope, id: "b" };
+	const { platform, disk } = makePlatform(
+		{ entries: [NOTES.envelope], tombstones: [], conflicts: [PASSWORD.envelope] },
+		{ duringSeal: (d) => ({ ...d, entries: [...d.entries.filter((e) => e.id !== "b"), bg] }) },
+	);
+	const { state } = await opened(platform);
+	await waitFor(() =>
+		expect(
+			state()
+				.entries.map((e) => e.id)
+				.sort(),
+		).toEqual(["a", "b"]),
+	);
+	expect(
+		disk()
+			.entries.map((e) => e.id)
+			.sort(),
+	).toEqual(["a", "b"]);
 	expect(disk().conflicts).toBeUndefined();
 });

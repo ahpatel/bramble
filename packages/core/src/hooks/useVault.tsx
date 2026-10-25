@@ -677,13 +677,17 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 				try {
 					const combined = await combinePayload(payload, crypto);
 					if (combined.stamps.length > 0) {
-						await createEntriesBlobStore({
+						const store = createEntriesBlobStore({
 							crypto,
 							storage,
 							readDecodedBlob,
 							verifyVekBeforeWrite: true,
-						}).writeEntriesBlob(combined.payload);
-						payload = combined.payload;
+						});
+						// Into what's on disk now, not over it: the extension background writes the same
+						// blob without asking, and may have saved something while this combined.
+						const current = mergeEntriesPayload(await store.readEntriesPayload(), combined.payload);
+						await store.writeEntriesBlob(current);
+						payload = current;
 					}
 				} catch (e) {
 					console.warn("[vault] combining siblings on load failed; keeping the conflict:", e);

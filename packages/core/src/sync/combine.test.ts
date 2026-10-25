@@ -234,6 +234,17 @@ describe("combineSiblings", () => {
 		expect(await combineSiblings([x, y])).toBeNull();
 	});
 
+	// An old relay strips a version's history; its part stamps are still a newer build's, so an
+	// older build's last-writer-wins floor on the other side can't count as having seen them.
+	it("a copy stripped of its history keeps its stamps' seen restriction", async () => {
+		const bNotes = edit(base, { notes: "nb" }, at(15, "b"));
+		const x = edit(bNotes, { name: "na" }, at(20, "a"));
+		const stripped: Sibling = { envelope: envelope("e", { hlc: x.envelope.hlc }), data: x.data };
+		const older = legacy(login({ notes: "n0" }), at(17, "o"));
+		const v = edit(older, { notes: "nv" }, at(25, "n"));
+		expect(await combineSiblings([stripped, v])).toBeNull();
+	});
+
 	it("two items under one key: no combine", async () => {
 		const dup = created(login({ urls: ["https://x.example", "https://x.example"] }), at(10, "a"));
 		const x = edit(dup, { notes: "nx" }, at(20, "a"));
@@ -392,6 +403,44 @@ describe("combinePayload", () => {
 		};
 		return c;
 	};
+
+	it("one entry that can't be combined doesn't stop the others", async () => {
+		const x = edit(base, { password: "px" }, at(20, "a"));
+		const y = edit(base, { notes: "ny" }, at(30, "b"));
+		const broken = (sib: Sibling): EncryptedEntry => ({
+			...sib.envelope,
+			id: "f",
+			ciphertext: `ct:${JSON.stringify({ ...sib.data, tags: [5] })}`,
+		});
+		const out = await combinePayload(
+			{
+				entries: [sealed(y), broken(y)],
+				tombstones: [],
+				conflicts: [sealed(x), broken(x)],
+			},
+			crypto(),
+		);
+		expect(out.stamps).toHaveLength(1);
+		expect(out.payload.conflicts?.map((e) => e.id)).toEqual(["f"]);
+	});
+
+	// Sealing under a key that has since changed (mobile's one global key) must not replace
+	// readable versions with an unreadable one.
+	it("a combined version that doesn't open again isn't written", async () => {
+		const x = edit(base, { password: "px" }, at(20, "a"));
+		const y = edit(base, { notes: "ny" }, at(30, "b"));
+		const payload = { entries: [sealed(y)], tombstones: [], conflicts: [sealed(x)] };
+		const c = crypto();
+		c.encryptEntry = async (json: string) => ({
+			ciphertext: `other-key:${json}`,
+			iv: "i",
+			wrappedDek: "w",
+			dekIv: "d",
+		});
+		const out = await combinePayload(payload, c);
+		expect(out.payload).toBe(payload);
+		expect(out.stamps).toEqual([]);
+	});
 
 	it("a payload with no siblings is returned as is without decrypting", async () => {
 		const c = crypto();

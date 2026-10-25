@@ -234,3 +234,29 @@ describe("two devices", () => {
 		expect(conflictsOf(await load(laptop)).get(id)).toEqual({ versions: 0, deleted: true });
 	});
 });
+
+// Another writer on the same device (the extension background) doesn't wait for a merge; what it
+// saves while one is in flight has to survive the merge's write.
+describe("a merge and another writer on the same device", () => {
+	it("a local write that lands during a merge is kept", async () => {
+		const { time, laptop, phone, id } = await pair();
+		time.now = 2000;
+		await phone.mutations.update(await load(phone), id, login("GitHub", "new"));
+		let wrote = false;
+		const port = createVaultSyncPort({
+			store: laptop.mutations,
+			crypto: laptop.crypto,
+			witnessRemote: async (stamps) => {
+				for (const s of stamps) laptop.clock.witness(s);
+				if (!wrote) {
+					wrote = true;
+					await laptop.mutations.add(await load(laptop), login("Bank"));
+				}
+			},
+		});
+		await applyRemotePayload(port, await phone.mutations.readEntriesPayload());
+		const after = await load(laptop);
+		expect(after.entries.map((e) => e.name).sort()).toEqual(["Bank", "GitHub"]);
+		expect(after.entries.find((e) => e.id === id)).toMatchObject({ password: "new" });
+	});
+});

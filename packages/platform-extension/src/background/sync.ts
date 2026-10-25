@@ -16,6 +16,7 @@ import {
 	emptyEntriesPayload,
 	encodeEntriesPayload,
 	encodeRoster,
+	mergeEntriesPayload,
 	mergeRemoteRoster,
 	SYNC_LAST_SYNCED_KEY,
 	type VaultSyncPort,
@@ -408,10 +409,14 @@ function makeVaultSyncPort(ctx: SyncVaultCtx): VaultSyncPort {
 		},
 		witnessRemote: (stamps) => witnessStamps(stamps),
 		async writeMerged(merged) {
+			// Into what's on disk now: a corner-prompt or passkey save doesn't wait for a merge, and a
+			// merge loses nothing by being applied again.
+			const current = await readLocalState(ctx);
+			slots = current.blob.slots;
 			const enc = await sendToOffscreen({
 				type: "CRYPTO_ENCRYPT_OUTER",
 				vaultId: ctx.vaultId,
-				payload: { plaintext: encodeEntriesPayload(merged) },
+				payload: { plaintext: encodeEntriesPayload(mergeEntriesPayload(current.payload, merged)) },
 			});
 			if (!enc.ok || !enc.data) throw new Error(enc.error ?? "outer encrypt failed");
 			const { iv, ciphertext } = enc.data as { iv: string; ciphertext: string };

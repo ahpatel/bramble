@@ -274,11 +274,82 @@ describe("sync is pinned to one vault", () => {
 		releaseFirst();
 		await Promise.all([first, second]);
 		const outer = types().filter((t) => t?.endsWith("_OUTER"));
-		expect(outer.slice(0, 3)).toEqual([
+		// The first merge reads, re-reads just before writing, and writes; only then the second reads.
+		expect(outer.slice(0, 4)).toEqual([
+			"CRYPTO_DECRYPT_OUTER",
 			"CRYPTO_DECRYPT_OUTER",
 			"CRYPTO_ENCRYPT_OUTER",
 			"CRYPTO_DECRYPT_OUTER",
 		]);
+	});
+
+	// A corner-prompt or passkey save writes the same blob without waiting for a merge.
+	it("a background write that lands during a merge is kept", async () => {
+		const blob = encodeVaultBlob({
+			slots: [
+				{
+					kind: SLOT_KIND_PASSWORD,
+					slotId: new Uint8Array(16),
+					salt: new Uint8Array(16),
+					verifier: new Uint8Array(32),
+					wrapIv: new Uint8Array(12),
+					wrappedVek: new Uint8Array(48),
+				},
+			],
+			entriesIv: new Uint8Array(12),
+			entriesCiphertext: new Uint8Array([1]),
+		});
+		stubChrome(
+			{ ...seedTwoVaults(), "vault-blob-b64:a": btoa(String.fromCharCode(...blob)) },
+			{ [ACTIVE_VAULT_SESSION_KEY]: "a" },
+		);
+		const saved = {
+			id: "bg",
+			wrappedDek: "w",
+			dekIv: "d",
+			ciphertext: "c",
+			iv: "i",
+			hlc: { wall: 5, counter: 0, node: "me#bg" },
+		};
+		let reads = 0;
+		let written: string | undefined;
+		sendToOffscreen.mockImplementation(async (m) => {
+			if (m.type === "CRYPTO_DECRYPT_OUTER") {
+				const entries = reads++ === 0 ? [] : [saved];
+				return { ok: true, data: JSON.stringify({ entries, tombstones: [] }) } as never;
+			}
+			if (m.type === "CRYPTO_CHECK_ENTRIES") {
+				return {
+					ok: true,
+					data: ((m.payload?.entries ?? []) as unknown[]).map(() => true),
+				} as never;
+			}
+			if (m.type === "CRYPTO_ENCRYPT_OUTER") {
+				written = m.payload?.plaintext as string;
+				return { ok: true, data: { iv: "AAAAAAAAAAAAAAAA", ciphertext: "AA==" } } as never;
+			}
+			return { ok: true };
+		});
+		const sync = await loadSync();
+		const remote = JSON.stringify({
+			entries: [
+				{
+					id: "n",
+					wrappedDek: "w",
+					dekIv: "d",
+					ciphertext: "c",
+					iv: "i",
+					hlc: { wall: 1, counter: 0, node: "p" },
+				},
+			],
+			tombstones: [],
+		});
+		expect(await sync.syncApplyRemote("a", remote)).toBe(true);
+		expect(
+			decodeEntriesPayload(written!)
+				.entries.map((e) => e.id)
+				.sort(),
+		).toEqual(["bg", "n"]);
 	});
 
 	it("does not merge a peer's entry that doesn't decrypt in this vault", async () => {

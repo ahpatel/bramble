@@ -54,10 +54,12 @@ export interface Combined {
  * Whether `other` has seen `stamp`, which `holder` carries. A stamp the holder records through its
  * vv (a write that carried a history) only counts as seen through the other's vv: a floor is an
  * older build's guess and may stand in for older builds' events, never for a newer build's change.
+ * `stripped` is a newer build's version an old relay dropped the vv from: all its stamps count as
+ * tracked, since which ones were can't be told any more.
  */
-export function seenBy(stamp: Hlc, holder: Versioned, other: Versioned): boolean {
+export function seenBy(stamp: Hlc, holder: Versioned, other: Versioned, stripped = false): boolean {
 	const tracked = holder.vv?.[stamp.node];
-	if (tracked && compareHlc(stamp, tracked) <= 0) {
+	if (stripped || (tracked && compareHlc(stamp, tracked) <= 0)) {
 		const seen = other.vv?.[stamp.node];
 		return seen !== undefined && compareHlc(stamp, seen) <= 0;
 	}
@@ -83,6 +85,10 @@ function sideOf(s: Sibling): Side {
 	};
 }
 
+/** Whether `to` has seen `stamp`, which `from` carries. */
+const seen = (stamp: Hlc, from: Side, to: Side) =>
+	seenBy(stamp, from.version, to.version, !from.stale && !from.version.vv);
+
 /** A part's stamp on a side; undefined means the part was never touched there. */
 const partStamp = (side: Side, part: string): Hlc | undefined =>
 	side.stale ? side.version.hlc : side.parts[part];
@@ -96,10 +102,10 @@ function choosePart(a: Side, b: Side, part: string, va: unknown, vb: unknown): "
 	if (partsEqual(va, vb)) return !sa || (sb && compareHlc(sb, sa) > 0) ? "b" : "a";
 	// No stamp means never set, unless that side saw the other's change and still lacks the
 	// value: then it cleared it (an older build's clear records no stamp).
-	if (!sa) return sb && seenBy(sb, b.version, a.version) ? "a" : "b";
-	if (!sb) return seenBy(sa, a.version, b.version) ? "b" : "a";
-	const aSeen = seenBy(sa, a.version, b.version);
-	const bSeen = seenBy(sb, b.version, a.version);
+	if (!sa) return sb && seen(sb, b, a) ? "a" : "b";
+	if (!sb) return seen(sa, a, b) ? "b" : "a";
+	const aSeen = seen(sa, a, b);
+	const bSeen = seen(sb, b, a);
 	if (aSeen && !bSeen) return "b";
 	if (bSeen && !aSeen) return "a";
 	// Neither saw the other's change, or both did and still differ: not ours to pick.
@@ -108,8 +114,8 @@ function choosePart(a: Side, b: Side, part: string, va: unknown, vb: unknown): "
 
 /** The stamp an item on both sides keeps: a stale side's claim yields to an add it has seen. */
 function itemStamp(a: Side, sa: Hlc, b: Side, sb: Hlc): Hlc {
-	if (a.stale && seenBy(sb, b.version, a.version)) return sb;
-	if (b.stale && seenBy(sa, a.version, b.version)) return sa;
+	if (a.stale && seen(sb, b, a)) return sb;
+	if (b.stale && seen(sa, a, b)) return sa;
 	return later(sa, sb);
 }
 
@@ -167,14 +173,14 @@ function combinePair(a: Side, b: Side): Side | null {
 			// add it saw happen isn't passed on as the add. On one: kept unless the other saw it go,
 			// and an older build's can't be told from one the other removed, so that conflicts.
 			if (sb) kept.push([key, item, itemStamp(a, sa, b, sb)]);
-			else if (!seenBy(sa, a.version, b.version)) {
+			else if (!seen(sa, a, b)) {
 				if (a.stale) return null;
 				kept.push([key, item, sa]);
 			}
 		}
 		for (const [key, item] of bItems) {
 			const sb = b.items[list][key] as Hlc;
-			if (aItems.has(key) || seenBy(sb, b.version, a.version)) continue;
+			if (aItems.has(key) || seen(sb, b, a)) continue;
 			if (b.stale) return null;
 			kept.push([key, item, sb]);
 		}
@@ -293,35 +299,57 @@ export async function combinePayload(
 	);
 	const sealed: EncryptedEntry[] = [];
 	for (const id of ids) {
-		const envelopes = [
-			...payload.entries.filter((e) => e.id === id),
-			...(payload.conflicts ?? []).filter((e) => e.id === id),
-		];
-		const plaintexts = await crypto.decryptEntries(
-			envelopes.map(({ ciphertext, iv, wrappedDek, dekIv }) => ({
-				ciphertext,
-				iv,
-				wrappedDek,
-				dekIv,
-			})),
-		);
-		const siblings = envelopes.flatMap((envelope, i) => {
-			const plaintext = plaintexts[i];
-			if (plaintext == null) return [];
-			try {
-				return [{ envelope, data: normalizeEntryData(JSON.parse(plaintext)) }];
-			} catch {
-				return [];
-			}
-		});
-		const combined = await combineSiblings(siblings);
-		if (!combined) continue;
-		const enc = await crypto.encryptEntry(JSON.stringify(combined.data));
-		sealed.push({ id, ...enc, hlc: combined.hlc, ...combined.causal });
+		// One entry that won't combine leaves its siblings as they are, not the others'.
+		try {
+			const one = await combineOne(payload, id, crypto);
+			if (one) sealed.push(one);
+		} catch (e) {
+			console.warn("[sync] couldn't combine an entry's versions; keeping them as they are:", e);
+		}
 	}
 	if (sealed.length === 0) return { payload, stamps: [] };
 	return {
 		payload: mergeEntriesPayload(payload, { entries: sealed, tombstones: [] }),
 		stamps: sealed.map((e) => e.hlc),
 	};
+}
+
+/** One id's siblings combined and sealed, or null when they don't combine. */
+async function combineOne(
+	payload: EntriesPayload,
+	id: string,
+	crypto: CombineCrypto,
+): Promise<EncryptedEntry | null> {
+	const envelopes = [
+		...payload.entries.filter((e) => e.id === id),
+		...(payload.conflicts ?? []).filter((e) => e.id === id),
+	];
+	const plaintexts = await crypto.decryptEntries(
+		envelopes.map(({ ciphertext, iv, wrappedDek, dekIv }) => ({
+			ciphertext,
+			iv,
+			wrappedDek,
+			dekIv,
+		})),
+	);
+	const siblings = envelopes.flatMap((envelope, i) => {
+		const plaintext = plaintexts[i];
+		if (plaintext == null) return [];
+		try {
+			return [{ envelope, data: normalizeEntryData(JSON.parse(plaintext)) }];
+		} catch {
+			return [];
+		}
+	});
+	const combined = await combineSiblings(siblings);
+	if (!combined) return null;
+	const json = JSON.stringify(combined.data);
+	const enc = await crypto.encryptEntry(json);
+	// It replaces readable versions, so it must open again under this vault's key first.
+	const [reopened] = await crypto.decryptEntries([enc]);
+	if (reopened !== json) {
+		console.warn("[sync] a combined version didn't open again; keeping the versions it combined");
+		return null;
+	}
+	return { id, ...enc, hlc: combined.hlc, ...combined.causal };
 }

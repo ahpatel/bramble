@@ -383,6 +383,18 @@ extension it is the background, which already decrypts entries for corner-prompt
 device witnesses the combined stamp so its next write sorts after it. Only ids with siblings
 are touched, so the cost is negligible.
 
+It can't make things worse than Phase A, by construction:
+
+- **Each entry on its own.** One entry whose versions won't open or won't combine keeps its
+  conflict; the others still combine.
+- **Checked before it replaces anything.** A combined version must open again under the vault's
+  key before it prunes its inputs, so a key that changed mid-combine (mobile's one global key)
+  leaves the conflict instead of an unreadable entry.
+- **Into what's on disk, not over it.** Nothing coordinates the extension background's writes
+  (a corner-prompt or passkey save) with a view's or a merge's, so the load-time combine and
+  every merge write merge into a fresh read: a merge loses nothing by being applied again.
+- **A failure is a conflict.** Any error leaves the versions as Phase A would show them.
+
 Native autofill (Android `VaultReader`, the iOS extension) reads only the displayed version, so
 combining at sync time, not at display time, is what gets the combined password to fill.
 
@@ -399,8 +411,9 @@ combining at sync time, not at display time, is what gets the combined password 
 1. **B1**: every writer records `partStamps`, `itemStamps` and `partStampsAt` (core mutations,
    resolutions, the extension's corner prompt and passkey placement). The combine code ships
    too, switched off by a constant (`COMBINE_CONCURRENT_EDITS = false`); tests run it on.
-2. **B2**: flip the constant once most devices write part stamps. The README and site copy
-   ("never compares plaintext", "you choose between both versions") change in that release.
+2. **B2**: flip the constant once most devices write part stamps. Nothing else changes in code:
+   the final review's B2 blockers were fixed in B1. The README and site copy ("never compares
+   plaintext", "you choose between both versions") change in that release.
 
 ### Edge cases (checked against the rules above)
 

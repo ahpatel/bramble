@@ -192,7 +192,10 @@ export function createVaultSyncPort(deps: {
 		readLocal: () => deps.store.readEntriesPayload(),
 		witnessRemote: deps.witnessRemote,
 		async writeMerged(merged) {
-			await deps.store.writeEntriesBlob(merged);
+			// Into what's on disk now: another writer on this device may have saved meanwhile, and a
+			// merge loses nothing by being applied again.
+			const current = await deps.store.readEntriesPayload();
+			await deps.store.writeEntriesBlob(mergeEntriesPayload(current, merged));
 			await deps.onChanged?.();
 		},
 		combineSiblings: (payload, ids) => combinePayload(payload, deps.crypto, ids),
