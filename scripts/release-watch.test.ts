@@ -123,7 +123,7 @@ describe("watchDesktopRelease", () => {
 		const prompt = lines.findIndex((l) => l.includes(REQUESTS));
 		const building = lines.findIndex((l) => l.includes("Build (unsigned): in progress"));
 		assert.ok(building < prompt, "prompted only after the build");
-		assert.match(out, /windows: building in https:\/\/github.com\/o\/r\/actions\/runs\/7/);
+		assert.match(out, /windows: building in https:\/\/github\.com\/o\/r\/actions\/runs\/7/);
 		assert.match(out, /windows: Sign with SignPath: success/);
 		assert.match(out, /Publish: waiting for your approval/);
 	});
