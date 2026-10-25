@@ -57,7 +57,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
     inherit (finalAttrs) pname version src;
     pnpm = pnpm_10;
     fetcherVersion = 3;
-    hash = "sha256-Ng0gKgMR3GSsaQezIsxEt/YgnrdNmTHfbYq1QSPK3mE=";
+    hash = "sha256-FL8UJnTLWxNJXz3KWwSUpOZ7LNzDoxAuuy/S35/HaNw=";
   };
 
   postPatch = ''
