@@ -21,3 +21,4 @@ overrides:
   adm-zip: ^0.6.1 # web-ext > firefox-profile; 0.6.1 fixes GHSA-vwc7-r8mq-g2x9
   shell-quote: ^1.11.0 # web-ext > fx-runner, concurrently; 1.11.0 fixes GHSA-pqg4-j6r4-53mv
   minimatch@3>brace-expansion: ^2.1.7
+  miniflare>undici: 7.30.1 # wrangler > miniflare pins 7.29.1 exactly, latest too; 7.30.1 fixes GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685, GHSA-f72v-6w45-q472
