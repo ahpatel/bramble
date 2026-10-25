@@ -112,3 +112,17 @@ it("a form that mounts before the entries load records the version it then opens
 	await h.form!.onSave(login("mine"));
 	expect(h.updateEntry).toHaveBeenCalledWith("e", expect.anything(), opened);
 });
+
+// The form edits its own fields only; everything else the opened version holds (archived state,
+// a field a newer build added) stays, and a field the form cleared stays cleared.
+it("saving keeps what the form doesn't edit, and what it cleared stays cleared", async () => {
+	const opened = version(1000, "p");
+	const data = { ...opened.data, notes: "old", archivedAt: 5, futureField: { x: 1 } };
+	h.entries = [data];
+	h.openVersion.mockReturnValue({ ...opened, data });
+	render(<EntryEditRoute />);
+	await h.form!.onSave({ ...login("mine"), notes: undefined });
+	const saved = h.updateEntry.mock.calls[0]?.[1] as Record<string, unknown>;
+	expect(saved).toMatchObject({ password: "mine", archivedAt: 5, futureField: { x: 1 } });
+	expect(saved.notes).toBeUndefined();
+});

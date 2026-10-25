@@ -41,8 +41,12 @@ export function EntryEditRoute() {
 
 	const mode = getEntryMode(entry.type);
 
-	const handleSave = async (data: EntryData) => {
+	const handleSave = async (edited: EntryData) => {
 		const before = opened?.data ?? entry;
+		// The form returns each field it edits, cleared ones included; everything else the opened
+		// version holds stays (archived state, a field a newer build added).
+		const { id: _id, ...kept } = before;
+		const data = { ...kept, ...edited } as EntryData;
 		// Re-check breach only when a login's password changed; reuse the cached value otherwise.
 		if (data.type === "login" && before.type === "login") {
 			const passwordChanged = data.password !== before.password;

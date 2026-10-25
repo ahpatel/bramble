@@ -1215,6 +1215,12 @@ describe("createEntryMutations: saving from the version the form opened", () => 
 		expect(onDisk.conflicts?.map((e) => e.hlc)).toEqual([theirs]);
 	});
 
+	it("refuses a version opened on another entry", async () => {
+		const { h, a, id, opened } = await openedThenReplaced();
+		const elsewhere = { ...opened, data: { ...opened.data, id: "another-entry" } };
+		await expect(h.mutations.update(a, id, loginWith("a"), elsewhere)).rejects.toThrow();
+	});
+
 	it("a save from the displayed version works as before", async () => {
 		const { h, a, id, opened } = await openedThenReplaced();
 		const next = await h.mutations.update(a, id, loginWith("a", { password: "mine" }), opened);

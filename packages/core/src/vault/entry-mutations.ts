@@ -546,6 +546,9 @@ export function createEntryMutations(deps: EntryMutationsDeps): EntryMutations {
 		},
 
 		update: async (current, id, data, opened) => {
+			if (opened && opened.data.id !== id) {
+				throw new Error("the version this edit opened belongs to another entry");
+			}
 			const valid = validate(data);
 			const c = await clock();
 			const hlc = c.send();
