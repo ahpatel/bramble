@@ -1,6 +1,17 @@
 import type { Page } from "@playwright/test";
 import { addLogin, lock, popupUrl, unlock } from "../extension/helpers";
 import {
+	back,
+	CONFLICT,
+	type Edit,
+	editEntry,
+	expectCombined,
+	expectConflict,
+	keepShown,
+	openEntry,
+	saveForm,
+} from "./entry-edits";
+import {
 	createVault,
 	expect,
 	gotoSync,
@@ -19,7 +30,6 @@ import {
 const COMBINING = process.env.COMBINE_CONCURRENT_EDITS === "1";
 const LOCAL_RELAY_HOST = "localhost:7400";
 const NAME = "Shared login";
-const CONFLICT = /changed on two devices before they synced/i;
 
 /** Point this peer's sync at the local relay, via the Advanced panel a user would use. */
 async function useLocalRelay(page: Page): Promise<void> {
@@ -73,48 +83,6 @@ async function pairWithSharedLogin(ext: Peer & { extensionId: string }, mobile: 
 	await expect(mobile.page.getByText(NAME)).toBeVisible({ timeout: 90_000 });
 }
 
-/** Back one screen (settings, or an entry's detail view). */
-async function back(page: Page): Promise<void> {
-	await page
-		.getByRole("button", { name: /^(Back|Go back)/i })
-		.first()
-		.click();
-}
-
-/**
- * The shared login's detail view, from the list or wherever the page restored to: a popup reopens
- * on its last screen, which can be the edit form another view of it left open.
- */
-async function openShared(page: Page): Promise<void> {
-	const detail = page.getByRole("button", { name: "Edit entry" });
-	const form = page.getByRole("button", { name: /Update Login/i });
-	const row = page.getByText(NAME).first();
-	await expect(detail.or(form).or(row).first()).toBeVisible();
-	if (await form.isVisible()) await back(page);
-	else if (!(await detail.isVisible())) await row.click();
-	await expect(detail).toBeVisible();
-}
-
-interface Edit {
-	username?: string;
-	notes?: string;
-}
-
-/** Fill the open edit form and save it, landing on the detail view. */
-async function saveForm(page: Page, edit: Edit): Promise<void> {
-	if (edit.username) await page.getByLabel(/Username or email/i).fill(edit.username);
-	if (edit.notes) await page.getByLabel(/Notes/i).fill(edit.notes);
-	await page.getByRole("button", { name: /Update Login/i }).click();
-	await expect(page.getByRole("button", { name: "Edit entry" })).toBeVisible();
-}
-
-/** Edit the shared login through its edit form. */
-async function editShared(page: Page, edit: Edit): Promise<void> {
-	await openShared(page);
-	await page.getByRole("button", { name: "Edit entry" }).click();
-	await saveForm(page, edit);
-}
-
 /**
  * Each device edits the login while the other can't hear it, then both come back. The phone's
  * page closes while the extension edits and locks (locking stops its sync); the phone returns
@@ -127,43 +95,20 @@ async function editApart(
 	mobileEdit: Edit,
 ): Promise<void> {
 	await mobile.page.close();
-	await editShared(ext.page, extEdit);
+	await editEntry(ext.page, NAME, extEdit);
 	await lock(ext.page);
 	await reopenMobile(mobile);
 	await unlock(mobile.page, PW);
-	await editShared(mobile.page, mobileEdit);
+	await editEntry(mobile.page, NAME, mobileEdit);
 	await unlock(ext.page, PW);
-}
-
-/**
- * Both devices end up showing the shared login with all these values at once and no conflict.
- * One snapshot each: while syncing, a device shows its own edit, then the other's, and each
- * value would pass alone at some point.
- */
-async function expectCombined(peers: Peer[], texts: string[]): Promise<void> {
-	for (const peer of peers) {
-		await openShared(peer.page);
-		await expect(async () => {
-			const shown = await peer.page.locator("#root").innerText();
-			for (const text of texts) expect(shown).toContain(text);
-			expect(shown).not.toMatch(CONFLICT);
-		}).toPass({ timeout: 90_000 });
-	}
-}
-
-/** Both devices show the shared login as a conflict. */
-async function expectConflict(peers: Peer[]): Promise<void> {
-	for (const peer of peers) {
-		await openShared(peer.page);
-		await expect(peer.page.getByText(CONFLICT)).toBeVisible({ timeout: 90_000 });
-	}
 }
 
 test("edits to different fields made apart", async ({ ext, mobile }) => {
 	await pairWithSharedLogin(ext, mobile);
 	await editApart(ext, mobile, { username: "from-the-laptop" }, { notes: "from the phone" });
-	if (COMBINING) await expectCombined([ext, mobile], ["from-the-laptop", "from the phone"]);
-	else await expectConflict([ext, mobile]);
+	const both = [ext.page, mobile.page];
+	if (COMBINING) await expectCombined(both, NAME, ["from-the-laptop", "from the phone"]);
+	else await expectConflict(both, NAME);
 });
 
 test("edits to the same field made apart conflict, and resolving on one settles both", async ({
@@ -172,19 +117,11 @@ test("edits to the same field made apart conflict, and resolving on one settles 
 }) => {
 	await pairWithSharedLogin(ext, mobile);
 	await editApart(ext, mobile, { notes: "laptop notes" }, { notes: "phone notes" });
-	await expectConflict([ext, mobile]);
+	await expectConflict([ext.page, mobile.page], NAME);
 
-	await ext.page.getByRole("button", { name: "Compare versions" }).click();
-	await ext.page.getByRole("button", { name: "Keep this one" }).click();
-	await expect(ext.page.getByText(CONFLICT)).toBeHidden();
-	const kept =
-		(await ext.page
-			.getByText(/^(laptop|phone) notes$/)
-			.first()
-			.textContent()) ?? "";
+	const kept = await keepShown(ext.page, NAME, ["laptop notes", "phone notes"]);
 	const dropped = kept === "laptop notes" ? "phone notes" : "laptop notes";
-
-	await openShared(mobile.page);
+	await openEntry(mobile.page, NAME);
 	await expect(mobile.page.getByText(CONFLICT)).toBeHidden({ timeout: 90_000 });
 	await expect(mobile.page.getByText(kept)).toBeVisible();
 	await expect(mobile.page.getByText(dropped)).toBeHidden();
@@ -195,18 +132,19 @@ test("an edit form saved after a change synced in doesn't overwrite it", async (
 	mobile,
 }) => {
 	await pairWithSharedLogin(ext, mobile);
-	await openShared(ext.page);
+	await openEntry(ext.page, NAME);
 	await ext.page.getByRole("button", { name: "Edit entry" }).click();
 
-	await editShared(mobile.page, { notes: "from the phone" });
+	await editEntry(mobile.page, NAME, { notes: "from the phone" });
 	// Wait until the change has reached the extension, in a second view of it.
 	const watcher = await ext.context.newPage();
 	await watcher.goto(popupUrl(ext.extensionId));
-	await openShared(watcher);
+	await openEntry(watcher, NAME);
 	await expect(watcher.getByText("from the phone")).toBeVisible({ timeout: 90_000 });
 	await watcher.close();
 
 	await saveForm(ext.page, { username: "from-the-laptop" });
-	if (COMBINING) await expectCombined([ext, mobile], ["from-the-laptop", "from the phone"]);
-	else await expectConflict([ext, mobile]);
+	const both = [ext.page, mobile.page];
+	if (COMBINING) await expectCombined(both, NAME, ["from-the-laptop", "from the phone"]);
+	else await expectConflict(both, NAME);
 });

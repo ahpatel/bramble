@@ -212,6 +212,21 @@ Two environmental dependencies, both of which surface as ordinary test failures:
 - The WebRTC data channel needs a real IP route between phone and host. Same LAN is enough; a guest
   network with client isolation is not.
 
+### Concurrent edits on the device
+
+`concurrent-edits.spec.ts` runs `sync/concurrent-edits.spec.ts`'s three scenarios with the app on
+the device as one peer, joined to a throwaway vault it deletes at the end. It keeps the phone apart
+by force-stopping the app (`am force-stop`) and attaching again after relaunch, since a new process
+is a new devtools socket. For combining (docs/sync-conflicts.md, Phase B), build the app with
+`VITE_COMBINE_CONCURRENT_EDITS=1` and run with `COMBINE_CONCURRENT_EDITS=1`; with
+`EXTENSION_DIR=dist-chromium-combine` both peers combine, without it only the device does, which is
+how to tell the device's own combining (on the native crypto core) from the extension's.
+
+The device's build must match the checkout, native libraries included: `jniLibs` and the uniffi
+Kotlin glue are git-ignored build output, so after building another branch, rebuild them
+(`scripts/build-crypto-ffi.sh android`) or Gradle fails on the glue, or worse, packages another
+branch's crypto.
+
 ### The device holds real data
 
 `smoke.spec.ts` is deliberately read-only — it navigates but never creates, edits or deletes a
