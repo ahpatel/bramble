@@ -920,8 +920,20 @@ async function dispatchRelease(
 	console.log("watching it (Ctrl-C stops watching, not the release)…");
 	if (workflow === "desktop-release.yml") {
 		// Two runs, not one: SignPath's approval happens in the sign-windows.yml run. See release-watch.ts.
+		let org = "";
+		try {
+			org = capture(`gh variable get SIGNPATH_ORGANIZATION_ID --repo ${REPO}`);
+		} catch {
+			// The prompt then points at SignPath's email instead.
+		}
 		const conclusion = watchDesktopRelease(
-			{ repo: REPO, runId: id, since, windows: !dryRun && !skip.has("windows") },
+			{
+				repo: REPO,
+				runId: id,
+				since,
+				windows: !dryRun && !skip.has("windows"),
+				signpathRequests: org ? `https://app.signpath.io/Web/${org}/SigningRequests` : undefined,
+			},
 			{
 				gh: (args) => execFileSync("gh", args, { encoding: "utf8" }),
 				sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),

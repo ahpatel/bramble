@@ -1,6 +1,6 @@
-// Follows a desktop release AND the sign-windows.yml run it starts, a line per change, printing the
-// SignPath approval link once announced. `gh run watch` sees only the first run, so it would sit
-// silent through the one step that waits on you outside GitHub. See docs/release-signing.md.
+// Follows a desktop release AND the sign-windows.yml run it starts, a line per change, and says when
+// to go and approve in SignPath. `gh run watch` sees only the first run, so it would sit silent
+// through the one step that waits on you outside GitHub. See docs/release-signing.md.
 
 export interface Job {
 	name: string;
@@ -9,24 +9,9 @@ export interface Job {
 	databaseId: number;
 }
 
-export interface Annotation {
-	annotation_level: string;
-	title: string;
-	message: string;
-}
-
-/** The notice sign-windows.yml raises once its request is submitted. Must match the workflow. */
-export const SIGNPATH_NOTICE = "Approve in SignPath";
-
 const SIGN_WORKFLOW = "sign-windows.yml";
-
-/** The approval link the signing job announced, or null until it has. */
-export function signpathLink(annotations: Annotation[]): string | null {
-	const notice = annotations.find(
-		(a) => a.annotation_level === "notice" && a.title === SIGNPATH_NOTICE,
-	);
-	return notice?.message.trim() || null;
-}
+/** The job in sign-windows.yml that submits and waits. Must match the workflow. */
+export const SIGN_JOB = "Sign with SignPath";
 
 function describe(job: Job): string {
 	if (job.status === "completed") return job.conclusion ?? "completed";
@@ -47,20 +32,22 @@ export function jobChanges(jobs: Job[], seen: Map<string, string>, prefix = ""):
 	return lines;
 }
 
+/**
+ * The prompt to go and approve, once the signing job has started.
+ *
+ * Read from the job's status, the one thing GitHub reports live: the run's notices and summaries
+ * appear only when the job ends, which during an approval wait is after you have approved.
+ */
+export function approvalPrompt(jobs: Job[], requests?: string): string | null {
+	const signing = jobs.some((j) => j.name === SIGN_JOB && j.status === "in_progress");
+	if (!signing) return null;
+	return requests
+		? `\n  windows: approve the newest signing request in SignPath now:\n    ${requests}\n`
+		: "\n  windows: approve the newest signing request in SignPath now (SignPath emails you the link).\n";
+}
+
 /** `gh` with these arguments, returning stdout; throws when it fails. */
 export type Gh = (args: string[]) => string;
-
-/** The link any started job of a signing run announced, or null. Throws if GitHub won't say. */
-export function findLink(repo: string, jobs: Job[], gh: Gh): string | null {
-	for (const job of jobs.filter((j) => j.status !== "queued")) {
-		const annotations = JSON.parse(
-			gh(["api", `repos/${repo}/check-runs/${job.databaseId}/annotations`]),
-		) as Annotation[];
-		const link = signpathLink(annotations);
-		if (link) return link;
-	}
-	return null;
-}
 
 export interface WatchOptions {
 	repo: string;
@@ -69,6 +56,8 @@ export interface WatchOptions {
 	since: string;
 	/** Whether this release builds Windows at all. */
 	windows: boolean;
+	/** SignPath's signing-requests page for this organization, when it is known. */
+	signpathRequests?: string;
 	pollMs?: number;
 }
 
@@ -86,7 +75,7 @@ export function watchDesktopRelease(o: WatchOptions, deps: WatchDeps): string {
 	const seenWindows = new Map<string, string>();
 	let signRun: string | null = null;
 	let signDone = false;
-	let link: string | null = null;
+	let prompted = false;
 	let failures = 0;
 
 	for (;;) {
@@ -144,10 +133,10 @@ export function watchDesktopRelease(o: WatchOptions, deps: WatchDeps): string {
 						"status,jobs",
 					]);
 					for (const line of jobChanges(sign.jobs, seenWindows, "windows: ")) deps.log(line);
-					if (!link) {
-						link = findLink(o.repo, sign.jobs, deps.gh);
-						if (link)
-							deps.log(`\n  windows: approve the signing request in SignPath now:\n    ${link}\n`);
+					const prompt = prompted ? null : approvalPrompt(sign.jobs, o.signpathRequests);
+					if (prompt) {
+						deps.log(prompt);
+						prompted = true;
 					}
 					if (sign.status === "completed") signDone = true;
 				}

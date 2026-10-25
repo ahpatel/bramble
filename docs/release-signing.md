@@ -675,8 +675,9 @@ covers three operating systems, so it has more parts than the others:
    bundling, which is what makes the split possible (`build-macos.ts --compile-only`).
 4. **Windows**, in `sign-windows.yml`, waits for your approval **in SignPath**, which holds the
    Authenticode certificate. That approval stays by design. The request goes in about 20 minutes
-   after the release starts, once the installer is built, and the terminal that dispatched the
-   release prints its link the moment it does (SignPath emails it too). You have five hours.
+   after the release starts, once the installer is built. The terminal that dispatched the
+   release says so the moment the sign job starts, with your SignPath signing-requests page, and
+   SignPath emails you the request's own link. You have five hours.
 5. **Publish**, on macOS, waits for your approval **in the `desktop-release` environment**. It is the
    only job the updater key ever reaches, and it runs first-party actions only. It bundles,
    codesigns and notarizes macOS from the handed-over binaries (`--bundle-only`), re-signs the
@@ -750,9 +751,12 @@ It is two jobs, as the other release workflows are: **build**, which holds no se
 which holds the SignPath token, never checks out the repository, and so runs none of its code. The
 split matters more here than elsewhere because the production certificate waits on a person (the
 test certificate signs at once, which is why the test runs never showed it). The sign job submits
-without waiting, announces the request's link as a notice titled "Approve in SignPath", then polls
-SignPath's REST API for up to five hours; `scripts/release-watch.ts` finds that notice and prints
-the link in the terminal that dispatched the release, and the release's publish job is given
+without waiting, records the request's link as an "Approve in SignPath" notice, then polls
+SignPath's REST API for up to five hours. That notice is a record, not a prompt: GitHub publishes a
+job's notices only when the job ends, which during an approval wait is after you have approved.
+The live prompt comes from `scripts/release-watch.ts`, which watches the job's status (reported
+live) and points at your organization's signing-requests page once the sign job starts. The
+release's publish job is given
 GitHub's six-hour maximum so it outlasts the wait.
 
 **If nobody approves in time,** the sign job fails and the installer it was waiting on is kept.

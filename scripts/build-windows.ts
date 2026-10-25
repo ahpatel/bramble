@@ -39,7 +39,6 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { signingKey } from "./desktop-signing-key.ts";
-import { findLink, type Job } from "./release-watch.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CONF = "packages/platform-desktop/src-tauri/tauri.conf.json";
@@ -167,23 +166,10 @@ function ciCollectBuild(): void {
 	const runId = readFileSync(RUN_ID_FILE, "utf8").trim();
 
 	const runUrl = `https://github.com/flythenimbus/bramble/actions/runs/${runId}`;
-	console.log(`build-windows: waiting on ${runUrl} for SignPath's approval…`);
-	// Best effort: a workflow token has no `checks: read`, so in CI this falls back to the run URL.
-	try {
-		const { jobs } = JSON.parse(capture("gh", ["run", "view", runId, "--json", "jobs"])) as {
-			jobs: Job[];
-		};
-		const link = findLink("flythenimbus/bramble", jobs, (args) => capture("gh", args));
-		console.log(
-			link
-				? `build-windows: approve the signing request in SignPath: ${link}`
-				: "build-windows: its SignPath approval link appears on that run once the installer is built.",
-		);
-	} catch {
-		console.log(
-			"build-windows: the SignPath approval link is on that run, and in SignPath's email.",
-		);
-	}
+	console.log(
+		`build-windows: waiting on ${runUrl} for SignPath's approval…\n` +
+			"  Approve the newest signing request in SignPath once the installer is built; they email the link.",
+	);
 	try {
 		// Once a minute: the wait can last hours, and a workflow token gets 1,000 requests an hour.
 		execFileSync("gh", ["run", "watch", runId, "--exit-status", "--interval", "60"], {

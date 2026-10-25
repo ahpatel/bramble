@@ -13,7 +13,7 @@ name: Sign Windows installer
 # Two jobs, like the other release workflows: `build` holds no secret, `sign` holds the SignPath
 # token. Split also because a production signature waits on a person approving it in SignPath, so a
 # slow approval must cost only the signing job: re-running it resubmits the same installer, no
-# rebuild. The approval link is announced as a notice on this run the moment the request is in.
+# rebuild. The terminal that dispatched the release says when to approve; see release-watch.ts.
 #
 # What this workflow deliberately does NOT do is produce the updater signature. That key is the
 # root of trust for every update the app will ever accept and it never leaves the release's publish
@@ -156,8 +156,8 @@ jobs:
           github-artifact-id: ${{ needs.build.outputs.artifact-id }}
           wait-for-completion: false
 
-      # The title is what scripts/release-watch.ts looks for, to print the link in the release's
-      # terminal. Change one, change both.
+      # A record on the run. GitHub shows notices only once the job ends, so not a live prompt: the
+      # live one is release-watch.ts, keyed on this job's name (SIGN_JOB there).
       - name: Announce where to approve it
         shell: bash
         env:
