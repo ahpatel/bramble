@@ -5,8 +5,13 @@ import { fileURLToPath } from "node:url";
 import { type BrowserContext, test as base, chromium } from "@playwright/test";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
-/** The built, unpacked Chromium extension. Build it first: `pnpm --filter @vault/platform-extension build:chromium`. */
-const EXTENSION_PATH = path.resolve(dir, "../../packages/platform-extension/dist-chromium");
+/** The built, unpacked Chromium extension. Build it first: `pnpm --filter @vault/platform-extension build:chromium`.
+ * EXTENSION_DIR picks another build (the combining e2e's). */
+const EXTENSION_PATH = path.resolve(
+	dir,
+	"../../packages/platform-extension",
+	process.env.EXTENSION_DIR ?? "dist-chromium",
+);
 
 /**
  * Launch a persistent Chromium with the extension loaded and resolve its id from the MV3

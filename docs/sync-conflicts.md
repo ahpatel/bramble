@@ -417,7 +417,9 @@ combining at sync time, not at display time, is what gets the combined password 
    too, switched off by a constant (`COMBINE_CONCURRENT_EDITS = false`); tests run it on.
 2. **B2**: flip the constant once most devices write part stamps. Nothing else changes in code:
    the final review's B2 blockers were fixed in B1. The README and site copy ("never compares
-   plaintext", "you choose between both versions") change in that release.
+   plaintext", "you choose between both versions") change in that release. Until then CI also
+   runs the two-peer sync suite with combining on (`pnpm test:e2e:sync:combine`, built with
+   `VITE_COMBINE_CONCURRENT_EDITS=1`), so B2's behaviour is tested on every push.
 
 ### Edge cases (checked against the rules above)
 

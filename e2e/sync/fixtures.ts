@@ -83,6 +83,13 @@ export const test = base.extend<{ ext: Peer & { extensionId: string }; mobile: P
 
 export const expect = test.expect;
 
+/** Bring the mobile app back after its page closed: the same browser profile, so the same vault. */
+export async function reopenMobile(peer: Peer): Promise<void> {
+	peer.page = await peer.context.newPage();
+	await peer.page.goto(MOBILE_URL, { waitUntil: "domcontentloaded" });
+	await peer.page.locator("#root").waitFor();
+}
+
 // --- shared UI drivers (the two peers render the same @core screens) ---
 
 /** Create the first vault on a peer, through the setup flow. */

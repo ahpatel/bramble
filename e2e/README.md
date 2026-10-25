@@ -131,6 +131,15 @@ The config starts the relay (`nostr-relay/node/relay.mjs`, port 7400) and the mo
 **Rebuild the extension first.** The mobile peer is served by vite and picks up `@core` changes
 live; the extension peer loads `dist-chromium`, so a core change that is not rebuilt makes the two
 peers run *different code*, and the spec fails somewhere unrelated to what you changed.
+
+**Combining on.** `pnpm test:e2e:sync:combine` runs the same suite with sync's combining switched
+on, as release B2 will ship it (docs/sync-conflicts.md, Phase B). It builds the extension with
+`VITE_COMBINE_CONCURRENT_EDITS=1` into `dist-chromium-combine` and serves the mobile peer with the
+same flag on port 5198, so the ordinary suite keeps testing what ships now.
+`concurrent-edits.spec.ts` reads which way it runs: edits to different fields made apart conflict
+with combining off and combine with it on; the same field conflicts either way. It separates the
+peers by closing the mobile page while the extension edits and locks (locking stops its sync),
+then edits on the mobile peer while the extension is still locked.
 `roster-signature-backfill.spec.ts` covers the phase-1 roster migration: it pairs the peers, strips
 the signatures out of both stored rosters to recreate the pre-2026-07-09 world, reopens the popup,
 and asserts the extension re-signs itself through the real host and that the peer converges on that
