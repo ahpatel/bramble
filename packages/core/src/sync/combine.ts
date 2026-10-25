@@ -186,6 +186,8 @@ function combinePair(a: Side, b: Side): Side | null {
 		}
 		items[list] = Object.fromEntries(kept.map(([key, , stamp]) => [key, stamp]));
 		if (kept.length > 0) out[list] = kept.map(([, item]) => item);
+		// A login's URL list is required, so it stays when empty.
+		else if (list === "urls" && type === "login") out[list] = [];
 		else delete out[list];
 	}
 	const min = (x: unknown, y: unknown) =>
@@ -263,7 +265,8 @@ export async function combineSiblings(
 			partStampsAt: hlc,
 		} as unknown as Entry,
 		folded.map((s) => s.data),
-		hlc.wall,
+		// When the password that won replaced them, not when the versions were combined.
+		(acc.parts.credential ?? hlc).wall,
 	);
 	return { data: data as EntryData, hlc, causal, replaces: folded.map((s) => s.envelope) };
 }

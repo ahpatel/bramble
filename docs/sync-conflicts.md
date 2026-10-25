@@ -248,10 +248,14 @@ A **part** is one top-level field of the decrypted entry, except fields that mus
 | one part per field | every other field: `name`, `notes`, `customFields`, `archivedAt`, `autofillEnabled`, `autoSubmit`, `subdomainMatch`, and any field this build doesn't know (a newer build's), compared as opaque JSON |
 | item by item | `urls` (by string), `tags` (by `tagKey`), `passkeys` (by `credentialId`) |
 
+A field named like one of its type's groups (a future top-level `credential` on a login) is a part
+of its own, named `field:credential`, so it can't take the group's place.
+
 Not parts, because they are derived or per-device: `createdAt` (take the earliest), `updatedAt`
 and `lastUsedAt` (take the latest), `breach` (follows whichever credential is kept), and
 `passwordChangelog` (the union of both sides' rows plus any superseded password, through
-`withSupersededPasswords`, still capped). A different `type` on the two sides is a conflict.
+`withSupersededPasswords`, still capped; a superseded password is dated when the password that won
+replaced it, not when the versions combined). A different `type` on the two sides is a conflict.
 `customFields` has no item ids, so it is one part: both devices editing custom fields is a
 conflict.
 
@@ -333,7 +337,7 @@ the same set writes the same version and nothing bounces:
   `causalKey`s. The node is unique per input set, so two devices that combined different sets
   never share a stamp, and it doubles as the writer key, used once.
 - Plaintext: built as above; `partStamps` and `itemStamps` carried from the side each value came
-  from; `partStampsAt` is the combined `hlc`.
+  from; `partStampsAt` is the combined `hlc`. A login keeps its `urls` list when it ends up empty.
 
 A combined version is an **ancestor** of any version or delete whose history holds all its inputs:
 it is a pure function of them, so whoever saw them all has seen it. Without that, a delete made

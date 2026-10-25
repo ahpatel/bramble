@@ -245,6 +245,20 @@ describe("combineSiblings", () => {
 		expect(await combineSiblings([stripped, v])).toBeNull();
 	});
 
+	it("a combined login with no URLs keeps its urls list", async () => {
+		const x = edit(base, { password: "px" }, at(20, "a"));
+		const y = edit(base, { notes: "ny" }, at(30, "b"));
+		expect(as(await combineSiblings([x, y]))?.urls).toEqual([]);
+	});
+
+	// A field named like a group (a future field called `credential`) is a part of its own.
+	it("a field named like a group doesn't take the group's place", async () => {
+		const withField = created(login({ credential: "f0" }), at(10, "a"));
+		const x = edit(withField, { credential: "f1" }, at(20, "a"));
+		const y = edit(withField, { password: "py" }, at(30, "b"));
+		expect(as(await combineSiblings([x, y]))).toMatchObject({ credential: "f1", password: "py" });
+	});
+
 	it("two items under one key: no combine", async () => {
 		const dup = created(login({ urls: ["https://x.example", "https://x.example"] }), at(10, "a"));
 		const x = edit(dup, { notes: "nx" }, at(20, "a"));
@@ -364,7 +378,8 @@ describe("combineSiblings", () => {
 		const x = edit(base, { password: "px" }, at(20, "a"));
 		const y = edit(base, { notes: "ny" }, at(30, "b"));
 		const c = await combineSiblings([x, y]);
-		expect(as(c)?.passwordChangelog).toEqual([{ value: "p", changedAt: 30 }]);
+		// Dated when px replaced it (x's change at 20), not when the versions were combined.
+		expect(as(c)?.passwordChangelog).toEqual([{ value: "p", changedAt: 20 }]);
 	});
 
 	it("a stripped copy of a combined version is still an ancestor of its descendants", async () => {

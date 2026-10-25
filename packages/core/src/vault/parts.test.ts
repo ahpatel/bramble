@@ -57,6 +57,12 @@ describe("parts", () => {
 		}
 	});
 
+	it("a field named like a group is its own part, beside the group", () => {
+		const parts = partsOf({ ...login(), credential: "x" } as unknown as Entry);
+		expect(parts.get("credential")).toEqual({ username: "u", password: "p" });
+		expect([...parts.values()]).toContain("x");
+	});
+
 	it("empty, absent and [] compare equal", () => {
 		expect(partsEqual("", undefined)).toBe(true);
 		expect(partsEqual([], undefined)).toBe(true);

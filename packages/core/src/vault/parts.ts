@@ -39,8 +39,12 @@ const NOT_PARTS = new Set<string>([
 	...ITEM_LISTS,
 ]);
 
+/** The part name of a field named like one of its type's groups, so it can't take its place. */
+const FIELD_PART = "field:";
+
 /** The fields a part covers: a group's fields, or the field the part is named after. */
 export function fieldsOfPart(type: string, part: string): readonly string[] {
+	if (part.startsWith(FIELD_PART)) return [part.slice(FIELD_PART.length)];
 	return GROUPS[type]?.[part] ?? [part];
 }
 
@@ -74,7 +78,7 @@ export function partsOf(data: EntryData): Map<string, unknown> {
 	}
 	for (const key of Object.keys(record)) {
 		if (NOT_PARTS.has(key) || grouped.has(key)) continue;
-		parts.set(key, normalize(record[key]));
+		parts.set(key in groups ? `${FIELD_PART}${key}` : key, normalize(record[key]));
 	}
 	return parts;
 }

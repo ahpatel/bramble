@@ -216,7 +216,7 @@ const CASES: Record<string, { inputs: unknown[]; output: unknown }> = {
 				passwordChangelog: [
 					{
 						value: "p",
-						changedAt: 30,
+						changedAt: 20,
 					},
 				],
 			},
