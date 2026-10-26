@@ -50,6 +50,16 @@ class NativeHttpPlugin : Plugin() {
      * hold up every other plugin, crypto and storage included, for as long as an upload takes.
      * iOS has the same rule for the same reason.
      */
+    // OkHttp's default names the library, and DuckDuckGo answers that with a bare 403 (#123).
+    private val userAgent by lazy {
+        val version = try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        } catch (e: Exception) {
+            null
+        }
+        "Bramble/${version ?: "0"} (Android)"
+    }
+
     private val client = OkHttpClient.Builder()
         .cookieJar(CookieJar.NO_COOKIES)
         .followRedirects(false)
@@ -90,7 +100,7 @@ class NativeHttpPlugin : Plugin() {
             val request = Request.Builder()
                 .url(url)
                 .method(method, requestBody)
-                .headers(headers.toHeaders())
+                .headers(withUserAgent(headers, userAgent).toHeaders())
                 .build()
 
             // The read timer starts once the body is handed to the OS, which may still be draining
@@ -157,3 +167,8 @@ class NativeHttpPlugin : Plugin() {
         val BODYLESS_METHODS = setOf("GET", "HEAD")
     }
 }
+
+/** The request's own User-Agent when it set one, else [userAgent]. */
+internal fun withUserAgent(headers: Map<String, String>, userAgent: String): Map<String, String> =
+    if (headers.keys.any { it.equals("User-Agent", ignoreCase = true) }) headers
+    else headers + ("User-Agent" to userAgent)

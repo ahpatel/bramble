@@ -23,9 +23,9 @@
     <string name="af_empty_no_match">No logins match “%s”.</string>
     <string name="af_section_for">For %s</string>
     <string name="af_section_matches">Matches</string>
-    <string name="af_section_all_items">All items</string>
     <string name="af_section_no_matches">No matches for %s</string>
-    <string name="af_section_items_count">Items (%d)</string>
+    <string name="af_section_other_logins">Other logins</string>
+    <string name="af_section_logins_count">Logins (%d)</string>
     <string name="af_no_name">(no name)</string>
 
     <!-- Biometric prompt (BiometricUnlock) -->

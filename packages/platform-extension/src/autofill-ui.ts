@@ -45,6 +45,11 @@ const ANNOUNCE_ATTEMPTS = 25;
 const MAX_FRAME_DEPTH = 8;
 const MAX_FRAMES_VISITED = 128;
 let peer: { win: Window; origin: string } | null = null;
+// Relayed picks go straight to the field's frame, past the content script's early-click guard, so
+// it is kept here: a click counts only once the rows have sat still this long. The host frame
+// reports each move (UI_MOVED), forged ones included, and a new render restarts it too.
+const EARLY_CLICK_MS = 500;
+let settledAt = Number.NEGATIVE_INFINITY;
 
 let otpOnly = false;
 // Navigable rows in render order: an optional leading "suggest a password" row,
@@ -377,6 +382,7 @@ if (TRACKS_VISIBILITY) {
 
 /** Whether a click may fill; when it may not, say how to fill from the keyboard instead. */
 function clickAllowed(): boolean {
+	if (RELAYED && performance.now() - settledAt < EARLY_CLICK_MS) return false;
 	if (!TRACKS_VISIBILITY || vouchedVisible) return true;
 	const list = document.body.querySelector(".tp-list");
 	if (list && !list.querySelector(".tp-hint")) {
@@ -462,6 +468,10 @@ window.addEventListener("message", (e) => {
 		// post here, so this binding is not a trust decision: the peer re-checks our
 		// origin, our source, and that a picked id is one it actually rendered.
 		const type = (e.data as { type?: string } | undefined)?.type;
+		if (type === "UI_MOVED" && e.source === window.parent) {
+			settledAt = performance.now();
+			return;
+		}
 		if (!e.source || !type || !CONTENT_TYPES.has(type)) return;
 		peer = { win: e.source as Window, origin: e.origin };
 		handleInbound(e.data as Inbound | undefined);
@@ -498,6 +508,7 @@ function handleInbound(msg: Inbound | undefined): void {
 				body.push(matchRow(m, m.id === msg.carriedId));
 			}
 			render(body.join(""));
+			settledAt = performance.now();
 			post({ type: "UI_HIGHLIGHT", active: false });
 			break;
 		}
@@ -505,6 +516,7 @@ function handleInbound(msg: Inbound | undefined): void {
 			rows = [{ kind: "locked" }];
 			highlight = -1;
 			render(lockedRow());
+			settledAt = performance.now();
 			post({ type: "UI_HIGHLIGHT", active: false });
 			break;
 		case "UI_KEY":

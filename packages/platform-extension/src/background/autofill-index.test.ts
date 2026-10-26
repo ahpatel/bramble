@@ -1,3 +1,5 @@
+import type { Entry } from "@core/hooks/useVault";
+import { toAutofillIndex } from "@core/vault/autofill-index";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	autofillSessionCapability,
@@ -395,6 +397,68 @@ describe("AUTOFILL_QUERY direct response transport", () => {
 			expect.arrayContaining(["login1", "login2"]),
 		);
 		expect(bg.state.tabMessages.find((m) => m.message.type === "AUTOFILL_MATCHES")).toBeUndefined();
+	});
+});
+
+describe("exact logins on one host, told apart by port (#131)", () => {
+	// Pushed the way the popup pushes it: core's projection of the saved entries.
+	const NAS = toAutofillIndex(
+		[
+			{ id: "dsm", urls: ["http://nas.local:5000"], subdomainMatch: "exact" },
+			{ id: "portainer", urls: ["http://nas.local:9000"], subdomainMatch: "exact" },
+			{ id: "any-port", urls: ["http://nas.local"], subdomainMatch: "exact" },
+		].map(
+			(e) =>
+				({
+					type: "login",
+					name: e.id,
+					username: "admin",
+					password: e.id,
+					...e,
+				}) as unknown as Entry,
+		),
+	);
+
+	function nasSender(origin: string, tabId: number): any {
+		return {
+			origin,
+			url: `${origin}/`,
+			tab: { id: tabId, windowId: 1, url: `${origin}/` },
+			frameId: 0,
+		};
+	}
+
+	async function nasBackground(): Promise<BackgroundHarness> {
+		const bg = await loadBackground({ sessionSeed: { [VEK_KEY]: "SEED" } });
+		await setAutofillIndex(bg, NAS);
+		return bg;
+	}
+
+	it.each([
+		["http://nas.local:5000", ["dsm", "any-port"]],
+		["http://nas.local:9000", ["portainer", "any-port"]],
+		["http://nas.local", ["any-port"]],
+	])("offers on %s only the logins for that port", async (origin, ids) => {
+		const bg = await nasBackground();
+		const { resp } = await bg.send(
+			{ type: "AUTOFILL_QUERY", hasLogin: true },
+			nasSender(origin, 3),
+		);
+		expect(resp.data.logins.map((l: { id: string }) => l.id)).toEqual(ids);
+	});
+
+	it("refuses to fill a port-pinned login on another port of the same host", async () => {
+		const bg = await nasBackground();
+		const wrong = await bg.send(
+			{ type: "AUTOFILL_SELECT", payload: { entryId: "portainer" } },
+			nasSender("http://nas.local:5000", 3),
+		);
+		expect(wrong.resp).toEqual({ ok: false, error: "unavailable" });
+		const right = await bg.send(
+			{ type: "AUTOFILL_SELECT", payload: { entryId: "dsm" } },
+			nasSender("http://nas.local:5000", 3),
+		);
+		expect(right.resp).toMatchObject({ ok: true, data: { payload: { password: "dsm" } } });
 	});
 });
 

@@ -41,6 +41,12 @@ object TrustedBrowsers {
             setOf("BB:7B:B3:1C:57:3C:46:A1:DA:7F:C5:C5:28:A6:AC:F4:32:10:84:56:FE:EC:50:81:0C:7F:33:69:4E:B3:D2:D4"),
         "com.opera.mini.native" to
             setOf("57:AC:BC:52:5F:1B:2E:BD:19:19:6C:D6:F0:14:39:7C:C9:10:FD:18:84:1E:0A:E8:50:FE:BC:3E:1E:59:3F:F2"),
+        // Samsung Internet (#70). GPM marks its second key userdebug, which getOrigin ignores on user
+        // builds, so only the release key is here.
+        "com.sec.android.app.sbrowser" to
+            setOf("34:DF:0E:7A:9F:1C:F1:89:2E:45:C0:56:B4:97:3C:D8:1C:CF:14:8A:40:50:D1:1A:EA:4A:C5:A6:5F:90:0A:42"),
+        "com.sec.android.app.sbrowser.beta" to
+            setOf("34:DF:0E:7A:9F:1C:F1:89:2E:45:C0:56:B4:97:3C:D8:1C:CF:14:8A:40:50:D1:1A:EA:4A:C5:A6:5F:90:0A:42"),
         // Vivaldi self-signs its three channels with one key. Added while diagnosing #42, but not a
         // fix for it: the reported failure is the get-flow entry, not origin trust.
         "com.vivaldi.browser" to
@@ -51,7 +57,8 @@ object TrustedBrowsers {
             setOf("E8:A7:85:44:65:5B:A8:C0:98:17:F7:32:76:8F:56:89:B1:66:2E:C4:B2:BC:5A:0B:C0:EC:13:8D:33:CA:3D:1E"),
         // Privacy browsers NOT in Google's GPM list, so permanent MANUAL entries. Fingerprints are read
         // on-device (never guessed), not from GPM. Vanadium (GrapheneOS Chromium, shipped as Trichrome)
-        // is signed with the GrapheneOS release key. See docs/sec-audit-7726.md B2 / #9.
+        // is signed with the GrapheneOS release key; GPM has since listed it with this same key.
+        // See docs/sec-audit-7726.md B2 / #9.
         "app.vanadium.browser" to
             setOf("C6:AD:B8:B8:3C:6D:4C:17:D2:92:AF:DE:56:FD:48:8A:51:D3:16:FF:8F:2C:11:C5:41:02:23:BF:F8:A7:DB:B3"),
         // IronFox (hardened Gecko, Mull successor; package changed from us.spotco.fennec_dos).

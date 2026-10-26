@@ -1,0 +1,7 @@
+ServiceName,FolderPath,ServiceUrl,Username,CurrentPassword,AliasEmail,TwoFactorSecret,AliasGender,AliasFirstName,AliasLastName,AliasBirthDate,CardholderName,CardNumber,CardExpiryMonth,CardExpiryYear,CardCvv,CardPin,Notes,CreatedAt,UpdatedAt
+GitHub,Dev,https://github.com,octo-sample,123456,,JBSWY3DPEHPK3PXP,,,,,,,,,,,,03/02/2026 09:15:00,03/02/2026 09:15:00
+Google,Personal/Email,"https://accounts.google.com,https://mail.google.com",,123456,jane.sample@alias.example,,Female,Jane,Sample,03/14/1990 00:00:00,,,,,,,recovery codes are in the safe,03/02/2026 09:16:00,03/04/2026 18:02:11
+Visa,,,,,,,,,,,Jane Sample,4111111111111111,03,2029,123,0000,,03/02/2026 09:17:00,03/02/2026 09:17:00
+Wi-Fi,,,,,,,,,,,,,,,,,"Network: Sample-5G
+Password: 123456",03/02/2026 09:18:00,03/02/2026 09:18:00
+Shop,,https://shop.example,,123456,shop.sample@alias.example,,,,,,,,,,,,,03/02/2026 09:19:00,03/02/2026 09:19:00

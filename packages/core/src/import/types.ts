@@ -9,7 +9,9 @@ export type ImportProvider =
 	| "keepass"
 	| "apple"
 	| "google"
-	| "lastpass";
+	| "lastpass"
+	| "enpass"
+	| "aliasvault";
 
 /** Normalized parse result. `imported` is id-less (the vault assigns ids); `warnings` flags lossy mappings. */
 export interface ImportResult {

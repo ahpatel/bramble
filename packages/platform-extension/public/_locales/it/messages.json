@@ -168,7 +168,8 @@
 		"description": "Accessible label for the retry button on a failed email-alias row."
 	},
 	"cardUsedHere": {
-		"message": "Usata qui"
+		"message": "Usata qui",
+		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
 	},
 	"passkeyNoneTitle": {
 		"message": "Nessuna passkey Bramble per questo sito"

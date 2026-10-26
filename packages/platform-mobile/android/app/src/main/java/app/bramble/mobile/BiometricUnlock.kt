@@ -40,7 +40,7 @@ object BiometricUnlock {
 
     fun hasCachedSecret(context: Context): Boolean {
         val id = VaultReader.activeVaultId(context) ?: return false
-        val p = context.getSharedPreferences(BrambleAutofill.BIOMETRIC_PREFS, Context.MODE_PRIVATE)
+        val p = BrambleAutofill.appPrefs(context, BrambleAutofill.BIOMETRIC_PREFS)
         return p.contains(ctKey(id)) && p.contains(ivKey(id))
     }
 
@@ -51,7 +51,7 @@ object BiometricUnlock {
             onResult(Result.NoSecret)
             return
         }
-        val p = activity.getSharedPreferences(BrambleAutofill.BIOMETRIC_PREFS, Context.MODE_PRIVATE)
+        val p = BrambleAutofill.appPrefs(activity, BrambleAutofill.BIOMETRIC_PREFS)
         val ctB64 = p.getString(ctKey(id), null)
         val ivB64 = p.getString(ivKey(id), null)
         if (ctB64 == null || ivB64 == null) {
@@ -118,7 +118,7 @@ object BiometricUnlock {
     }
 
     private fun clearSecret(context: Context, vaultId: String) {
-        context.getSharedPreferences(BrambleAutofill.BIOMETRIC_PREFS, Context.MODE_PRIVATE)
+        BrambleAutofill.appPrefs(context, BrambleAutofill.BIOMETRIC_PREFS)
             .edit().remove(ctKey(vaultId)).remove(ivKey(vaultId)).apply()
     }
 }

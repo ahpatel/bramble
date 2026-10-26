@@ -44,11 +44,12 @@ import {
 	closeRelayed,
 	installRelayClient,
 	keyToRelayed,
+	relayedPickerIsLive,
 	relayedPickerIsOpen,
 	repositionRelayed,
 	showRelayed,
 } from "./relay-client";
-import { closeRelayHost, showRelayHost } from "./relay-host";
+import { closeRelayHost, destroyRelayHost, relayHostContains, showRelayHost } from "./relay-host";
 import {
 	isAccountCreationForm,
 	isOnAccountCreationForm,
@@ -137,8 +138,42 @@ function rectOf(field: HTMLInputElement): RelayRect {
 	return { x: r.left, y: r.top, width: r.width, height: r.height };
 }
 
-function shouldRelay(field: HTMLInputElement): boolean {
-	return !frameRelay.isTop() && frameRelay.needsRelay(rectOf(field));
+// The top page never brought a relayed picker up (COEP blocks the UI there, or no content script
+// runs there), so this frame stops asking it for the rest of the page's life.
+let relayUnavailable = false;
+const RELAY_READY_MS = 2000;
+let relayReadyTimer: ReturnType<typeof setTimeout> | null = null;
+// Re-draws the latest relayed render here, should the relay never come up.
+let relayFallback: (() => void) | null = null;
+
+/**
+ * Where a picker for `field` is drawn. In a frame, a card picker is always hosted by the top page:
+ * drawn here it is subject to whatever the embedding page does around this frame (fading or
+ * filtering it costs it its clicks) and never hears a click on that page. A login picker is
+ * hosted there only for a same-site frame, because the top page can read a picker it hosts off
+ * its own DOM. See docs/autofill.md.
+ */
+function placement(field: HTMLInputElement): "relay" | "local" | "none" {
+	if (frameRelay.isTop()) return "local";
+	const card = kindOf(getPageFields(), field) === "card";
+	if (!card && cachedResult?.sameSiteAsTop !== true) return "local";
+	if (!relayUnavailable) return "relay";
+	// Nowhere upstairs: draw here if there is room. A dropdown clipped to nothing helps no one.
+	return frameRelay.needsRelay(rectOf(field)) ? "none" : "local";
+}
+
+/** Give the top page a moment to bring the relayed picker up; if it never does, draw it here. */
+function armRelayFallback(redraw: () => void): void {
+	relayFallback = redraw;
+	if (relayReadyTimer !== null || relayedPickerIsLive()) return;
+	relayReadyTimer = setTimeout(() => {
+		relayReadyTimer = null;
+		if (relayedPickerIsLive() || !relayedField) return;
+		relayUnavailable = true;
+		const fallback = relayFallback;
+		dropRelayed();
+		fallback?.();
+	}, RELAY_READY_MS);
 }
 
 /** The field the visible picker belongs to, whichever renderer is showing it. */
@@ -149,6 +184,7 @@ function anchorField(): HTMLInputElement | null {
 function dropRelayed(): void {
 	relayedField = null;
 	relayedHighlight = false;
+	relayFallback = null;
 	if (relayedPickerIsOpen()) closeRelayed();
 }
 
@@ -193,7 +229,12 @@ function showMatchesFor(
 	},
 ): void {
 	if (matches.length === 0 && !opts?.suggest && !opts?.alias) return;
-	if (!shouldRelay(field)) {
+	const where = placement(field);
+	if (where === "none") {
+		removePicker();
+		return;
+	}
+	if (where === "local") {
 		dropRelayed();
 		picker.showMatches(matches, field, opts);
 		return;
@@ -208,6 +249,7 @@ function showMatchesFor(
 		alias: opts?.alias,
 		carriedId: opts?.carriedId,
 	});
+	armRelayFallback(() => showMatchesFor(matches, field, opts));
 }
 
 /**
@@ -256,7 +298,12 @@ function handleRelayedKey(e: KeyboardEvent): boolean {
 }
 
 function showLockedFor(field: HTMLInputElement): void {
-	if (!shouldRelay(field)) {
+	const where = placement(field);
+	if (where === "none") {
+		removePicker();
+		return;
+	}
+	if (where === "local") {
 		dropRelayed();
 		picker.showLocked(field);
 		return;
@@ -264,6 +311,7 @@ function showLockedFor(field: HTMLInputElement): void {
 	picker.remove();
 	relayedField = field;
 	showRelayed(rectOf(field), { kind: "locked" });
+	armRelayFallback(() => showLockedFor(field));
 }
 
 function currentTargetKind(target: HTMLInputElement): TargetKind | null {
@@ -413,6 +461,7 @@ function applySelectResponse(
 		data.payload.username,
 		data.payload.password,
 		data.isAuto,
+		intent.target,
 	);
 	fillCustomFields(data.payload.customFields, data.isAuto);
 	fillOtp(data.payload.totp);
@@ -978,6 +1027,13 @@ if (frameRelay.isTop()) {
 	frameRelay.onAnchor(showRelayHost);
 	frameRelay.onClose(closeRelayHost);
 } else {
+	// A click landed on a page around this frame: the user has moved on, as with a click
+	// elsewhere in this one.
+	frameRelay.onDismiss(() => {
+		if (!pickerIsOpen()) return;
+		silenceAutoOpen = true;
+		removePicker();
+	});
 	installRelayClient(frameRelay, {
 		onPick: (entryId, otpOnly) => selectMatch(entryId, false, otpOnly),
 		onHighlight: (active) => {
@@ -1070,7 +1126,7 @@ api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		cancelFill();
 		picker.remove();
 		dropRelayed();
-		fillForm(fill.username ?? "", fill.password, false);
+		fillForm(fill.username ?? "", fill.password, false, into);
 		if (fill.totp) fillOtp(fill.totp);
 		sendResponse({ ok: true });
 		return false;
@@ -1252,6 +1308,13 @@ function bootstrap(): void {
 			if (e.isTrusted && !isPickerInteractionTarget(target)) cancelSubmit();
 			if (e.isTrusted && activeFill && !isPickerInteractionTarget(target)) {
 				if (target !== activeFill.target) cancelOperations();
+			}
+			// A frame never hears a click on the page around it, and focus leaving it for this page
+			// looks the same as leaving the window, which keeps its picker up on purpose. So tell
+			// the frames, and drop any picker this frame hosts for one of them.
+			if (e.isTrusted && !(target instanceof Node && relayHostContains(target))) {
+				frameRelay.dismissDescendants();
+				destroyRelayHost();
 			}
 			const host = picker.activeHost();
 			if (host) {

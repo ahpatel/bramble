@@ -1,8 +1,10 @@
-Novidades nesta versão:
+O que há de novo nesta versão:
 
-- Um cofre não se recusa mais a abrir porque contém itens de um dos seus outros cofres. Um problema de sincronização na extensão do navegador podia copiar itens de um cofre para outro, e esse cofre então não conseguia ser desbloqueado, exibindo um erro técnico mesmo com a senha correta. O Bramble agora separa esses itens neste dispositivo, sem alterações, e abre o cofre com todo o restante.
-- Durante a sincronização, o Bramble agora recusa itens que pertencem a um cofre diferente, para que um dispositivo que ainda tenha o problema não possa repassá-lo.
-- Se um cofre ainda não abrir, o Bramble informa isso em linguagem simples e inclui um link para nosso rastreador de problemas, em vez de exibir um erro técnico.
-- Uma atualização de segurança no Capacitor, o framework no qual o aplicativo é construído.
+- Quando o mesmo item é editado em dois dispositivos antes da sincronização, o Bramble agora mantém as duas versões e mostra o conflito, permitindo compará-las e manter uma ou ambas. Antes, uma das edições era perdida sem aviso.
+- Salvar uma edição não substitui mais uma alteração sincronizada durante a edição.
+- Editar um item arquivado mantém o item arquivado.
+- Importar do Enpass e do AliasVault. Logins já existentes de outro gerenciador de senhas são retidos em vez de duplicados.
+- Os números de cartão são exibidos em grupos e copiados apenas como dígitos. As notas podem ser selecionadas e copiadas, e o campo de notas aumenta conforme você digita.
+- Erros de backup do Dropbox mais claros e correção para chaves de alias do DuckDuckGo rejeitadas.
 
 Sem conta, sem nuvem. Tudo permanece nos seus dispositivos.

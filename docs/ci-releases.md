@@ -66,7 +66,8 @@ run, one set of touches, and then the token goes in a drawer as the recovery pat
 Each target gets one workflow that builds, signs and publishes. There is no "CI builds, you sign"
 split any more, because the keys are in CI too. Windows keeps its own shape inside that: SignPath
 verifies where an installer came from, and its trust is configured around `sign-windows.yml`, so
-that workflow is left exactly as it is, throwaway updater key and all. What moved is the other end:
+that workflow stays separate, throwaway updater key and all, with a build job and a sign job of its
+own (see release-signing.md, "Windows"). What moved is the other end:
 `build-windows.ts --ci-start` is dispatched by the desktop workflow's first job instead of a Mac,
 and `--ci-collect`, which re-signs the installer for the updater, runs in the publish job that holds
 the real key.

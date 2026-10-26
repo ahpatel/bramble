@@ -370,7 +370,7 @@ believing it already found the other. Frequent socket drops used to hide this by
 hello every minute or two — which the keepalive above removes. So the mesh now re-announces every
 30s, first forgetting any peer it holds no transport for (`Mesh.announce`).
 
-## Merge engine: entry-level last-writer-wins
+## Merge engine: entry-level, keeping concurrent versions
 
 ### Stamps
 
@@ -396,9 +396,11 @@ binary layout in `vault-format.ts`:
 
 This is the security property behind entry-level merge. To decide a conflict the host compares
 **outer metadata only** (`id`, HLC). The winning entry is carried over **as its sealed blob**
-(`wrappedDek`, `dekIv`, `ciphertext`, `iv` moved as bytes). No per-entry DEK is unwrapped, no
-password is ever decrypted during merge. The only thing decrypted is the envelope index, which
-holds no secrets.
+(`wrappedDek`, `dekIv`, `ciphertext`, `iv` moved as bytes). Picking the winner unwraps no
+per-entry DEK; the only thing decrypted for it is the envelope index, which holds no secrets.
+Separately, each incoming entry that would win is test-decrypted inside the crypto host to
+confirm it opens under this vault's key, and only the yes/no verdict comes out (`admit` in
+`apply-remote.ts`; see [sync-vault-pinning-and-quarantine.md](sync-vault-pinning-and-quarantine.md)).
 
 (Field-level merge, where concurrent edits to *different fields* of one entry both survive,
 would require unwrapping DEKs and reconciling plaintext fields. That is the only variant that
@@ -429,11 +431,17 @@ change, not a check moved around.
 
 ### Rules
 
-- **Entry vs entry:** for a given `id`, the greatest HLC wins; the whole losing entry is
-  **discarded** (see "Conflict loser" below). The loser is not kept anywhere.
-- **Entry vs tombstone:** compare the entry's HLC against any tombstone for the same id; the
-  greater wins. A delete is a stamped tombstone, never a silent removal, so a stale copy on
-  another device cannot resurrect it. An edit stamped *after* a delete correctly undeletes.
+- **Entry vs entry:** each version carries its causal history, so a version that descends from
+  another replaces it, and two concurrent versions are both kept: the higher stamp is displayed
+  and the other waits, sealed, in `conflicts` until someone chooses (see "Conflict loser"
+  below and [sync-conflicts.md](sync-conflicts.md)). A version from an older build carries no
+  history and claims, LWW-style, everything stamped before it.
+- **Entry vs tombstone:** a delete is a stamped tombstone with the history of the versions it
+  saw, never a silent removal, so a stale copy on another device cannot resurrect it. A
+  version the delete didn't see survives, flagged as a delete conflict.
+- **A use is not an edit:** recording a use (`touch`) updates `lastUsedAt` without restamping,
+  so copying a password on one device can't outrank an edit made on another. `lastUsedAt` is
+  therefore per-device until the entry's next edit carries it.
 - **Slots:** NOT merged. This describes a design that was never built: `mergeReplicas` handles
   entry records only, `apply-remote.ts` has no slot handling, and `OpaqueSlot` is purely a
   `vault-format.ts` parser fall-through for unknown slot kinds, unrelated to sync. Verified on a
@@ -452,16 +460,17 @@ change, not a check moved around.
 
 ### Conflict loser
 
-When two devices edit the same entry, the losing whole-entry version is **dropped**. This is
-the current behaviour, full stop: `mergeReplicas` keeps only the max-HLC record per id and the
-older one is overwritten, and the entry shape (`{id, wrappedDek, dekIv, ciphertext, iv, hlc}`)
-has no slot to stash a prior version. Nothing is kept in the background and nothing is surfaced
-to the user.
+When two devices edit the same entry before they sync, neither version is dropped any more
+(Phase A of [sync-conflicts.md](sync-conflicts.md)). The higher stamp is displayed, the other is
+kept sealed in the payload's `conflicts`, and the entry is badged so the user can compare the
+versions and keep one or both. A resolution is a write superseding every version held, so it
+clears the conflict wherever it syncs. Until every device in a group runs a build with this,
+an older build's edit still wins LWW-style.
 
-**Planned (not built):** a setting that instead stashes the losing **sealed** version in an
-entry history list, recovering the lost value without ever decrypting it to merge, plus a UI
-that surfaces the conflict rather than resolving it silently. Both require adding a versions
-field to the entry payload; see "Deferred / known limitations".
+**Built, switched off (Phase B):** every write records which write last changed each part of
+the entry, and siblings that changed different parts combine into one version during sync and
+on load, inside the crypto core. It stays off (`COMBINE_CONCURRENT_EDITS`) until most devices
+record part stamps; until then concurrent edits stay a conflict as above.
 
 Not to be confused with the **password changelog** ([password-changelog.md](password-changelog.md)),
 which is already built: that keeps superseded passwords from *local* rotations inside the entry
@@ -495,12 +504,10 @@ plaintext, and a conflict loser still drops its rows like any other edit.
   whose candidates (especially the TCP/TLS variants that beat a UDP-blocking VPN) are gathered and
   checked *last*, so the first cross-network connect may need a retry before it lands — not a failure.
   Same-network / same-machine peers connect instantly.
-- **Field-level merge is deferred** (see above).
-- **Conflict history + surfacing is deferred.** Today a same-entry conflict silently drops the
-  losing version (see "Conflict loser"). Keeping the sealed loser in an entry history list and
-  showing the conflict to the user are both unbuilt; they need a versions field on the entry
-  payload. Deletes are the one exception already covered: tombstones mean a delete is never
-  silently lost or resurrected.
+- **Concurrent edits are kept, not merged, for now.** Both versions of a same-entry conflict
+  are kept and shown to the user (see "Conflict loser"). Combining edits to different parts is
+  built but switched off until most devices record part stamps (Phase B of
+  [sync-conflicts.md](sync-conflicts.md)).
 
 ## Device management & revocation
 

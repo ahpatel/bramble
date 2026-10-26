@@ -5,6 +5,8 @@ interface ImportMetaEnv {
 	readonly DEV: boolean;
 	readonly PROD: boolean;
 	readonly MODE: string;
+	/** "1" in a test build that switches combining on (sync/combine.ts). */
+	readonly VITE_COMBINE_CONCURRENT_EDITS?: string;
 }
 interface ImportMeta {
 	readonly env: ImportMetaEnv;

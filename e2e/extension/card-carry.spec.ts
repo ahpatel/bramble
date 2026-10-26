@@ -142,6 +142,7 @@ test("the card picked in one hosted field leads the list in the next", async ({
 	await expect(rows.nth(1).locator(".tp-badge")).toHaveCount(0);
 
 	// And taking that first row fills this frame from the same card.
+	await waitOutPickerClickGuard(page);
 	await rows.first().click();
 	await expect(boxFrame(page, "cvv").locator("#verification_value")).toHaveValue("987", {
 		timeout: 15_000,

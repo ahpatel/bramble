@@ -42,7 +42,7 @@ import { PasswordStrengthMeter } from "../components/ui/password-strength-meter"
 import { SelectField } from "../components/ui/select-field";
 import { TextArea } from "../components/ui/text-area";
 import { TextField } from "../components/ui/text-field";
-import { DetailField, DetailValue } from "./DetailField";
+import { DetailField, DetailNotes, DetailValue } from "./DetailField";
 import type { EntryDetailBodyProps, EntryFieldsProps, EntryMode } from "./types";
 
 /** The login form's value shape. (Custom fields are host-owned and shared across modes, so not listed here.) */
@@ -74,7 +74,8 @@ type TotpScanState =
 	| { kind: "failed"; failure: QrScanFailure; vendor?: string };
 
 function LoginFields({ initialBreach }: EntryFieldsProps) {
-	const { register, control, watch, setValue, getValues } = useFormContext<LoginFormValues>();
+	const { register, control, watch, setValue, getValues, setFocus } =
+		useFormContext<LoginFormValues>();
 	const { shell } = usePlatform();
 	const { prefs } = usePrefs();
 	const { t } = useLingui();
@@ -84,6 +85,26 @@ function LoginFields({ initialBreach }: EntryFieldsProps) {
 		append: appendUrl,
 		remove: removeUrl,
 	} = useFieldArray({ control, name: "urls" });
+	const urlValues = watch("urls");
+	// Same origin a new login is seeded with; null off the extension and on non-web tabs.
+	const [currentSite, setCurrentSite] = useState<string | null>(null);
+	useEffect(() => {
+		let cancelled = false;
+		shell
+			.getCurrentTabOrigin()
+			.then((origin) => {
+				if (!cancelled) setCurrentSite(origin);
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [shell]);
+	const fillCurrentSite = (index: number, site: string) => {
+		setValue(`urls.${index}.value`, site, { shouldDirty: true });
+		// The button unmounts once the row has a value, so hand focus to the field.
+		setFocus(`urls.${index}.value`);
+	};
 	const [generatorOpen, setGeneratorOpen] = useState(false);
 	const aliases = useAliasProvider();
 	const [aliasState, setAliasState] = useState<AliasFieldState>({ kind: "idle" });
@@ -211,6 +232,21 @@ function LoginFields({ initialBreach }: EntryFieldsProps) {
 										label={t`Website URL`}
 										type="url"
 										autoComplete="off"
+										endAdornment={
+											// Empty rows only, so it never replaces a URL the user typed.
+											currentSite && !urlValues?.[index]?.value?.trim() ? (
+												<Button
+													variant="ghost"
+													size="none"
+													onClick={() => fillCurrentSite(index, currentSite)}
+													className="p-1.5 rounded-md"
+													aria-label={t`Use current site`}
+													title={t`Use ${currentSite}`}
+												>
+													<Plus className="w-3.5 h-3.5" />
+												</Button>
+											) : undefined
+										}
 										{...register(`urls.${index}.value`)}
 									/>
 								</div>
@@ -421,7 +457,7 @@ function LoginFields({ initialBreach }: EntryFieldsProps) {
 				</div>
 			)}
 
-			<TextArea label={t`Notes (optional)`} rows={3} {...register("notes")} />
+			<TextArea label={t`Notes (optional)`} rows={3} autoGrow {...register("notes")} />
 
 			<AdvancedDisclosure>
 				<ToggleRow
@@ -439,7 +475,7 @@ function LoginFields({ initialBreach }: EntryFieldsProps) {
 				<div>
 					<SelectField label={t`Subdomain match`} {...register("subdomainMatch")}>
 						<option value="etld1">{t`eTLD+1 (default, matches all subdomains)`}</option>
-						<option value="exact">{t`Exact hostname only`}</option>
+						<option value="exact">{t`Exact hostname (and port, if the URL has one)`}</option>
 						<option value="subdomain">{t`This domain and its subdomains`}</option>
 					</SelectField>
 					<p className="text-xs text-muted-foreground mt-1.5">
@@ -779,12 +815,7 @@ function LoginDetail({ entry, copied, copy }: EntryDetailBodyProps) {
 			)}
 
 			{login.notes && (
-				<div className="space-y-1.5">
-					<p className="text-xs text-muted-foreground">
-						<Trans>Notes</Trans>
-					</p>
-					<p className="text-sm whitespace-pre-wrap">{login.notes}</p>
-				</div>
+				<DetailNotes label={t`Notes`} value={login.notes} copied={copied} copy={copy} />
 			)}
 		</>
 	);

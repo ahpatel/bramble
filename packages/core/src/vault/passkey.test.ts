@@ -5,6 +5,7 @@ import {
 	loginsCoveringRpId,
 	passkeyAttachTarget,
 	planPasskeyPlacement,
+	withPasskey,
 } from "./passkey";
 
 function passkey(over: Partial<PasskeyCredential> = {}): PasskeyCredential {
@@ -104,15 +105,22 @@ describe("passkeyAttachTarget", () => {
 	});
 });
 
+describe("withPasskey", () => {
+	it("adds to the list as it is, and replaces one with the same credential id", () => {
+		const a = passkey({ credentialId: "a" });
+		const b = passkey({ credentialId: "b" });
+		const b2 = passkey({ credentialId: "b", userName: "renamed" });
+		expect(withPasskey(undefined, a)).toEqual([a]);
+		expect(withPasskey([a, b], b2)).toEqual([a, b2]);
+	});
+});
+
 describe("planPasskeyPlacement", () => {
 	it("attaches to a login already covering the rpId (host or subdomain)", () => {
 		const entries: Entry[] = [githubLogin];
-		const plan = planPasskeyPlacement(entries, "github.com", "GitHub", passkey());
-		expect(plan.kind).toBe("attach");
-		if (plan.kind === "attach") {
-			expect(plan.entryId).toBe("login-1");
-			expect(plan.passkeys).toHaveLength(1);
-		}
+		const minted = passkey();
+		const plan = planPasskeyPlacement(entries, "github.com", "GitHub", minted);
+		expect(plan).toEqual({ kind: "attach", entryId: "login-1", passkey: minted });
 	});
 
 	it("matches a subdomain rpId against a stored parent-domain login", () => {

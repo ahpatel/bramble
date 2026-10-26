@@ -53,7 +53,7 @@ abstract class BrambleUnlockActivity : AppCompatActivity() {
 
     final override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        coreWasLocked = isLocked()
+        coreWasLocked = CoreSession.withLock { isLocked() }
         root = FrameLayout(this).apply {
             setBackgroundColor(color(R.color.bramble_af_background))
             fitsSystemWindows = true
@@ -86,7 +86,7 @@ abstract class BrambleUnlockActivity : AppCompatActivity() {
     // Relock if we did the unlocking, so the decrypted core never leaks past this task.
     protected fun finishCore() {
         if (coreWasLocked) {
-            try { lock() } catch (e: Exception) { /* ignore */ }
+            try { CoreSession.withLock { lock() } } catch (e: Exception) { /* ignore */ }
         }
         finish()
     }

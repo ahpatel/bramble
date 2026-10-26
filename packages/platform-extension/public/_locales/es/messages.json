@@ -168,7 +168,8 @@
 		"description": "Accessible label for the retry button on a failed email-alias row."
 	},
 	"cardUsedHere": {
-		"message": "Usada aquí"
+		"message": "Usada aquí",
+		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
 	},
 	"passkeyNoneTitle": {
 		"message": "No hay clave de acceso de Bramble para este sitio"

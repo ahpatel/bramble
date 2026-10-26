@@ -9,6 +9,7 @@ import {
 	detectLoginFields,
 	findNewPasswordOnChangeForm,
 	hasInteractiveCaptcha,
+	labelText,
 	otpInputs,
 	splitOtpFields,
 } from "../content/detection";
@@ -825,5 +826,44 @@ describe("login.gog.com — sign in (register + login forms in one document)", (
 		loadFixture("gog-login-frame");
 		expect(shouldSuggestPassword(loginPassword())).toBe(false);
 		expect(isAccountCreationForm(loginPassword())).toBe(false);
+	});
+});
+
+describe("doctolib.de: Keycloak sign-in, two steps (issue #47)", () => {
+	// React's useId puts a colon in every id (`input_:r0:`), and the password step keeps
+	// Keycloak's own username/password inputs hidden ahead of the visible field.
+
+	const userField = () => document.getElementById("input_:r0:") as HTMLInputElement;
+	const passwordField = () => document.getElementById("input_:r1:") as HTMLInputElement;
+
+	it("finds the identifier on step one, and still does once the picker suppresses its token", () => {
+		loadFixture("doctolib-login-username");
+		expect(detectLoginFields().username).toBe(userField());
+		// The picker writes autocomplete="off" over `username` while anchored; the label, found
+		// through `label[for="input_:r0:"]`, is what still names the field.
+		userField().setAttribute("autocomplete", "off");
+		expect(labelText(userField())).toContain("E-Mail-Adresse");
+		expect(detectLoginFields().username).toBe(userField());
+		expect(candidateKind(userField())).toBe("login");
+	});
+
+	it("takes the visible password field on step two, not the hidden twin ahead of it", () => {
+		loadFixture("doctolib-login-password");
+		const { username, password } = detectLoginFields();
+		expect(password).toBe(passwordField());
+		// The hidden username is disabled, so nothing on this step is a username to fill.
+		expect(username).toBeNull();
+		expect(candidateKind(passwordField())).toBe("login");
+	});
+
+	it("doesn't detect any card or OTP fields", () => {
+		loadFixture("doctolib-login-password");
+		expect(cardFieldsPresent(detectCardFields())).toBe(false);
+		expect(otpInputs()).toEqual([]);
+	});
+
+	it("doesn't offer a generated password on the sign-in form", () => {
+		loadFixture("doctolib-login-password");
+		expect(shouldSuggestPassword(passwordField())).toBe(false);
 	});
 });

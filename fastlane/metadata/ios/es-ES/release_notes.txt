@@ -1,8 +1,10 @@
 Novedades de esta versión:
 
-- Una bóveda ya no se niega a abrirse porque contiene entradas de una de sus otras bóvedas. Un problema de sincronización en la extensión del navegador podía copiar entradas de una bóveda a otra, y esa bóveda no se desbloqueaba, mostrando un error técnico incluso con la contraseña correcta. Bramble ahora aparta esas entradas en este dispositivo, sin modificarlas, y abre la bóveda con todo lo demás.
-- Durante la sincronización, Bramble ahora rechaza las entradas que pertenecen a otra bóveda, de modo que un dispositivo que aún tenga el problema no pueda transmitirlo.
-- Si una bóveda sigue sin abrirse, Bramble lo indica con palabras claras y enlaza a nuestro sistema de seguimiento de incidencias, en lugar de mostrar un error técnico.
-- Una actualización de seguridad de Capacitor, el framework en el que se basa la aplicación.
+- Cuando se edita la misma entrada en dos dispositivos antes de que se sincronicen, Bramble ahora conserva ambas versiones y muestra el conflicto para que pueda compararlas y conservar una o ambas. Antes, una edición se perdía silenciosamente.
+- Guardar una edición ya no sobrescribe un cambio que se sincronizó mientras se editaba.
+- Editar una entrada archivada la mantiene archivada.
+- Importar desde Enpass y AliasVault. Los inicios de sesión que ya tiene de otro gestor de contraseñas se omiten en lugar de duplicarse.
+- Los números de tarjeta se muestran en grupos y, al copiarlos, se incluyen solo los dígitos. Las notas se pueden seleccionar y copiar, y el campo de notas crece a medida que escribe.
+- Errores de copia de seguridad de Dropbox más claros y una corrección para el rechazo de claves de alias de DuckDuckGo.
 
 Sin cuenta, sin nube. Todo permanece en sus dispositivos.

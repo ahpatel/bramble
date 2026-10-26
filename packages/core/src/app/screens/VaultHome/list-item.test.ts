@@ -135,3 +135,11 @@ describe("card copy items", () => {
 		expect(labels(card({ number: "", expMonth: "", expYear: "", cvv: "" }))).toEqual([]);
 	});
 });
+
+describe("toListItem conflict", () => {
+	it("marks an entry only when it has a conflict", () => {
+		expect(toListItem(login(), false).conflict).toBe(false);
+		expect(toListItem(login(), false, { versions: 1, deleted: false }).conflict).toBe(true);
+		expect(toListItem(login(), false, { versions: 0, deleted: true }).conflict).toBe(true);
+	});
+});

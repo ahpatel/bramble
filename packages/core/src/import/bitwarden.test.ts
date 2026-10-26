@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Entry } from "../hooks/useVault";
+import { toAutofillIndex } from "../vault/autofill-index";
 import { parseBitwarden } from "./bitwarden";
 
 const json = (obj: unknown) => JSON.stringify(obj);
@@ -156,6 +158,32 @@ describe("parseBitwarden", () => {
 			exact: "exact",
 			mixed: "exact",
 		});
+	});
+
+	it("keeps a Host-matched URI's port for the exact policy to pin (#131)", async () => {
+		const { context } = importContext();
+		const res = await parseBitwarden(
+			json({
+				items: [
+					{ type: 1, name: "DSM", login: { uris: [{ uri: "http://nas.local:5000", match: 1 }] } },
+					{
+						type: 1,
+						name: "Router",
+						login: { uris: [{ uri: "http://nas.local:8080", match: null }] },
+					},
+				],
+			}),
+			context,
+		);
+		const entries = res.imported.map((e, i) => ({ ...e, id: `e${i}` })) as unknown as Entry[];
+		const [dsm, router] = toAutofillIndex(entries);
+		expect(dsm).toMatchObject({
+			hostnames: ["nas.local"],
+			ports: ["5000"],
+			subdomainMatch: "exact",
+		});
+		expect(router).toMatchObject({ hostnames: ["nas.local"], ports: ["8080"] });
+		expect((router as { subdomainMatch?: string }).subdomainMatch).toBeUndefined();
 	});
 
 	it("imports multiple passkeys and preserves the parent login fields", async () => {

@@ -11,13 +11,22 @@ const BREACH_STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 export function EntryDetailRoute() {
 	const navigate = useNavigate();
 	const { entryId } = useParams({ from: "/_app/vault/$entryId" });
-	const { entries, updateEntry, deleteEntry, setEntriesArchived, touchEntry } = useVault();
+	const {
+		entries,
+		conflicts,
+		deleteEntry,
+		setEntriesArchived,
+		touchEntry,
+		setEntryBreach,
+		readConflictVersions,
+		resolveConflict,
+	} = useVault();
 	const { prefs, loaded: prefsLoaded } = usePrefs();
 	const entry = entries.find((e) => e.id === entryId);
 	const refreshAttemptedRef = useRef<string | null>(null);
 
 	// Lazily refresh stale/missing breach status, once per entry per mount.
-	// refreshAttemptedRef stops the updateEntry write-back from re-triggering the effect.
+	// refreshAttemptedRef stops the write-back from re-triggering the effect.
 	useEffect(() => {
 		// Breach status is login-only.
 		if (entry?.type !== "login" || !prefsLoaded) return;
@@ -29,10 +38,9 @@ export function EntryDetailRoute() {
 		void (async () => {
 			const breach = await checkPasswordBreach(entry.password);
 			if (!breach) return;
-			const { id: _id, ...rest } = entry;
-			await updateEntry(entry.id, { ...rest, breach });
+			await setEntryBreach(entry.id, breach);
 		})();
-	}, [entry, prefsLoaded, prefs.breachCheckEnabled, updateEntry]);
+	}, [entry, prefsLoaded, prefs.breachCheckEnabled, setEntryBreach]);
 
 	if (!entry) return null;
 
@@ -54,6 +62,9 @@ export function EntryDetailRoute() {
 				// truth, and the resulting URL is the same one typing `#tag` would produce.
 				onSelectTag={(tag) => navigate({ to: "/vault", search: { q: `#${tag}` } })}
 				onUse={() => void touchEntry(entryId)}
+				conflict={conflicts.get(entryId)}
+				onReadConflictVersions={() => readConflictVersions(entryId)}
+				onResolveConflict={(choice) => resolveConflict(entryId, choice)}
 			/>
 		</div>
 	);

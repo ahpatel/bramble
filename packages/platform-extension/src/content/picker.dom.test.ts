@@ -193,6 +193,17 @@ describe("picker: losing the anchor field", () => {
 		expect(hostEl()!.style.transform).toBe("translate3d(40px, 334px, 0)");
 	});
 
+	it("sits under the field while a modal has the page's scroll blocked", async () => {
+		// Angular CDK's scroll-block: <html> is position:fixed at top:-441px and
+		// window.scrollY reads 0, so the host's coordinates start 441px above the viewport.
+		vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+			new DOMRect(0, -441, 0, 0),
+		);
+		await openOnField();
+
+		expect(hostEl()!.style.transform).toBe("translate3d(40px, 775px, 0)");
+	});
+
 	it("dismisses when a route change unmounts the field", async () => {
 		const field = await openOnField();
 

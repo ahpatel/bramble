@@ -26,6 +26,8 @@ export interface RelayHost {
 
 const ANCHOR = "tp-relay-anchor";
 const CLOSE = "tp-relay-close";
+// Down, not up: a click landed in an embedding page, so pickers in its frames should go.
+const DISMISS = "tp-relay-dismiss";
 
 // Less room than this under the anchor and the dropdown gets clipped; relay instead.
 export const MIN_PICKER_SPACE = 160;
@@ -81,18 +83,24 @@ function frameElementFor(doc: Document, source: MessageEventSource | null): HTML
 	return null;
 }
 
-/** Child rect -> this frame's coords. Border/padding count: the child's origin is the content box. */
-function translate(rect: RelayRect, frameEl: HTMLElement, view: Window): RelayRect {
+/**
+ * Child rect -> this frame's coords, kept inside the child's box, or null when it misses that box.
+ * Border/padding count: the child's origin is the content box. The clamp is what stops a frame
+ * from having the picker drawn anywhere on its embedder's page.
+ */
+function translate(rect: RelayRect, frameEl: HTMLElement, view: Window): RelayRect | null {
 	const box = frameEl.getBoundingClientRect();
 	const style = view.getComputedStyle?.(frameEl);
-	const insetLeft = px(style?.borderLeftWidth) + px(style?.paddingLeft);
-	const insetTop = px(style?.borderTopWidth) + px(style?.paddingTop);
-	return {
-		x: rect.x + box.left + insetLeft,
-		y: rect.y + box.top + insetTop,
-		width: rect.width,
-		height: rect.height,
-	};
+	const left = box.left + px(style?.borderLeftWidth) + px(style?.paddingLeft);
+	const top = box.top + px(style?.borderTopWidth) + px(style?.paddingTop);
+	const right = box.right - px(style?.borderRightWidth) - px(style?.paddingRight);
+	const bottom = box.bottom - px(style?.borderBottomWidth) - px(style?.paddingBottom);
+	const x = Math.max(rect.x + left, left);
+	const y = Math.max(rect.y + top, top);
+	const width = Math.min(rect.x + left + rect.width, right) - x;
+	const height = Math.min(rect.y + top + rect.height, bottom) - y;
+	if (width < 1 || height < 1) return null;
+	return { x, y, width, height };
 }
 
 export interface FrameRelay {
@@ -105,6 +113,10 @@ export interface FrameRelay {
 	/** Top frame: a descendant wants a picker hosted here. */
 	onAnchor(cb: (anchor: RelayedAnchor) => void): void;
 	onClose(cb: (relayId: string) => void): void;
+	/** Tell every child frame (and theirs) that the user clicked in this frame's page. */
+	dismissDescendants(): void;
+	/** A click landed in an ancestor's page. */
+	onDismiss(cb: () => void): void;
 	dispose(): void;
 }
 
@@ -113,6 +125,9 @@ export function installFrameRelay(host: RelayHost): FrameRelay {
 	const { window: view, document: doc } = host;
 	let anchorCb: ((anchor: RelayedAnchor) => void) | null = null;
 	let closeCb: ((relayId: string) => void) | null = null;
+	let dismissCb: (() => void) | null = null;
+	// Relay id -> the child frame element that opened it.
+	const owners = new Map<string, HTMLElement>();
 
 	const isTop = (): boolean => view.parent === view;
 
@@ -122,20 +137,48 @@ export function installFrameRelay(host: RelayHost): FrameRelay {
 		view.parent.postMessage(message, "*");
 	};
 
+	// Carries nothing, so "*" is fine; a forged one only ever closes a picker.
+	const dismissDescendants = (): void => {
+		for (let i = 0; i < view.frames.length; i++) {
+			try {
+				view.frames[i]?.postMessage({ __tp: DISMISS }, "*");
+			} catch {
+				// A frame can go mid-loop.
+			}
+		}
+	};
+
 	const onMessage = (e: MessageEvent): void => {
+		if ((e.data as { __tp?: unknown } | null)?.__tp === DISMISS) {
+			if (isTop() || e.source !== view.parent) return;
+			dismissCb?.();
+			dismissDescendants();
+			return;
+		}
 		const anchor = anchorMessage(e.data);
 		const close = anchor ? null : closeMessage(e.data);
 		if (!anchor && !close) return;
 		// Drop anything that isn't from a real child frame (the page can post too).
 		const frameEl = frameElementFor(doc, e.source);
 		if (!frameEl) return;
+		// The UI announces relay ids to every frame in the tab, so only the frame that opened a
+		// relay may move or withdraw it.
+		const relayId = (anchor ?? close)!.relayId;
+		const owner = owners.get(relayId);
+		if (owner && owner !== frameEl) return;
 		if (close) {
-			if (isTop()) closeCb?.(close.relayId);
+			owners.delete(relayId);
+			if (isTop()) closeCb?.(relayId);
 			else postUp(close);
 			return;
 		}
 		if (!anchor) return;
 		const rect = translate(anchor.rect, frameEl, view);
+		if (!rect) return;
+		if (!owner) {
+			for (const [id, el] of owners) if (!el.isConnected) owners.delete(id);
+			owners.set(relayId, frameEl);
+		}
 		if (isTop()) anchorCb?.({ relayId: anchor.relayId, rect });
 		else postUp({ __tp: ANCHOR, relayId: anchor.relayId, rect });
 	};
@@ -160,10 +203,15 @@ export function installFrameRelay(host: RelayHost): FrameRelay {
 		onClose(cb) {
 			closeCb = cb;
 		},
+		dismissDescendants,
+		onDismiss(cb) {
+			dismissCb = cb;
+		},
 		dispose() {
 			view.removeEventListener("message", onMessage);
 			anchorCb = null;
 			closeCb = null;
+			dismissCb = null;
 		},
 	};
 }

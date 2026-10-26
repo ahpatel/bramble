@@ -1263,6 +1263,19 @@ export function detectLoginFields(
 }
 
 /**
+ * The login pair a fill aimed at `anchor` writes: the model's, unless `anchor` is a password field
+ * the model passed over (a second form, a hidden twin it took instead), which `kindOf` still
+ * claims. Then it is that field, with the username paired to it.
+ */
+export function loginFieldsFor(
+	model: PageFieldModel,
+	anchor: HTMLInputElement | null,
+): LoginFields {
+	if (anchor?.type !== "password" || anchor === model.login.password) return model.login;
+	return { username: findUsernameNearPassword(anchor), password: anchor };
+}
+
+/**
  * On a password-change form, return the new-password field once it's confirmed
  * (a matching second field). Returns null when ambiguous or mid-edit.
  */

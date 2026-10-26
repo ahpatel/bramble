@@ -1,6 +1,6 @@
 import { i18n } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
-import { Trans, useLingui } from "@lingui/react/macro";
+import { useLingui } from "@lingui/react/macro";
 import { CreditCard, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { useFormContext } from "react-hook-form";
@@ -12,11 +12,13 @@ import {
 	cardExpMonthIssue,
 	cardExpYearIssue,
 	cardNumberIssue,
+	cardNumberToCopy,
+	formatCardNumber,
 } from "../../util/card";
 import { Button } from "../components/ui/button";
 import { TextArea } from "../components/ui/text-area";
 import { TextField } from "../components/ui/text-field";
-import { DetailField, DetailValue } from "./DetailField";
+import { DetailField, DetailNotes, DetailValue } from "./DetailField";
 import type { EntryDetailBodyProps, EntryMode } from "./types";
 
 interface CardFormValues {
@@ -178,7 +180,7 @@ function CardFields() {
 				/>
 			</div>
 
-			<TextArea label={t`Notes (optional)`} rows={2} {...register("notes")} />
+			<TextArea label={t`Notes (optional)`} rows={2} autoGrow {...register("notes")} />
 		</>
 	);
 }
@@ -205,7 +207,7 @@ function CardDetail({ entry, copied, copy }: EntryDetailBodyProps) {
 				label={t`Card number`}
 				copied={copied}
 				copyName="card number"
-				onCopy={() => copy("card number", card.number)}
+				onCopy={() => copy("card number", cardNumberToCopy(card.number))}
 				extraAction={
 					<Button
 						variant="ghost"
@@ -219,7 +221,7 @@ function CardDetail({ entry, copied, copy }: EntryDetailBodyProps) {
 				}
 			>
 				<DetailValue mono wrap={showNumber}>
-					{showNumber ? card.number : `•••• ${lastFour(card.number)}`}
+					{showNumber ? formatCardNumber(card.number) : `•••• ${lastFour(card.number)}`}
 				</DetailValue>
 			</DetailField>
 
@@ -257,12 +259,7 @@ function CardDetail({ entry, copied, copy }: EntryDetailBodyProps) {
 			</div>
 
 			{card.notes && (
-				<div className="space-y-1.5">
-					<p className="text-xs text-muted-foreground">
-						<Trans>Notes</Trans>
-					</p>
-					<p className="text-sm whitespace-pre-wrap">{card.notes}</p>
-				</div>
+				<DetailNotes label={t`Notes`} value={card.notes} copied={copied} copy={copy} />
 			)}
 		</>
 	);
@@ -329,7 +326,9 @@ export const cardMode: EntryMode = {
 			secondary: cardSubtitle(card) || i18n._(msg`Payment card`),
 			// Each is omitted when empty rather than offering a row that copies nothing.
 			copyItems: [
-				...(card.number ? [{ label: i18n._(msg`card number`), value: card.number }] : []),
+				...(card.number
+					? [{ label: i18n._(msg`card number`), value: cardNumberToCopy(card.number) }]
+					: []),
 				...(cardExpiry(card) ? [{ label: i18n._(msg`expiry`), value: cardExpiry(card) }] : []),
 				...(card.cvv ? [{ label: i18n._(msg`CVV`), value: card.cvv }] : []),
 			],

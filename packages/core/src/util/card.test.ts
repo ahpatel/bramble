@@ -6,6 +6,8 @@ import {
 	cardExpMonthIssue,
 	cardExpYearIssue,
 	cardNumberIssue,
+	cardNumberToCopy,
+	formatCardNumber,
 	luhnValid,
 } from "./card";
 
@@ -39,6 +41,43 @@ describe("cardDigits", () => {
 	it("strips the separators people actually type", () => {
 		expect(cardDigits("4242 4242 4242 4242")).toBe(VISA_16);
 		expect(cardDigits("4242-4242-4242-4242")).toBe(VISA_16);
+	});
+});
+
+describe("formatCardNumber", () => {
+	it("groups a number in fours however it was typed", () => {
+		expect(formatCardNumber(VISA_16)).toBe("4242 4242 4242 4242");
+		expect(formatCardNumber("4242-4242-4242-4242")).toBe("4242 4242 4242 4242");
+		expect(formatCardNumber("42424242 42424242")).toBe("4242 4242 4242 4242");
+		expect(formatCardNumber(MASTERCARD)).toBe("5555 5555 5555 4444");
+	});
+
+	it("groups an Amex the way it is printed", () => {
+		expect(formatCardNumber(AMEX)).toBe("3782 822463 10005");
+	});
+
+	it("leaves a short final group for lengths that are not a multiple of four", () => {
+		expect(formatCardNumber(VISA_13)).toBe("4222 2222 2222 2");
+		expect(formatCardNumber(DINERS)).toBe("3056 9309 0259 04");
+		expect(formatCardNumber("4242424242424242424")).toBe("4242 4242 4242 4242 424");
+	});
+
+	it("shows anything that is not a card number as it was written", () => {
+		expect(formatCardNumber("")).toBe("");
+		expect(formatCardNumber("see notes")).toBe("see notes");
+		expect(formatCardNumber("4242 xxxx 4242")).toBe("4242 xxxx 4242");
+	});
+});
+
+describe("cardNumberToCopy", () => {
+	it("is the bare digits, however the number was saved", () => {
+		expect(cardNumberToCopy("4242 4242 4242 4242")).toBe(VISA_16);
+		expect(cardNumberToCopy("4242-4242-4242-4242")).toBe(VISA_16);
+		expect(cardNumberToCopy(VISA_16)).toBe(VISA_16);
+	});
+
+	it("leaves anything that is not a card number as it was written", () => {
+		expect(cardNumberToCopy("see notes")).toBe("see notes");
 	});
 });
 

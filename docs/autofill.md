@@ -66,12 +66,43 @@ a login's registered hostnames under that entry's **subdomain match** policy:
   sites. tldts leaves the private section out by default, which collapsed every
   tenant to `github.io` and offered one tenant's login to all the others
   (GHSA-rf5w-r5j3-6wmf).
-- `exact`: that exact hostname only.
+- `exact`: that exact hostname only, and, for a saved URL that names a port, only
+  that port (issue #131).
 - `subdomain`: this domain plus its subdomains.
 
 The query hostname is derived from the **verified message sender**
 (`sender.origin` / `sender.url` / `sender.tab.url`), not from the message body, so
 a content script cannot request matches for a different domain.
+
+### Ports under `exact`
+
+Several services on one local host (`nas.local:5000` and `nas.local:9000`, or
+`192.168.1.10:8080` and `:9000`) each want their own login. Under `exact`, a saved
+URL with an explicit port matches only a page served on that port; one without a
+port matches the host on any port, as before. Default ports are no port:
+`https://nas.local:443` reads the same as `https://nas.local`, and a page with no
+port is compared on its scheme's default (80 or 443). `etld1` and `subdomain`
+ignore ports.
+This is Bitwarden's "Host" match detection per login, and a Bitwarden import that
+used Host (or any non-default mode) already lands on `exact` with its URLs intact.
+
+There is no separate mode for it on purpose: `subdomainMatch` is persisted and
+synced, so a new enum value would be a format change that released clients reject.
+The port rides the index instead (`LoginIndexEntry.ports`, lined up with
+`hostnames` by `loginHosts`), which the extension holds in memory only. A URL
+saved without a scheme (`nas.local:5000`) is not read as a host and port, so it
+matches nothing, as before.
+
+Every page-side caller passes the page's port: the content-script query and fill
+authorization, the corner prompt's dedupe and update check (the port is stashed
+with the capture), and the popup's matches for the current tab. `AUTOFILL_FIND`
+takes a hostname only, so it never offers a port-pinned login. Not port-aware:
+the locked-state hint (an eTLD+1 hint only), the desktop app's link query and
+panel fill check (`index_store.rs` `query`, `socket.rs` `spotlight_request_fill`,
+which compare bare hostnames), and both mobile providers. Android's
+`AutofillService` gets `webDomain` with no port, and the iOS provider normalizes
+the service identifier to a bare host; both also ignore `subdomainMatch`, so on
+mobile two logins on one host are still offered together.
 
 ### App URIs are not web hosts
 
@@ -306,6 +337,24 @@ route change when nothing scrolled.
 picker restored on the return trip would be showing a match set - and a lock
 state - from before the trip.
 
+### Where the host's coordinates start
+
+Every picker host (local, shadow fallback, relayed) is a `position: absolute` child
+of `<body>` placed by a translate, and a field's rect is in viewport coordinates.
+The translate counts from the host's **containing block**, which is usually the
+document, so adding `window.scrollX/Y` used to be enough. It is not when the page
+positions `<html>` or `<body>`. Angular CDK's scroll-block does exactly that while
+a Material dialog is open: `<html>` becomes `position: fixed` at `top: -scrollY`
+and `window.scrollY` reads 0. On nannyservices.ca's Stripe payment dialog that
+drew the relayed card picker 441px above the field, and the relay watchdog then
+removed it as illegible, so nothing showed.
+
+`host-offset.ts` measures the origin instead of assuming it: a zero-size,
+untranslated probe beside the host shares its containing block, so its rect is
+that origin exactly. Reading the host's own rect back and subtracting the
+translate would also work, but the read-back translate is rounded, and the
+tracking loop would see that noise as the field moving.
+
 ## Writing a value into a field
 
 `fill.ts` writes through the native `value` setter (so React's value tracker sees
@@ -535,7 +584,7 @@ root). This blocks a clickjacking page that hides/moves/overlays the picker to
 coax a real click - the case that matters being cards, which are offered on every
 site.
 
-### Relayed placement: hosted-fields checkouts
+### Relayed placement: pickers for fields in frames
 
 A card input on a hosted-fields checkout (Shopify, Stripe Elements, Braintree,
 Adyen) lives in a cross-origin iframe sized to the input itself; Shopify's is 47px
@@ -543,6 +592,16 @@ tall with `scrolling="no"`. A picker mounted in that document is positioned belo
 the field, and therefore below the frame's viewport, and an iframe cannot paint
 outside its own box. The field was always detected; there was simply nowhere to
 draw, so nothing appeared at all.
+
+A frame with room had a quieter version of the same problem. Zoom embeds Zuora's
+hosted payment page in a 548x332 frame; a picker drawn inside it inherits whatever
+Zoom does around that frame, and any opacity or filter there costs it the
+browser's visibility vouch and with it every click (see the threat model). It also
+never heard a click on Zoom's page, and focus leaving the frame for that page
+looks the same as focus leaving the window, which keeps a picker up on purpose, so
+it stayed open while the user went on scrolling. Both come from the picker living
+in the frame, so card pickers are now hosted by the top frame from **every**
+frame, whatever its size.
 
 The fix splits **who owns the element** from **who owns the conversation**:
 
@@ -601,6 +660,47 @@ through the top frame, `pickIsTrustworthy()` cannot run at pick time, so
 destroys the host the moment it stops being legible. That is prevention rather than
 detection, and the page cannot suppress it: the verdict comes from computed style
 the top frame reads itself, not from any message.
+
+#### Which frames relay, and what keeps a frame from abusing it
+
+`placement()` in `content.ts` decides, per field:
+
+- **Cards relay from every frame.** Cards are offered on every site, so the top
+  page learns nothing from a hosted card picker beyond how many cards there are
+  and whether the vault is locked.
+- **Logins relay only from a same-site frame.** The top page can read a picker it
+  hosts off its own DOM (it appears, it has a height), which for a sign-in frame
+  from another site would say whether the user has logins saved for that site.
+  Same-site is decided by the background from the browser's account of the sender
+  (`sameSiteAsTop`, eTLD+1 including the private PSL section, and the scheme), never
+  by the content script. A cross-site sign-in frame keeps its picker inside it,
+  even when that frame is too short to show it.
+- **No host upstairs falls back here.** If the top frame never brings the UI up
+  (COEP blocks it there, or no content script runs there) within two seconds, the
+  frame stops asking for the rest of the page's life and draws its own picker,
+  when it has room for one.
+
+Hosting a frame's picker in the top page lets that frame reach outside its own
+box, so three more rules apply to the relayed path:
+
+- **An anchor stays inside the frame it came from.** Each hop clamps the rect to
+  the content box of the frame element it arrived through and drops one that misses
+  that box, so a frame can only have the picker drawn against its own edge.
+- **A relay belongs to the frame that opened it.** The UI announces its relay id to
+  every frame in the tab, so any frame can learn it; each hop binds a relay id to
+  the child frame element that opened it and ignores anchors and withdrawals for it
+  from anywhere else.
+- **Clicks wait for the picker to sit still.** The pick goes straight from the UI to
+  the field's frame, past the content script's early-click guard, so the UI keeps it:
+  a click counts only 500 ms after the last render or move. The host frame reports
+  every move it makes (`UI_MOVED`), forged ones included; a forged report only ever
+  delays a click.
+
+And a click on an embedding page dismisses: each frame tells its child frames
+(`tp-relay-dismiss`, carrying nothing) when a trusted mousedown lands in its own
+document, a frame takes that only from its parent, and the top frame drops a
+picker it hosts at once. This reaches the in-frame pickers of cross-site sign-in
+frames too. Scrolling alone does not dismiss, as with every other picker.
 
 Keyboard nav works without moving focus off the page field: when the iframe is
 open, the content script forwards only Up/Down/Enter/Escape to it as `UI_KEY`
@@ -694,7 +794,8 @@ focused field) are deliberate and skip both:
 - **Early clicks.** A click is dropped until the picker has sat still for 500 ms,
   and the clock restarts whenever it appears, un-hides or moves. A page that can
   open the picker (script focus) or move its field can otherwise put it under a
-  click the user is already making, a double-click lure being the classic.
+  click the user is already making, a double-click lure being the classic. On the
+  relayed path the UI applies it, from the host frame's move reports.
 - **Browser-vouched visibility (Chromium).** Hit testing skips an overlay with
   `pointer-events: none`, so a decoy painted over the picker passes
   `elementFromPoint` while the user's click goes straight through it to a row.

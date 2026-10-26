@@ -313,7 +313,12 @@ export function AliasSection() {
 						)}
 					</div>
 
-					{connected && (
+					{connected?.unchecked && (
+						<p className="mt-2 text-xs text-muted-foreground">
+							{t`Saved. ${descriptor.label} can only be checked by creating an alias.`}
+						</p>
+					)}
+					{connected && !connected.unchecked && (
 						<p className="mt-2 text-xs text-primary flex items-center gap-1.5">
 							<Check className="w-3.5 h-3.5 shrink-0" />
 							{/* The allowance is counted over the provider's shared domains only, so quoting it

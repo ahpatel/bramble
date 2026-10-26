@@ -6,12 +6,16 @@
 
 import { z } from "zod";
 import { EncryptedEntrySchema } from "../vault-format";
+import { isFutureVersion, VersionVectorSchema } from "./causal";
 import { HlcSchema, isFutureStamp } from "./hlc";
 
 /** A deletion record: the deleted id and the stamp at which it was deleted. */
 export const TombstoneSchema = z.object({
 	id: z.string(),
 	hlc: HlcSchema,
+	// The joined history of every delete of this id; absent on one from an older build.
+	vv: VersionVectorSchema.optional(),
+	floor: HlcSchema.optional(),
 });
 export type Tombstone = z.infer<typeof TombstoneSchema>;
 
@@ -32,12 +36,14 @@ export const SyncedSettingSchema = z.object({
 export const SyncedSettingsSchema = z.record(z.string(), SyncedSettingSchema);
 export type SyncedSettings = z.infer<typeof SyncedSettingsSchema>;
 
-/** The decrypted entries payload: live entries, the deletion graveyard, and any vault-scoped
- * settings. `settings` is optional so a payload written before it existed still parses. */
+/** The decrypted entries payload: displayed entries, the deletion graveyard, any vault-scoped
+ * settings, and the concurrent versions not displayed (`conflicts`, still sealed). The optional
+ * fields let a payload written before they existed still parse. */
 export const EntriesPayloadSchema = z.object({
 	entries: z.array(EncryptedEntrySchema),
 	tombstones: z.array(TombstoneSchema),
 	settings: SyncedSettingsSchema.optional(),
+	conflicts: z.array(EncryptedEntrySchema).optional(),
 });
 export type EntriesPayload = z.infer<typeof EntriesPayloadSchema>;
 
@@ -68,9 +74,11 @@ export function sanitizeRemoteEntriesPayload(
 				Object.entries(payload.settings).filter(([, rec]) => !isFutureStamp(rec.hlc, now)),
 			)
 		: undefined;
+	const conflicts = payload.conflicts?.filter((e) => !isFutureVersion(e, now));
 	return {
-		entries: payload.entries.filter((e) => !isFutureStamp(e.hlc, now)),
-		tombstones: payload.tombstones.filter((t) => !isFutureStamp(t.hlc, now)),
+		entries: payload.entries.filter((e) => !isFutureVersion(e, now)),
+		tombstones: payload.tombstones.filter((t) => !isFutureVersion(t, now)),
 		...(settings ? { settings } : {}),
+		...(conflicts ? { conflicts } : {}),
 	};
 }

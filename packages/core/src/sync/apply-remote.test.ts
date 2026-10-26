@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EncryptedEntry } from "../vault-format";
 import { applyRemotePayload, payloadsEquivalent, type VaultSyncPort } from "./apply-remote";
-import { type EntriesPayload, emptyEntriesPayload } from "./entries-payload";
+import { type EntriesPayload, emptyEntriesPayload, type Tombstone } from "./entries-payload";
 import type { Hlc } from "./hlc";
 
 const hlc = (wall: number, node: string): Hlc => ({ wall, counter: 0, node });
@@ -13,10 +13,10 @@ const env = (id: string, ct: string, stamp: Hlc): EncryptedEntry => ({
 	iv: "i",
 	hlc: stamp,
 });
-const payload = (
-	entries: EncryptedEntry[],
-	tombstones: { id: string; hlc: Hlc }[] = [],
-): EntriesPayload => ({ entries, tombstones });
+const payload = (entries: EncryptedEntry[], tombstones: Tombstone[] = []): EntriesPayload => ({
+	entries,
+	tombstones,
+});
 
 /** A fake port recording writes + witnessed stamps + call order, from a given local payload. */
 function fakePort(local: EntriesPayload, { unopenable = [] }: { unopenable?: string[] } = {}) {
@@ -149,9 +149,61 @@ describe("payloadsEquivalent", () => {
 		const b = payload([]);
 		expect(payloadsEquivalent(a, b)).toBe(false);
 	});
+
+	it("a stripped copy is not equivalent to its source", () => {
+		const withVv = payload([{ ...env("1", "x", hlc(1, "n")), vv: { n: hlc(1, "n") } }]);
+		const stripped = payload([env("1", "x", hlc(1, "n"))]);
+		expect(payloadsEquivalent(withVv, stripped)).toBe(false);
+	});
+
+	it("a tombstone whose vv grew under the same stamp is not equivalent", () => {
+		const a = payload([], [{ id: "1", hlc: hlc(5, "n"), vv: { n: hlc(5, "n") } }]);
+		const b = payload([], [{ id: "1", hlc: hlc(5, "n"), vv: { n: hlc(5, "n"), m: hlc(3, "m") } }]);
+		expect(payloadsEquivalent(a, b)).toBe(false);
+	});
+
+	it("conflicts are part of equivalence", () => {
+		const shown = { ...env("1", "x", hlc(2, "n")), vv: { n: hlc(2, "n") } };
+		const sibling = { ...env("1", "y", hlc(1, "m")), vv: { m: hlc(1, "m") } };
+		const a = payload([shown]);
+		const b: EntriesPayload = { ...payload([shown]), conflicts: [sibling] };
+		expect(payloadsEquivalent(a, b)).toBe(false);
+		expect(payloadsEquivalent(b, { ...b, conflicts: [{ ...sibling, ciphertext: "z" }] })).toBe(
+			true,
+		);
+	});
 });
 
 describe("applyRemotePayload admission", () => {
+	const shown = { ...env("a", "shown", hlc(100, "x")), vv: { x: hlc(100, "x") } };
+	const sibling = {
+		...env("a", "sibling", hlc(50, "y")),
+		vv: { y: hlc(50, "y"), z: hlc(40, "z") },
+	};
+
+	it("a remote conflict that doesn't decrypt here is refused", async () => {
+		const rejected = new Set<string>();
+		const { port, writes } = fakePort(payload([shown]), { unopenable: ["a"] });
+		const remote: EntriesPayload = { ...payload([shown]), conflicts: [sibling] };
+		const res = await applyRemotePayload(port, remote, { rejected });
+		expect(res.changed).toBe(false);
+		expect(writes).toHaveLength(0);
+		expect(rejected.has("a|50|0|y")).toBe(true);
+	});
+
+	it("conflict stamps and vv values are witnessed", async () => {
+		const { port, witnessed } = fakePort(payload([shown]));
+		await applyRemotePayload(port, { ...payload([shown]), conflicts: [sibling] });
+		expect(witnessed.flat().map((h) => h.wall)).toEqual(expect.arrayContaining([50, 40]));
+	});
+
+	it("a remote payload carrying only a new conflict is a change and is written", async () => {
+		const { port, writes } = fakePort(payload([shown]));
+		const res = await applyRemotePayload(port, { ...payload([shown]), conflicts: [sibling] });
+		expect(res.changed).toBe(true);
+		expect(writes[0]?.conflicts?.map((e) => e.ciphertext)).toEqual(["sibling"]);
+	});
+
 	it("does not merge a remote entry that doesn't decrypt under this vault's key", async () => {
 		const { port, writes } = fakePort(payload([env("a", "a", hlc(100, "x"))]), {
 			unopenable: ["stray"],
@@ -200,5 +252,81 @@ describe("applyRemotePayload admission", () => {
 		await applyRemotePayload(port, payload([env("stray", "s", hlc(1, "y"))]), { rejected });
 		await applyRemotePayload(port, payload([env("stray", "s2", hlc(2, "y"))]), { rejected });
 		expect(checked).toEqual([["stray"], ["stray"]]);
+	});
+});
+
+describe("applyRemotePayload combining", () => {
+	const local = payload([env("a", "a", hlc(100, "x"))]);
+	const remote = payload([env("b", "b", hlc(200, "y"))]);
+
+	it("witnesses the combined stamps and writes the combined payload", async () => {
+		const mine = { ...env("a", "a1", hlc(100, "x")), vv: { x: hlc(100, "x") } };
+		const theirs = { ...env("a", "a2", hlc(90, "y")), vv: { y: hlc(90, "y") } };
+		const { port, writes, witnessed } = fakePort(payload([mine]));
+		const merged = hlc(300, "~merge:m");
+		port.combineSiblings = async (p) => ({
+			payload: { ...p, entries: [...p.entries, env("c", "c", merged)] },
+			stamps: [merged],
+		});
+		await applyRemotePayload(port, payload([theirs]), { combine: true });
+		expect(witnessed[0]).toContainEqual(merged);
+		expect(live(writes[0]!)).toEqual(["a", "c"]);
+	});
+
+	it("a combine that fails still writes the merge", async () => {
+		const mine = { ...env("a", "a1", hlc(100, "x")), vv: { x: hlc(100, "x") } };
+		const theirs = { ...env("a", "a2", hlc(90, "y")), vv: { y: hlc(90, "y") } };
+		const { port, writes } = fakePort(payload([mine]));
+		port.combineSiblings = () => Promise.reject(new Error("offscreen gone"));
+		const res = await applyRemotePayload(port, payload([theirs]), { combine: true });
+		expect(res.changed).toBe(true);
+		expect(writes[0]!.conflicts).toEqual([theirs]);
+	});
+
+	it("only ids whose versions the merge changed are combined", async () => {
+		const a1 = { ...env("a", "a1", hlc(100, "x")), vv: { x: hlc(100, "x") } };
+		const a2 = { ...env("a", "a2", hlc(90, "y")), vv: { y: hlc(90, "y") } };
+		const b1 = { ...env("b", "b1", hlc(100, "x")), vv: { x: hlc(100, "x") } };
+		const b2 = { ...env("b", "b2", hlc(90, "y")), vv: { y: hlc(90, "y") } };
+		const { port } = fakePort({ entries: [a1, b1], tombstones: [], conflicts: [a2] });
+		const asked: string[][] = [];
+		port.combineSiblings = async (p, ids) => {
+			asked.push([...ids].sort());
+			return { payload: p, stamps: [] };
+		};
+		await applyRemotePayload(
+			port,
+			{ entries: [a1, b2], tombstones: [], conflicts: [a2] },
+			{
+				combine: true,
+			},
+		);
+		expect(asked).toEqual([["b"]]);
+	});
+
+	it("a rebroadcast of siblings already held doesn't reopen them", async () => {
+		const a1 = { ...env("a", "a1", hlc(100, "x")), vv: { x: hlc(100, "x") } };
+		const a2 = { ...env("a", "a2", hlc(90, "y")), vv: { y: hlc(90, "y") } };
+		const held = { entries: [a1], tombstones: [], conflicts: [a2] };
+		const { port } = fakePort(held);
+		let called = false;
+		port.combineSiblings = async (p) => {
+			called = true;
+			return { payload: p, stamps: [] };
+		};
+		await applyRemotePayload(port, held, { combine: true });
+		expect(called).toBe(false);
+	});
+
+	it("combining off never calls the port", async () => {
+		const { port } = fakePort(local);
+		let called = false;
+		port.combineSiblings = async (p) => {
+			called = true;
+			return { payload: p, stamps: [] };
+		};
+		await applyRemotePayload(port, remote, { combine: false });
+		await applyRemotePayload(port, remote);
+		expect(called).toBe(false);
 	});
 });

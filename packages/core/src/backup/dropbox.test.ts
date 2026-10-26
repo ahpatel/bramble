@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDropboxTarget } from "./dropbox";
 
 const UPLOAD = "https://content.dropboxapi.com/2/files/upload";
@@ -125,5 +125,69 @@ describe("createDropboxTarget", () => {
 		route((url) => (url === DELETE ? status(500) : ok()));
 		const t = createDropboxTarget({ kind: "dropbox", refreshToken: "RT", accessToken: "AT" });
 		await expect(t.remove("bramble/x.bramble")).rejects.toThrow(/500/);
+	});
+
+	it("says what Dropbox said: its user_message first, else its error_summary tag", async () => {
+		const t = createDropboxTarget({ kind: "dropbox", refreshToken: "RT", accessToken: "AT" });
+		route(() =>
+			status(409, {
+				error_summary: "path/insufficient_space/..",
+				user_message: { text: "Your Dropbox is full.", locale: "en" },
+			}),
+		);
+		await expect(t.put("bramble/x.bramble", new Uint8Array([1]))).rejects.toThrow(
+			"Dropbox upload failed (409: Your Dropbox is full.)",
+		);
+		route(() => status(409, { error_summary: "path/insufficient_space/..." }));
+		await expect(t.put("bramble/x.bramble", new Uint8Array([1]))).rejects.toThrow(
+			"Dropbox upload failed (409: path/insufficient_space)",
+		);
+		route(
+			() => new Response('Error in call to API function "files/upload": bad arg', { status: 400 }),
+		);
+		await expect(t.put("bramble/x.bramble", new Uint8Array([1]))).rejects.toThrow(
+			'Dropbox upload failed (400: Error in call to API function "files/upload": bad arg)',
+		);
+	});
+
+	describe("rate limits", () => {
+		beforeEach(() => vi.useFakeTimers());
+		afterEach(() => vi.useRealTimers());
+		const limited = (retryAfter?: string) =>
+			new Response(JSON.stringify({ error_summary: "too_many_write_operations/.." }), {
+				status: 429,
+				headers: retryAfter ? { "Retry-After": retryAfter } : {},
+			});
+
+		it("waits as long as Retry-After says, then sends the same upload again", async () => {
+			let n = 0;
+			const calls = route(() => (n++ === 0 ? limited("2") : ok()));
+			const t = createDropboxTarget({ kind: "dropbox", refreshToken: "RT", accessToken: "AT" });
+			const done = t.put("bramble/x.bramble", new Uint8Array([7]));
+			await vi.advanceTimersByTimeAsync(1999);
+			expect(calls).toHaveLength(1);
+			await vi.advanceTimersByTimeAsync(1);
+			await expect(done).resolves.toBeUndefined();
+			expect(calls).toHaveLength(2);
+			expect(calls[1]!.init.body).toEqual(new Uint8Array([7]));
+		});
+
+		it("gives up after three retries and says why", async () => {
+			const calls = route(() => limited());
+			const t = createDropboxTarget({ kind: "dropbox", refreshToken: "RT", accessToken: "AT" });
+			const done = expect(t.put("bramble/x.bramble", new Uint8Array([1]))).rejects.toThrow(
+				"Dropbox upload failed (429: too_many_write_operations)",
+			);
+			await vi.advanceTimersByTimeAsync(1000 + 2000 + 4000);
+			await done;
+			expect(calls).toHaveLength(4);
+		});
+
+		it("leaves a long wait to the next run instead of holding this one open", async () => {
+			const calls = route(() => limited("300"));
+			const t = createDropboxTarget({ kind: "dropbox", refreshToken: "RT", accessToken: "AT" });
+			await expect(t.put("bramble/x.bramble", new Uint8Array([1]))).rejects.toThrow(/429/);
+			expect(calls).toHaveLength(1);
+		});
 	});
 });

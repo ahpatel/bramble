@@ -13,14 +13,13 @@
     <string name="af_err_load_logins">Impossible de charger les identifiants.</string>
     <string name="af_cancel">Annuler</string>
     <string name="af_search_logins">Rechercher des identifiants</string>
-    <string name="af_empty_no_logins">Aucun identifiant enregistré.
-Ajoutez-en un dans Bramble.</string>
+    <string name="af_empty_no_logins">Aucun identifiant enregistré.\nAjoutez-en un dans Bramble.</string>
     <string name="af_empty_no_match">Aucun identifiant ne correspond à «%s».</string>
     <string name="af_section_for">Pour %s</string>
     <string name="af_section_matches">Correspondances</string>
-    <string name="af_section_all_items">Tous les éléments</string>
     <string name="af_section_no_matches">Aucune correspondance pour %s</string>
-    <string name="af_section_items_count">Éléments (%d)</string>
+    <string name="af_section_other_logins">Autres identifiants</string>
+    <string name="af_section_logins_count">Identifiants (%d)</string>
     <string name="af_no_name">(aucun nom)</string>
     <string name="af_use_password">Utiliser le mot de passe</string>
     <string name="af_err_biometric_prepare">Impossible de préparer le déverrouillage biométrique</string>

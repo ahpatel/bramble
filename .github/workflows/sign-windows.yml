@@ -10,9 +10,14 @@ name: Sign Windows installer
 # built locally, and see docs/desktop-port.md for why that trade is acceptable here and would not
 # be on macOS.
 #
-# What this job deliberately does NOT do is produce the updater signature. That key is the root of
-# trust for every update the app will ever accept and it never leaves the maintainer's machine, so
-# the .sig is generated locally afterwards, over the Authenticode-signed bytes. See
+# Two jobs, like the other release workflows: `build` holds no secret, `sign` holds the SignPath
+# token. Split also because a production signature waits on a person approving it in SignPath, so a
+# slow approval must cost only the signing job: re-running it resubmits the same installer, no
+# rebuild. The terminal that dispatched the release says when to approve; see release-watch.ts.
+#
+# What this workflow deliberately does NOT do is produce the updater signature. That key is the
+# root of trust for every update the app will ever accept and it never leaves the release's publish
+# job, so the .sig is generated afterwards, over the Authenticode-signed bytes. See
 # scripts/build-windows.ts.
 #
 # Driven by `pnpm run build:windows --ci-start`, which dispatches this, and `--ci-collect`, which
@@ -35,15 +40,18 @@ on:
         default: false
         type: boolean
 
-# Least privilege. `id-token` is what SignPath's origin verification reads.
-permissions:
-  contents: read
-  id-token: write
+# Nothing by default; each job asks for what it uses.
+permissions: {}
 
 jobs:
-  build-and-sign:
-    name: Build and sign
+  build:
+    name: Build (unsigned)
     runs-on: windows-latest
+    permissions:
+      contents: read
+    timeout-minutes: 90
+    outputs:
+      artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v7
 
@@ -124,22 +132,80 @@ jobs:
           path: unsigned/
           if-no-files-found: error
 
-      # Submits to SignPath, waits for a maintainer to approve the signing request in their UI,
-      # and downloads the signed artifact back into this run. The approval is manual by design:
-      # their terms require a human to decide that a given release may be signed.
-      - name: Sign with SignPath
+  sign:
+    name: Sign with SignPath
+    needs: build
+    runs-on: windows-latest
+    # `id-token` is what SignPath's origin verification reads.
+    permissions:
+      contents: read
+      id-token: write
+    # Five hours for a person to approve, plus the download and the checks.
+    timeout-minutes: 320
+    steps:
+      # Submitted without waiting, so the link exists before the wait starts. The approval is manual
+      # by design: SignPath Foundation requires a person to decide each release may be signed.
+      - name: Submit the signing request
+        id: submit
         uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
           signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: signed
-          # Signing waits on a person, so the default is far too short for a release cut outside
-          # office hours.
-          wait-for-completion-timeout-in-seconds: 3600
+          github-artifact-id: ${{ needs.build.outputs.artifact-id }}
+          wait-for-completion: false
+
+      # A record on the run. GitHub shows notices only once the job ends, so not a live prompt: the
+      # live one is release-watch.ts, keyed on this job's name (SIGN_JOB there).
+      - name: Announce where to approve it
+        shell: bash
+        env:
+          URL: ${{ steps.submit.outputs.signing-request-web-url }}
+        run: |
+          echo "::notice title=Approve in SignPath::$URL"
+          printf '### Approve the signing request in SignPath\n\n%s\n' "$URL" >> "$GITHUB_STEP_SUMMARY"
+
+      # SignPath's documented REST API, polled rather than the action's own wait, so the step above
+      # could run first. A missed window fails here with the build kept: re-run this job.
+      - name: Wait for the approval, then download the signed installer
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          ORGANIZATION: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          REQUEST: ${{ steps.submit.outputs.signing-request-id }}
+        run: |
+          $api = "https://app.signpath.io/Api/v1/$env:ORGANIZATION/SigningRequests/$env:REQUEST"
+          $headers = @{ Authorization = "Bearer $env:SIGNPATH_API_TOKEN" }
+          $deadline = (Get-Date).AddHours(5)
+          $last = ""
+          $errors = 0
+          while ($true) {
+            try {
+              $s = Invoke-RestMethod -Uri "$api/Status" -Headers $headers
+              $errors = 0
+              if ($s.workflowStatus -ne $last) {
+                Write-Output "$(Get-Date -Format HH:mm:ss) $($s.workflowStatus)"
+                $last = $s.workflowStatus
+              }
+              if ($s.isFinalStatus) { break }
+            } catch {
+              # A dropped connection over five hours is ordinary; only a run of them gives up.
+              $errors += 1
+              if ($errors -ge 10) { Write-Output "::error::SignPath stopped answering: $_"; exit 1 }
+            }
+            if ((Get-Date) -gt $deadline) {
+              Write-Output "::error::nobody approved the signing request within five hours. Re-run this job to submit a fresh one (the build is kept), and deny the stale request in SignPath."
+              exit 1
+            }
+            Start-Sleep -Seconds 30
+          }
+          if ($s.status -ne 'Completed') {
+            Write-Output "::error::the signing request ended $($s.status) ($($s.workflowStatus))"
+            exit 1
+          }
+          Invoke-WebRequest -Uri "$api/SignedArtifact" -Headers $headers -OutFile signed.zip
+          Expand-Archive signed.zip -DestinationPath signed
 
       # The failure worth catching is a silently UNSIGNED artifact: it looks identical to a signed
       # one until a user downloads it and SmartScreen says otherwise.

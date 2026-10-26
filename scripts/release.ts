@@ -72,6 +72,7 @@ import { CWS_ITEM_ID } from "./cws-ids.ts";
 import { signingKey } from "./desktop-signing-key.ts";
 import { commitOverReleases, createTag } from "./github-commit.ts";
 import { composeNotes } from "./release-notes.mjs";
+import { watchDesktopRelease } from "./release-watch.ts";
 import { notifyYubiKeyTouch } from "./yubikey-notify.ts";
 
 const HOME = process.env.HOME ?? "";
@@ -917,10 +918,35 @@ async function dispatchRelease(
 	if (flags.has("--no-watch")) return;
 
 	console.log("watching it (Ctrl-C stops watching, not the release)…");
-	try {
-		run(`gh run watch ${id} --repo ${REPO} --exit-status`);
-	} catch {
-		fail(`the run failed: ${url}`);
+	if (workflow === "desktop-release.yml") {
+		// Two runs, not one: SignPath's approval happens in the sign-windows.yml run. See release-watch.ts.
+		let org = "";
+		try {
+			org = capture(`gh variable get SIGNPATH_ORGANIZATION_ID --repo ${REPO}`);
+		} catch {
+			// The prompt then points at SignPath's email instead.
+		}
+		const conclusion = watchDesktopRelease(
+			{
+				repo: REPO,
+				runId: id,
+				since,
+				windows: !dryRun && !skip.has("windows"),
+				signpathRequests: org ? `https://app.signpath.io/Web/${org}/SigningRequests` : undefined,
+			},
+			{
+				gh: (args) => execFileSync("gh", args, { encoding: "utf8" }),
+				sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+				log: (line) => console.log(line),
+			},
+		);
+		if (conclusion !== "success") fail(`the run ended ${conclusion}: ${url}`);
+	} else {
+		try {
+			run(`gh run watch ${id} --repo ${REPO} --exit-status`);
+		} catch {
+			fail(`the run failed: ${url}`);
+		}
 	}
 	console.log(
 		dryRun
@@ -1544,6 +1570,14 @@ function runnerBumpDesktop(version: string, tag: string): void {
 	if (!dryRun && !skip.has("windows")) {
 		run("node scripts/build-windows.ts --ci-start");
 		windowsRun = readFileSync(windowsRunFile(), "utf8").trim();
+		// On this run's page, so the Windows half is one click away for whoever approves the release.
+		if (process.env.GITHUB_STEP_SUMMARY)
+			appendFileSync(
+				process.env.GITHUB_STEP_SUMMARY,
+				`Windows is building in https://github.com/${REPO}/actions/runs/${windowsRun}. ` +
+					"Its SignPath approval link appears there once the installer is built, " +
+					"about 20 minutes in, and SignPath emails it to you too.\n",
+			);
 	}
 	stepOutputs({ sha, windows_run: windowsRun });
 	console.log(

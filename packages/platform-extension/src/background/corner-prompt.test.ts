@@ -85,6 +85,23 @@ describe("CORNER_PROMPT_CAPTURE dedupe", () => {
 		expect(resp.data.newPassword).toBe("NEWPW");
 	});
 
+	it("offers an update only on the port an exact login is pinned to", async () => {
+		const bg = await loadBackground({ sessionSeed: { [TEST_VEK_KEY]: "SEED" } });
+		await setAutofillIndex(bg, [
+			{ ...LOGIN, hostnames: ["nas.local"], ports: ["5000"], subdomainMatch: "exact" },
+		]);
+		const other = await bg.send(
+			{ type: "CORNER_PROMPT_CAPTURE", payload: { username: "alice", password: "NEWPW" } },
+			pageSender("nas.local:8080", 5),
+		);
+		expect(other.resp.data.kind).toBe("save-login");
+		const same = await bg.send(
+			{ type: "CORNER_PROMPT_CAPTURE", payload: { username: "alice", password: "NEWPW" } },
+			pageSender("nas.local:5000", 5),
+		);
+		expect(same.resp.data.kind).toBe("update-login");
+	});
+
 	it("stays silent when offer-to-save is off", async () => {
 		const bg = await unlocked({ localSeed: { "pref.offerToSave": false } });
 		const { resp } = await bg.send(

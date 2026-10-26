@@ -14,7 +14,8 @@ function getClock(): Promise<HybridClock> {
 				(k) => extensionStorage.getMeta<string>(k),
 				(k, v) => extensionStorage.setMeta<string>(k, v),
 			);
-			return makeClock(id);
+			// Its own writer: the popup also stamps writes from this device id (docs/sync-conflicts.md).
+			return makeClock(`${id}#bg`);
 		})();
 	}
 	return clockPromise;

@@ -56,6 +56,11 @@ grep -q "bramble-desktop-wrapped" "$OUT/bin/bramble-desktop" 2>/dev/null ||
 [ -x "$OUT/bin/.bramble-desktop-wrapped" ] || die "no wrapped binary behind the launcher"
 ok "wrapper + .bramble-desktop-wrapped"
 
+# Autostart records the program this names; without it the entry starts the wrapped binary bare.
+grep -aq "BRAMBLE_LAUNCHER=['\"]\?$OUT/bin/bramble-desktop" "$OUT/bin/bramble-desktop" ||
+	die "the wrapper does not name itself in BRAMBLE_LAUNCHER; autostart would skip it"
+ok "BRAMBLE_LAUNCHER names the wrapper"
+
 # A store path is read-only, so the updater could never replace anything, and the app knows: it
 # reports no updater unless APPIMAGE is set. The string is compiled in either way; what this
 # checks is that the binary is the real one and not a stub.

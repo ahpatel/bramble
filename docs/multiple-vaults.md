@@ -478,7 +478,11 @@ vault). What shipped:
   nothing. `VaultReader` now resolves the active vault and reads `vault-<id>.vlt1`, with a flat
   pre-migration fallback (the service can fire before the app runs its one-time migration). It reads
   `meta:active-vault` / `meta:vault.registry` from the same `CapacitorStorage` prefs the webview
-  writes (same UID, cross-process).
+  writes (same UID, cross-process). Android caches a prefs file per process and only re-reads one
+  another process changed when it is opened with `MODE_MULTI_PROCESS`, so `:autofill` opens
+  `CapacitorStorage` and `biometric_vault` through `BrambleAutofill.appPrefs`. Before that, a
+  long-lived `:autofill` kept the vault it saw first, and unlocking autofill after a vault switch
+  failed with "Incorrect master password".
 - **Autofill biometric read is per-vault (Android).** `BiometricUnlock.kt` (the service's read path)
   resolves the active vault and reads that vault's per-vault Keystore alias + prefs. No mirror is
   needed: the service runs in-app and can resolve the active vault. iOS *does* need a mirror - the

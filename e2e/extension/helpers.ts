@@ -3,6 +3,15 @@ import { type BrowserContext, expect, type Page, type Worker } from "@playwright
 export const optionsUrl = (id: string) => `chrome-extension://${id}/options.html`;
 export const popupUrl = (id: string) => `chrome-extension://${id}/popup.html`;
 
+/** Whether `url` is on exactly `origin`; a prefix test would also accept `origin` + ".evil.test". */
+export function onOrigin(url: string, origin: string): boolean {
+	try {
+		return new URL(url).origin === origin;
+	} catch {
+		return false;
+	}
+}
+
 /** A strong master password that clears the weak-password gate (so "Create vault" enables). */
 export const STRONG_PW = "Zx9-mQ2-vLp7-wK4-tR8";
 

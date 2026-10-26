@@ -33,7 +33,7 @@ export async function writeVault(blob: Uint8Array, vaultId?: string): Promise<vo
  * omitted resolves to the active vault. */
 export async function reencryptOuterWithEntryChange(
 	currentBlob: VaultBlob,
-	mutate: (entries: EncryptedEntry[]) => Promise<EncryptedEntry[]>,
+	mutate: (entries: EncryptedEntry[], payload: EntriesPayload) => Promise<EncryptedEntry[]>,
 	vaultId?: string,
 ): Promise<{ entriesIv: Uint8Array; entriesCiphertext: Uint8Array; entryCount: number }> {
 	let payload: EntriesPayload;
@@ -54,9 +54,12 @@ export async function reencryptOuterWithEntryChange(
 		payload = decodeEntriesPayload(decrypted.data);
 	}
 	// Keep the background clock ahead of every stamp already on disk.
-	for (const e of payload.entries) await witnessStamp(e.hlc);
-	for (const t of payload.tombstones) await witnessStamp(t.hlc);
-	const mutated = await mutate(payload.entries);
+	for (const v of [...payload.entries, ...(payload.conflicts ?? []), ...payload.tombstones]) {
+		for (const stamp of [v.hlc, ...(v.floor ? [v.floor] : []), ...Object.values(v.vv ?? {})]) {
+			await witnessStamp(stamp);
+		}
+	}
+	const mutated = await mutate(payload.entries, payload);
 	// Spread the payload rather than naming its fields: the mutate callbacks only add and
 	// replace entries, so everything else has to survive verbatim. Naming them dropped
 	// `settings` on every background write, so a corner-prompt save or a passkey create erased

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useToast } from "../app/components/ui/toast";
 import { usePlatform } from "../context/PlatformContext";
 import { planAssociationUpdates } from "../vault/association";
-import { planPasskeyPlacement } from "../vault/passkey";
+import { planPasskeyPlacement, withPasskey } from "../vault/passkey";
 import { useVault } from "./useVault";
 import { useVaultRegistry } from "./useVaultRegistry";
 
@@ -39,7 +39,10 @@ export function usePendingHandoffs(): void {
 						const entry = readEntries().find((e) => e.id === placement.entryId);
 						if (entry?.type !== "login") continue;
 						const { id: _id, ...data } = entry;
-						await updateEntry(placement.entryId, { ...data, passkeys: placement.passkeys });
+						await updateEntry(placement.entryId, {
+							...data,
+							passkeys: withPasskey(entry.passkeys, placement.passkey),
+						});
 						loginName = entry.name;
 					}
 					show({

@@ -72,3 +72,38 @@ export function DetailField({
 		</div>
 	);
 }
+
+interface DetailNotesProps {
+	label: string;
+	value: string;
+	copied: string | null;
+	copy: (label: string, value: string) => void;
+}
+
+/** Multi-line notes for a detail view; `data-selectable` opts the text back in where desktop.css disables selection. */
+export function DetailNotes({ label, value, copied, copy }: DetailNotesProps) {
+	const { t } = useLingui();
+	return (
+		<div className="space-y-1.5">
+			<div className="flex items-center justify-between">
+				<p className="text-xs text-muted-foreground">{label}</p>
+				<Button
+					variant="ghost"
+					size="none"
+					onClick={() => copy("notes", value)}
+					className="p-1.5 rounded-md"
+					aria-label={t`Copy ${label.toLowerCase()}`}
+				>
+					{copied === "notes" ? (
+						<Check className="w-3.5 h-3.5 text-primary" />
+					) : (
+						<Copy className="w-3.5 h-3.5" />
+					)}
+				</Button>
+			</div>
+			<p className="text-sm whitespace-pre-wrap" data-selectable>
+				{value || "-"}
+			</p>
+		</div>
+	);
+}

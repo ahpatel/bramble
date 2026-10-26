@@ -1,0 +1,799 @@
+{
+  "folders": [
+    {
+      "icon": "1008",
+      "parent_uuid": "",
+      "title": "Work",
+      "updated_at": 1772442900,
+      "uuid": "f0000000-0000-4000-8000-000000000001"
+    },
+    {
+      "icon": "1008",
+      "parent_uuid": "f0000000-0000-4000-8000-000000000001",
+      "title": "Clients",
+      "updated_at": 1772442900,
+      "uuid": "f0000000-0000-4000-8000-000000000002"
+    }
+  ],
+  "items": [
+    {
+      "archived": 0,
+      "auto_submit": 1,
+      "category": "login",
+      "createdAt": 1772442960,
+      "favorite": 0,
+      "fields": [
+        {
+          "deleted": 0,
+          "label": "Username",
+          "order": 1,
+          "sensitive": 0,
+          "type": "username",
+          "uid": 1,
+          "updated_at": 1772442900,
+          "value": "emily.sample",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "E-mail",
+          "order": 2,
+          "sensitive": 0,
+          "type": "email",
+          "uid": 2,
+          "updated_at": 1772442900,
+          "value": "emily@sample.example",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Password",
+          "order": 3,
+          "sensitive": 1,
+          "type": "password",
+          "uid": 3,
+          "updated_at": 1772442900,
+          "value": "123456",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Website",
+          "order": 4,
+          "sensitive": 0,
+          "type": "url",
+          "uid": 4,
+          "updated_at": 1772442900,
+          "value": "https://www.amazon.com",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "ADDITIONAL DETAILS",
+          "order": 5,
+          "sensitive": 0,
+          "type": "section",
+          "uid": 5,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "One-time code",
+          "order": 6,
+          "sensitive": 0,
+          "type": "totp",
+          "uid": 6,
+          "updated_at": 1772442900,
+          "value": "JBSWY3DPEHPK3PXP",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Phone number",
+          "order": 7,
+          "sensitive": 0,
+          "type": "phone",
+          "uid": 7,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Security question",
+          "order": 8,
+          "sensitive": 0,
+          "type": "text",
+          "uid": 8,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Security answer",
+          "order": 9,
+          "sensitive": 1,
+          "type": "text",
+          "uid": 9,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        }
+      ],
+      "icon": {
+        "fav": "",
+        "image": {
+          "file": ""
+        },
+        "type": 1,
+        "uuid": ""
+      },
+      "note": "Prime renews in March",
+      "subtitle": "",
+      "template_type": "login.default",
+      "title": "Amazon",
+      "trashed": 0,
+      "updated_at": 1772442960,
+      "uuid": "00000000-0000-4000-8000-000000000001",
+      "folders": [
+        "f0000000-0000-4000-8000-000000000002"
+      ]
+    },
+    {
+      "archived": 0,
+      "auto_submit": 1,
+      "category": "creditcard",
+      "createdAt": 1772443020,
+      "favorite": 0,
+      "fields": [
+        {
+          "deleted": 0,
+          "label": "Cardholder",
+          "order": 10,
+          "sensitive": 0,
+          "type": "ccName",
+          "uid": 10,
+          "updated_at": 1772442900,
+          "value": "Emily Sample",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Type",
+          "order": 11,
+          "sensitive": 0,
+          "type": "ccType",
+          "uid": 11,
+          "updated_at": 1772442900,
+          "value": "American Express",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Number",
+          "order": 12,
+          "sensitive": 0,
+          "type": "ccNumber",
+          "uid": 12,
+          "updated_at": 1772442900,
+          "value": "3782 822463 10005",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "CVC",
+          "order": 13,
+          "sensitive": 1,
+          "type": "ccCvc",
+          "uid": 13,
+          "updated_at": 1772442900,
+          "value": "1234",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "PIN",
+          "order": 14,
+          "sensitive": 1,
+          "type": "ccPin",
+          "uid": 14,
+          "updated_at": 1772442900,
+          "value": "9874",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Expiry date",
+          "order": 15,
+          "sensitive": 0,
+          "type": "ccExpiry",
+          "uid": 15,
+          "updated_at": 1772442900,
+          "value": "03/29",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "ADDITIONAL DETAILS",
+          "order": 16,
+          "sensitive": 0,
+          "type": "section",
+          "uid": 16,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Issuing bank",
+          "order": 17,
+          "sensitive": 0,
+          "type": "ccBankname",
+          "uid": 17,
+          "updated_at": 1772442900,
+          "value": "American Express",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Transaction password",
+          "order": 18,
+          "sensitive": 0,
+          "type": "ccTxnpassword",
+          "uid": 18,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        }
+      ],
+      "icon": {
+        "fav": "",
+        "image": {
+          "file": ""
+        },
+        "type": 1,
+        "uuid": ""
+      },
+      "note": "",
+      "subtitle": "",
+      "template_type": "creditcard.default",
+      "title": "Amex",
+      "trashed": 0,
+      "updated_at": 1772443020,
+      "uuid": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "archived": 0,
+      "auto_submit": 1,
+      "category": "note",
+      "createdAt": 1772443080,
+      "favorite": 0,
+      "fields": [],
+      "icon": {
+        "fav": "",
+        "image": {
+          "file": ""
+        },
+        "type": 1,
+        "uuid": ""
+      },
+      "note": "12-34-56",
+      "subtitle": "",
+      "template_type": "note.default",
+      "title": "Locker combination",
+      "trashed": 0,
+      "updated_at": 1772443080,
+      "uuid": "00000000-0000-4000-8000-000000000003"
+    },
+    {
+      "archived": 0,
+      "auto_submit": 1,
+      "category": "travel",
+      "createdAt": 1772443140,
+      "favorite": 0,
+      "fields": [
+        {
+          "deleted": 0,
+          "label": "Number",
+          "order": 19,
+          "sensitive": 0,
+          "type": "text",
+          "uid": 19,
+          "updated_at": 1772442900,
+          "value": "X1234567",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Full name",
+          "order": 20,
+          "sensitive": 0,
+          "type": "text",
+          "uid": 20,
+          "updated_at": 1772442900,
+          "value": "Emily Sample",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Expiry date",
+          "order": 21,
+          "sensitive": 0,
+          "type": "date",
+          "uid": 21,
+          "updated_at": 1772442900,
+          "value": "2031-05-01",
+          "value_updated_at": 1772442900
+        }
+      ],
+      "icon": {
+        "fav": "",
+        "image": {
+          "file": ""
+        },
+        "type": 1,
+        "uuid": ""
+      },
+      "note": "",
+      "subtitle": "",
+      "template_type": "travel.passport",
+      "title": "Passport",
+      "trashed": 0,
+      "updated_at": 1772443140,
+      "uuid": "00000000-0000-4000-8000-000000000004"
+    },
+    {
+      "archived": 0,
+      "auto_submit": 1,
+      "category": "computer",
+      "createdAt": 1772443200,
+      "favorite": 0,
+      "fields": [
+        {
+          "deleted": 0,
+          "label": "Username",
+          "order": 22,
+          "sensitive": 0,
+          "type": "username",
+          "uid": 22,
+          "updated_at": 1772442900,
+          "value": "emily",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Password",
+          "order": 23,
+          "sensitive": 1,
+          "type": "password",
+          "uid": 23,
+          "updated_at": 1772442900,
+          "value": "123456",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "IMAP server",
+          "order": 24,
+          "sensitive": 0,
+          "type": "text",
+          "uid": 24,
+          "updated_at": 1772442900,
+          "value": "imap.sample.example",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "SMTP server",
+          "order": 25,
+          "sensitive": 0,
+          "type": "text",
+          "uid": 25,
+          "updated_at": 1772442900,
+          "value": "smtp.sample.example",
+          "value_updated_at": 1772442900
+        }
+      ],
+      "icon": {
+        "fav": "",
+        "image": {
+          "file": ""
+        },
+        "type": 1,
+        "uuid": ""
+      },
+      "note": "",
+      "subtitle": "",
+      "template_type": "computer.emailaccount",
+      "title": "Work mail",
+      "trashed": 0,
+      "updated_at": 1772443200,
+      "uuid": "00000000-0000-4000-8000-000000000005",
+      "folders": [
+        "f0000000-0000-4000-8000-000000000001"
+      ]
+    },
+    {
+      "archived": 0,
+      "auto_submit": 1,
+      "category": "login",
+      "createdAt": 1772443260,
+      "favorite": 0,
+      "fields": [
+        {
+          "deleted": 0,
+          "label": "Username",
+          "order": 26,
+          "sensitive": 0,
+          "type": "username",
+          "uid": 26,
+          "updated_at": 1772442900,
+          "value": "emily",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "E-mail",
+          "order": 27,
+          "sensitive": 0,
+          "type": "email",
+          "uid": 27,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Password",
+          "order": 28,
+          "sensitive": 1,
+          "type": "password",
+          "uid": 28,
+          "updated_at": 1772442900,
+          "value": "123456",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Website",
+          "order": 29,
+          "sensitive": 0,
+          "type": "url",
+          "uid": 29,
+          "updated_at": 1772442900,
+          "value": "https://forum.sample.example",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "ADDITIONAL DETAILS",
+          "order": 30,
+          "sensitive": 0,
+          "type": "section",
+          "uid": 30,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "One-time code",
+          "order": 31,
+          "sensitive": 0,
+          "type": "totp",
+          "uid": 31,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Phone number",
+          "order": 32,
+          "sensitive": 0,
+          "type": "phone",
+          "uid": 32,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Security question",
+          "order": 33,
+          "sensitive": 0,
+          "type": "text",
+          "uid": 33,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Security answer",
+          "order": 34,
+          "sensitive": 1,
+          "type": "text",
+          "uid": 34,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        }
+      ],
+      "icon": {
+        "fav": "",
+        "image": {
+          "file": ""
+        },
+        "type": 1,
+        "uuid": ""
+      },
+      "note": "",
+      "subtitle": "",
+      "template_type": "login.default",
+      "title": "Old forum",
+      "trashed": 1,
+      "updated_at": 1772443260,
+      "uuid": "00000000-0000-4000-8000-000000000006"
+    },
+    {
+      "archived": 1,
+      "auto_submit": 1,
+      "category": "login",
+      "createdAt": 1772443320,
+      "favorite": 0,
+      "fields": [
+        {
+          "deleted": 0,
+          "label": "Username",
+          "order": 35,
+          "sensitive": 0,
+          "type": "username",
+          "uid": 35,
+          "updated_at": 1772442900,
+          "value": "emily",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "E-mail",
+          "order": 36,
+          "sensitive": 0,
+          "type": "email",
+          "uid": 36,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Password",
+          "order": 37,
+          "sensitive": 1,
+          "type": "password",
+          "uid": 37,
+          "updated_at": 1772442900,
+          "value": "123456",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Website",
+          "order": 38,
+          "sensitive": 0,
+          "type": "url",
+          "uid": 38,
+          "updated_at": 1772442900,
+          "value": "https://bank.sample.example",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "ADDITIONAL DETAILS",
+          "order": 39,
+          "sensitive": 0,
+          "type": "section",
+          "uid": 39,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "One-time code",
+          "order": 40,
+          "sensitive": 0,
+          "type": "totp",
+          "uid": 40,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Phone number",
+          "order": 41,
+          "sensitive": 0,
+          "type": "phone",
+          "uid": 41,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Security question",
+          "order": 42,
+          "sensitive": 0,
+          "type": "text",
+          "uid": 42,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Security answer",
+          "order": 43,
+          "sensitive": 1,
+          "type": "text",
+          "uid": 43,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        }
+      ],
+      "icon": {
+        "fav": "",
+        "image": {
+          "file": ""
+        },
+        "type": 1,
+        "uuid": ""
+      },
+      "note": "",
+      "subtitle": "",
+      "template_type": "login.default",
+      "title": "Retired bank",
+      "trashed": 0,
+      "updated_at": 1772443320,
+      "uuid": "00000000-0000-4000-8000-000000000007"
+    },
+    {
+      "archived": 0,
+      "auto_submit": 1,
+      "category": "login",
+      "createdAt": 1772443380,
+      "favorite": 0,
+      "fields": [
+        {
+          "deleted": 0,
+          "label": "Username",
+          "order": 44,
+          "sensitive": 0,
+          "type": "username",
+          "uid": 44,
+          "updated_at": 1772442900,
+          "value": "emily",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "E-mail",
+          "order": 45,
+          "sensitive": 0,
+          "type": "email",
+          "uid": 45,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Password",
+          "order": 46,
+          "sensitive": 1,
+          "type": "password",
+          "uid": 46,
+          "updated_at": 1772442900,
+          "value": "123456",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Website",
+          "order": 47,
+          "sensitive": 0,
+          "type": "url",
+          "uid": 47,
+          "updated_at": 1772442900,
+          "value": "https://insurance.sample.example",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "ADDITIONAL DETAILS",
+          "order": 48,
+          "sensitive": 0,
+          "type": "section",
+          "uid": 48,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "One-time code",
+          "order": 49,
+          "sensitive": 0,
+          "type": "totp",
+          "uid": 49,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Phone number",
+          "order": 50,
+          "sensitive": 0,
+          "type": "phone",
+          "uid": 50,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Security question",
+          "order": 51,
+          "sensitive": 0,
+          "type": "text",
+          "uid": 51,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        },
+        {
+          "deleted": 0,
+          "label": "Security answer",
+          "order": 52,
+          "sensitive": 1,
+          "type": "text",
+          "uid": 52,
+          "updated_at": 1772442900,
+          "value": "",
+          "value_updated_at": 1772442900
+        }
+      ],
+      "icon": {
+        "fav": "",
+        "image": {
+          "file": ""
+        },
+        "type": 1,
+        "uuid": ""
+      },
+      "note": "",
+      "subtitle": "",
+      "template_type": "login.default",
+      "title": "Insurance portal",
+      "trashed": 0,
+      "updated_at": 1772443380,
+      "uuid": "00000000-0000-4000-8000-000000000008",
+      "attachments": [
+        {
+          "data": "JVBERi0xLjQKJSBzYW1wbGUK",
+          "kind": "application/pdf",
+          "name": "policy.pdf",
+          "order": 1,
+          "size": 18,
+          "uuid": "a0000000-0000-4000-8000-000000000001"
+        }
+      ]
+    }
+  ]
+}

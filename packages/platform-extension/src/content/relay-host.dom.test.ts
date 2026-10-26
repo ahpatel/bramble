@@ -78,12 +78,39 @@ describe("hosting a descendant's picker", () => {
 		expect(hostEl()!.style.transform).toBe("translate3d(24px, 354px, 0)");
 	});
 
+	it("parks from the containing block's origin, not the document's", () => {
+		// Angular CDK's scroll-block: <html> is position:fixed at top:-441px and
+		// window.scrollY reads 0, so the host's coordinates start 441px above the viewport.
+		const origin = vi
+			.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+			.mockReturnValue(new DOMRect(0, -441, 0, 0));
+		showRelayHost(ANCHOR);
+		origin.mockRestore();
+
+		expect(hostEl()!.style.transform).toBe("translate3d(24px, 795px, 0)");
+	});
+
 	it("re-parks rather than stacking a second host on repeat anchors", () => {
 		showRelayHost(ANCHOR);
 		showRelayHost({ relayId: "relay-1", rect: { ...ANCHOR.rect, y: 400 } });
 
 		expect(document.body.querySelectorAll("div[id^='tp-']")).toHaveLength(1);
 		expect(hostEl()!.style.transform).toBe("translate3d(24px, 434px, 0)");
+	});
+
+	it("tells the UI each time it moves the host, and not when it stays put", () => {
+		// The UI holds clicks until the picker has sat still, and only this frame sees it move.
+		showRelayHost(ANCHOR);
+		const sent: unknown[] = [];
+		// jsdom gives a frame inside a shadow root no window of its own.
+		Object.defineProperty(frameOf(), "contentWindow", {
+			value: { postMessage: (m: unknown) => sent.push(m) },
+		});
+
+		showRelayHost({ relayId: "relay-1", rect: { ...ANCHOR.rect, y: 400 } });
+		showRelayHost({ relayId: "relay-1", rect: { ...ANCHOR.rect, y: 400 } });
+
+		expect(sent).toEqual([{ type: "UI_MOVED" }]);
 	});
 
 	it("replaces the host when a different relay takes over", () => {

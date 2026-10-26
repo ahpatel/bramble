@@ -131,6 +131,15 @@ The config starts the relay (`nostr-relay/node/relay.mjs`, port 7400) and the mo
 **Rebuild the extension first.** The mobile peer is served by vite and picks up `@core` changes
 live; the extension peer loads `dist-chromium`, so a core change that is not rebuilt makes the two
 peers run *different code*, and the spec fails somewhere unrelated to what you changed.
+
+**Combining on.** `pnpm test:e2e:sync:combine` runs the same suite with sync's combining switched
+on, as release B2 will ship it (docs/sync-conflicts.md, Phase B). It builds the extension with
+`VITE_COMBINE_CONCURRENT_EDITS=1` into `dist-chromium-combine` and serves the mobile peer with the
+same flag on port 5198, so the ordinary suite keeps testing what ships now.
+`concurrent-edits.spec.ts` reads which way it runs: edits to different fields made apart conflict
+with combining off and combine with it on; the same field conflicts either way. It separates the
+peers by closing the mobile page while the extension edits and locks (locking stops its sync),
+then edits on the mobile peer while the extension is still locked.
 `roster-signature-backfill.spec.ts` covers the phase-1 roster migration: it pairs the peers, strips
 the signatures out of both stored rosters to recreate the pre-2026-07-09 world, reopens the popup,
 and asserts the extension re-signs itself through the real host and that the peer converges on that
@@ -202,6 +211,21 @@ Two environmental dependencies, both of which surface as ordinary test failures:
   peers, so the code the inviter produced is the one the joiner consumes.
 - The WebRTC data channel needs a real IP route between phone and host. Same LAN is enough; a guest
   network with client isolation is not.
+
+### Concurrent edits on the device
+
+`concurrent-edits.spec.ts` runs `sync/concurrent-edits.spec.ts`'s three scenarios with the app on
+the device as one peer, joined to a throwaway vault it deletes at the end. It keeps the phone apart
+by force-stopping the app (`am force-stop`) and attaching again after relaunch, since a new process
+is a new devtools socket. For combining (docs/sync-conflicts.md, Phase B), build the app with
+`VITE_COMBINE_CONCURRENT_EDITS=1` and run with `COMBINE_CONCURRENT_EDITS=1`; with
+`EXTENSION_DIR=dist-chromium-combine` both peers combine, without it only the device does, which is
+how to tell the device's own combining (on the native crypto core) from the extension's.
+
+The device's build must match the checkout, native libraries included: `jniLibs` and the uniffi
+Kotlin glue are git-ignored build output, so after building another branch, rebuild them
+(`scripts/build-crypto-ffi.sh android`) or Gradle fails on the glue, or worse, packages another
+branch's crypto.
 
 ### The device holds real data
 

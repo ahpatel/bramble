@@ -165,9 +165,17 @@ function ciCollectBuild(): void {
 		fail("build-windows: no dispatched run recorded; run --ci-start first");
 	const runId = readFileSync(RUN_ID_FILE, "utf8").trim();
 
-	console.log(`build-windows: waiting on run ${runId} (approve the signing request in SignPath)…`);
+	const runUrl = `https://github.com/flythenimbus/bramble/actions/runs/${runId}`;
+	console.log(
+		`build-windows: waiting on ${runUrl} for SignPath's approval…\n` +
+			"  Approve the newest signing request in SignPath once the installer is built; they email the link.",
+	);
 	try {
-		execFileSync("gh", ["run", "watch", runId, "--exit-status"], { cwd: ROOT, stdio: "inherit" });
+		// Once a minute: the wait can last hours, and a workflow token gets 1,000 requests an hour.
+		execFileSync("gh", ["run", "watch", runId, "--exit-status", "--interval", "60"], {
+			cwd: ROOT,
+			stdio: "inherit",
+		});
 	} catch {
 		fail(
 			`build-windows: run ${runId} did not succeed.\n` +

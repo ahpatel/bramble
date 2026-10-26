@@ -63,6 +63,16 @@ class TrustedBrowsersTest {
     }
 
     @Test
+    fun samsungInternetIsPinnedToItsGpmReleaseKey() {
+        // #70: the GPM list's release key only; its userdebug key stays out.
+        val release =
+            "34:DF:0E:7A:9F:1C:F1:89:2E:45:C0:56:B4:97:3C:D8:1C:CF:14:8A:40:50:D1:1A:EA:4A:C5:A6:5F:90:0A:42"
+        for (pkg in listOf("com.sec.android.app.sbrowser", "com.sec.android.app.sbrowser.beta")) {
+            assertEquals("$pkg fingerprints", setOf(release), TrustedBrowsers.BROWSERS[pkg])
+        }
+    }
+
+    @Test
     fun allowlistFingerprintsAreWellFormed() {
         // Catch a typo'd fingerprint (wrong length / bad chars) that would silently break a browser.
         val fingerprint = Regex("^([0-9A-F]{2}:){31}[0-9A-F]{2}$")

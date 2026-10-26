@@ -67,7 +67,7 @@ object VaultReader {
      * fall back to the fixed blob path.
      */
     fun activeVaultId(context: Context): String? {
-        val prefs = context.getSharedPreferences(BrambleAutofill.CAPACITOR_PREFS, Context.MODE_PRIVATE)
+        val prefs = BrambleAutofill.appPrefs(context, BrambleAutofill.CAPACITOR_PREFS)
         prefs.getString(BrambleAutofill.PREF_ACTIVE_VAULT, null)?.let { raw ->
             val v = try { JSONTokener(raw).nextValue() } catch (e: Exception) { null }
             if (v is String && v.isNotEmpty()) return v

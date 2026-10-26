@@ -174,6 +174,9 @@ pub fn run() {
             // path to the proxy, so an app update or a move silently breaks every browser.
             manifest::refresh();
 
+            #[cfg(target_os = "linux")]
+            autostart::refresh(app.handle());
+
             // The backup schedule. Runs from here, not from a JS timer, because the main window
             // is usually hidden and a hidden webview's timers are throttled. See `backup`.
             backup::start_ticker(app.handle().clone());
@@ -233,6 +236,7 @@ pub fn run() {
             tray_theme,
             hide_to_tray,
             quit_app,
+            autostart::autostart_repoint,
             crypto::crypto_is_locked,
             crypto::crypto_lock,
             crypto::crypto_generate_vek,

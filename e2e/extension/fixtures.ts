@@ -5,8 +5,13 @@ import { fileURLToPath } from "node:url";
 import { type BrowserContext, test as base, chromium } from "@playwright/test";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
-/** The built, unpacked Chromium extension. Build it first: `pnpm --filter @vault/platform-extension build:chromium`. */
-const EXTENSION_PATH = path.resolve(dir, "../../packages/platform-extension/dist-chromium");
+/** The built, unpacked Chromium extension. Build it first: `pnpm --filter @vault/platform-extension build:chromium`.
+ * EXTENSION_DIR picks another build (the combining e2e's). */
+const EXTENSION_PATH = path.resolve(
+	dir,
+	"../../packages/platform-extension",
+	process.env.EXTENSION_DIR ?? "dist-chromium",
+);
 
 /**
  * Launch a persistent Chromium with the extension loaded and resolve its id from the MV3
@@ -49,9 +54,16 @@ export async function launchExtensionContext(reuseProfileDir?: string): Promise<
 /** Single-device fixture: `context` + `extensionId` for tests that only need one browser. */
 export const test = base.extend<{ context: BrowserContext; extensionId: string }>({
 	// biome-ignore lint/correctness/noEmptyPattern: Playwright requires the fixtures destructuring param.
-	context: async ({}, use) => {
+	context: async ({}, use, testInfo) => {
 		const { context, profileDir } = await launchExtensionContext();
+		// A CI retry is traced here because `use.trace` never reaches a launchPersistentContext.
+		const trace = !!process.env.CI && testInfo.retry > 0;
+		if (trace) await context.tracing.start({ screenshots: true, snapshots: true });
 		await use(context);
+		if (trace) {
+			const failed = testInfo.status !== testInfo.expectedStatus;
+			await context.tracing.stop(failed ? { path: testInfo.outputPath("trace.zip") } : undefined);
+		}
 		await context.close();
 		rmSync(profileDir, { recursive: true, force: true });
 	},

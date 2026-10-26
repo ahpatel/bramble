@@ -6,10 +6,12 @@
 import type { CryptoAdapter } from "../adapters/crypto";
 import type { EntriesBlobStore } from "../vault/entries-blob";
 import type { EncryptedEntry } from "../vault-format";
+import { causalKey, type Versioned } from "./causal";
+import { COMBINE_CONCURRENT_EDITS, combinePayload } from "./combine";
 import { type EntriesPayload, sanitizeRemoteEntriesPayload } from "./entries-payload";
 import { entryVersionKey } from "./entry-version";
 import { compareHlc, type Hlc } from "./hlc";
-import { mergeEntriesPayload } from "./vault-merge";
+import { heldVersions, mergeEntriesPayload } from "./vault-merge";
 
 /** Host hooks for reading and writing the local entries payload. */
 export interface VaultSyncPort {
@@ -23,21 +25,26 @@ export interface VaultSyncPort {
 	writeMerged(merged: EntriesPayload): Promise<void>;
 	/** Whether each entry decrypts under this vault's key; only the verdict leaves the crypto host. */
 	openable(entries: EncryptedEntry[]): Promise<boolean[]>;
+	/** Combine the siblings of `ids` in the crypto host (docs/sync-conflicts.md, Phase B); absent = never. */
+	combineSiblings?(
+		payload: EntriesPayload,
+		ids: ReadonlySet<string>,
+	): Promise<{ payload: EntriesPayload; stamps: Hlc[] }>;
 }
 
-/** Every stamp the remote has observed (winners and losers), for clock witnessing. */
+/** Every stamp the remote carries (winners, losers, siblings and histories), for clock witnessing. */
 function remoteStamps(remote: EntriesPayload): Hlc[] {
-	return [...remote.entries.map((e) => e.hlc), ...remote.tombstones.map((t) => t.hlc)];
+	return [...remote.entries, ...(remote.conflicts ?? []), ...remote.tombstones].flatMap((v) => [
+		v.hlc,
+		...(v.floor ? [v.floor] : []),
+		...Object.values(v.vv ?? {}),
+	]);
 }
 
 export interface ApplyResult {
 	payload: EntriesPayload;
 	/** Whether the merge actually changed local state (false = remote was redundant). */
 	changed: boolean;
-}
-
-function stampMap(items: { id: string; hlc: Hlc }[]): Map<string, Hlc> {
-	return new Map(items.map((i) => [i.id, i.hlc]));
 }
 
 function stampMapsEqual(a: Map<string, Hlc>, b: Map<string, Hlc>): boolean {
@@ -54,43 +61,82 @@ function settingsStamps(settings: EntriesPayload["settings"]): Map<string, Hlc> 
 	return new Map(Object.entries(settings ?? {}).map(([key, rec]) => [key, rec.hlc]));
 }
 
+/** Each version as id + stamp + causal history, so a stripped copy differs from its source. */
+function versionKeys(items: readonly ({ id: string } & Versioned)[] | undefined): Set<string> {
+	return new Set((items ?? []).map((v) => `${v.id}|${causalKey(v)}`));
+}
+
+function setsEqual(a: Set<string>, b: Set<string>): boolean {
+	return a.size === b.size && [...a].every((k) => b.has(k));
+}
+
 /**
- * True if both payloads hold the same entries (by id+stamp), tombstones and settings.
+ * True if both payloads hold the same entries, conflicts and tombstones (by id, stamp and causal
+ * history) and the same settings.
  *
  * Settings are part of this or they never propagate: the caller writes and re-broadcasts only
  * when a merge changed something, so a settings-only change judged equivalent would be dropped
- * on the floor and appear to sync only when it rode along with an entry edit.
+ * on the floor and appear to sync only when it rode along with an entry edit. The same goes for
+ * conflicts and for history gained under an unchanged stamp.
  */
 export function payloadsEquivalent(a: EntriesPayload, b: EntriesPayload): boolean {
 	return (
-		stampMapsEqual(stampMap(a.entries), stampMap(b.entries)) &&
-		stampMapsEqual(stampMap(a.tombstones), stampMap(b.tombstones)) &&
+		setsEqual(versionKeys(a.entries), versionKeys(b.entries)) &&
+		setsEqual(versionKeys(a.conflicts), versionKeys(b.conflicts)) &&
+		setsEqual(versionKeys(a.tombstones), versionKeys(b.tombstones)) &&
 		stampMapsEqual(settingsStamps(a.settings), settingsStamps(b.settings))
 	);
 }
 
-/** Drop incoming entries that would win the merge but don't decrypt here: a peer can't plant another vault's entries. */
-async function admit(
+/** Remote versions with one refused version key dropped. */
+function withoutRejected(remote: EntriesPayload, rejected: Set<string>): EntriesPayload {
+	const keep = (e: EncryptedEntry) => !rejected.has(entryVersionKey(e));
+	const out: EntriesPayload = { ...remote, entries: remote.entries.filter(keep) };
+	if (remote.conflicts) out.conflicts = remote.conflicts.filter(keep);
+	return out;
+}
+
+/**
+ * Merge, checking every version that would newly land here decrypts under this vault's key, so a
+ * peer can't plant another vault's entries. Checks what lands rather than what arrives: a stale
+ * version the merge prunes costs nothing. A refusal can change what survives, so it re-merges.
+ */
+async function admitAndMerge(
 	port: VaultSyncPort,
 	local: EntriesPayload,
 	remote: EntriesPayload,
 	rejected: Set<string>,
-): Promise<EntriesPayload> {
-	const mine = new Map(local.entries.map((e) => [e.id, e.hlc]));
-	const candidates = remote.entries.filter((e) => {
-		if (rejected.has(entryVersionKey(e))) return false;
-		const have = mine.get(e.id);
-		return have === undefined || compareHlc(e.hlc, have) > 0;
-	});
-	if (candidates.length > 0) {
-		const verdicts = await port.openable(candidates);
-		const refused = candidates.filter((_, i) => !verdicts[i]);
+): Promise<{ admitted: EntriesPayload; merged: EntriesPayload }> {
+	const held = new Set([...local.entries, ...(local.conflicts ?? [])].map(entryVersionKey));
+	const opened = new Set<string>();
+	let admitted = withoutRejected(remote, rejected);
+	for (;;) {
+		const merged = mergeEntriesPayload(local, admitted);
+		const fresh = [...merged.entries, ...(merged.conflicts ?? [])].filter((e) => {
+			const key = entryVersionKey(e);
+			return !held.has(key) && !opened.has(key);
+		});
+		if (fresh.length === 0) return { admitted, merged };
+		const verdicts = await port.openable(fresh);
+		const refused = fresh.filter((_, i) => !verdicts[i]);
+		for (const e of fresh.filter((_, i) => verdicts[i])) opened.add(entryVersionKey(e));
+		if (refused.length === 0) return { admitted, merged };
+		console.warn(`[sync] refused ${refused.length} entries that don't decrypt in this vault`);
 		for (const e of refused) rejected.add(entryVersionKey(e));
-		if (refused.length > 0) {
-			console.warn(`[sync] refused ${refused.length} entries that don't decrypt in this vault`);
-		}
+		admitted = withoutRejected(admitted, rejected);
 	}
-	return { ...remote, entries: remote.entries.filter((e) => !rejected.has(entryVersionKey(e))) };
+}
+
+/**
+ * Ids holding siblings whose versions this merge changed. Combining is a pure function of the
+ * versions, so siblings this device already held (and didn't combine) are left unopened.
+ */
+function newSiblingIds(local: EntriesPayload, merged: EntriesPayload): Set<string> {
+	const held = (p: EntriesPayload, id: string) =>
+		heldVersions(p, id).map(causalKey).sort().join("\n");
+	return new Set(
+		(merged.conflicts ?? []).map((e) => e.id).filter((id) => held(local, id) !== held(merged, id)),
+	);
 }
 
 /**
@@ -102,21 +148,33 @@ async function admit(
 export async function applyRemotePayload(
 	port: VaultSyncPort,
 	remote: EntriesPayload,
-	{ rejected = new Set<string>() }: { rejected?: Set<string> } = {},
+	{
+		rejected = new Set<string>(),
+		combine = COMBINE_CONCURRENT_EDITS,
+	}: { rejected?: Set<string>; combine?: boolean } = {},
 ): Promise<ApplyResult> {
 	// A peer's payload is untrusted: drop any future-dated (poisoned) stamps before merge or
 	// witness, so a member can't pin an un-deletable entry by stamping it years ahead.
 	const safe = sanitizeRemoteEntriesPayload(remote);
 	const local = await port.readLocal();
-	const admitted = await admit(port, local, safe, rejected);
-	const merged = mergeEntriesPayload(local, admitted);
-	const changed = !payloadsEquivalent(local, merged);
+	const { admitted, merged } = await admitAndMerge(port, local, safe, rejected);
+	const unchanged = { payload: merged, stamps: [] as Hlc[] };
+	const ids = combine && port.combineSiblings ? newSiblingIds(local, merged) : new Set<string>();
+	// Combining only tidies siblings the merge already kept, so a failure leaves them as they are.
+	const combined =
+		port.combineSiblings && ids.size > 0
+			? await port.combineSiblings(merged, ids).catch((e: unknown) => {
+					console.warn("[sync] combining siblings failed; keeping them as they are:", e);
+					return unchanged;
+				})
+			: unchanged;
+	const changed = !payloadsEquivalent(local, combined.payload);
 	if (changed) {
 		// Only admitted stamps: a refused entry must not advance this device's clock.
-		await port.witnessRemote(remoteStamps(admitted));
-		await port.writeMerged(merged);
+		await port.witnessRemote([...remoteStamps(admitted), ...combined.stamps]);
+		await port.writeMerged(combined.payload);
 	}
-	return { payload: merged, changed };
+	return { payload: combined.payload, changed };
 }
 
 /**
@@ -126,7 +184,7 @@ export async function applyRemotePayload(
  */
 export function createVaultSyncPort(deps: {
 	store: EntriesBlobStore;
-	crypto: Pick<CryptoAdapter, "decryptEntries">;
+	crypto: Pick<CryptoAdapter, "decryptEntries" | "encryptEntry">;
 	witnessRemote: (stamps: Hlc[]) => Promise<void>;
 	onChanged?: () => void | Promise<void>;
 }): VaultSyncPort {
@@ -134,9 +192,13 @@ export function createVaultSyncPort(deps: {
 		readLocal: () => deps.store.readEntriesPayload(),
 		witnessRemote: deps.witnessRemote,
 		async writeMerged(merged) {
-			await deps.store.writeEntriesBlob(merged);
+			// Into what's on disk now: another writer on this device may have saved meanwhile, and a
+			// merge loses nothing by being applied again.
+			const current = await deps.store.readEntriesPayload();
+			await deps.store.writeEntriesBlob(mergeEntriesPayload(current, merged));
 			await deps.onChanged?.();
 		},
+		combineSiblings: (payload, ids) => combinePayload(payload, deps.crypto, ids),
 		openable: async (entries) =>
 			(
 				await deps.crypto.decryptEntries(

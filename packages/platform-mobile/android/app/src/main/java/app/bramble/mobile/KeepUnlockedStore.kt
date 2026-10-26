@@ -31,7 +31,7 @@ object KeepUnlockedStore {
     }
 
     private fun readAutoLockMinutes(context: Context): Int {
-        val prefs = context.getSharedPreferences(BrambleAutofill.CAPACITOR_PREFS, Context.MODE_PRIVATE)
+        val prefs = BrambleAutofill.appPrefs(context, BrambleAutofill.CAPACITOR_PREFS)
         val raw = prefs.getString(BrambleAutofill.PREF_AUTOLOCK_MINUTES, null)
         return raw?.trim()?.toIntOrNull() ?: BrambleAutofill.DEFAULT_AUTOLOCK_MINUTES
     }

@@ -4,6 +4,7 @@ import {
 	deriveMatcher,
 	getFillableInputs,
 	isRendered,
+	loginFieldsFor,
 	matchesField,
 	splitOtpFields,
 } from "./detection";
@@ -115,16 +116,20 @@ export function getLastFilledPassword(): string | null {
 	return lastFilledPassword;
 }
 
-/** Fills the page's login fields. When `isAuto`, skips fields already auto-filled this session. */
+/**
+ * Fills the login fields `anchor` belongs to (see loginFieldsFor). When `isAuto`, skips fields
+ * already auto-filled this session.
+ */
 export function fillForm(
 	username: string,
 	password: string,
 	isAuto: boolean,
+	anchor: HTMLInputElement | null = null,
 ): {
 	filled: boolean;
 	passwordField: HTMLInputElement | null;
 } {
-	const { username: userField, password: pwField } = getPageFields().login;
+	const { username: userField, password: pwField } = loginFieldsFor(getPageFields(), anchor);
 	let filled = false;
 	// Not isReserved(): an explicit pick replaces whatever the user typed into the
 	// login fields, which is the point of choosing an entry from the dropdown.

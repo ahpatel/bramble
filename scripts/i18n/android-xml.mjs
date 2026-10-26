@@ -65,7 +65,9 @@ export async function run() {
 	for (const { code, name, android } of LOCALES) {
 		const dir = join(ANDROID_RES, `values-${android}`);
 		const targetPath = join(dir, "strings.xml");
-		const have = existsSync(targetPath) ? existingNames(readFileSync(targetPath, "utf8")) : new Set();
+		const targetXml = existsSync(targetPath) ? readFileSync(targetPath, "utf8") : "";
+		const have = existingNames(targetXml);
+		const prior = new Map(parseStrings(targetXml).map((e) => [e.name, e.value]));
 		const todo = entries.filter((e) => !have.has(e.name));
 		if (!todo.length) {
 			console.log(`  values-${android}: up to date`);
@@ -80,7 +82,7 @@ export async function run() {
 		const byName = new Map(todo.map((e, i) => [e.name, translated[i]]));
 		const lines = entries
 			.map((e) => {
-				const v = byName.get(e.name) ?? e.value; // keep prior translation if present
+				const v = byName.get(e.name) ?? prior.get(e.name) ?? e.value; // keep prior translation if present
 				return `    <string name="${e.name}">${escapeXml(v)}</string>`;
 			})
 			.join("\n");

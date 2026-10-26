@@ -1,8 +1,10 @@
-Novità di questa versione:
+Novità in questa versione:
 
-- Una cassaforte non si rifiuta più di aprirsi perché contiene voci provenienti da una delle altre casseforti. Un problema di sincronizzazione nell'estensione del browser poteva copiare voci da una cassaforte all'altra e quella cassaforte non si sbloccava più, mostrando un errore tecnico, anche con la password corretta. Bramble ora mette da parte quelle voci su questo dispositivo, senza modificarle, e apre la cassaforte con tutto il resto.
-- Durante la sincronizzazione, Bramble ora respinge le voci che appartengono a una cassaforte diversa, così un dispositivo che presenta ancora il problema non può trasmetterlo.
-- Se una cassaforte continua a non aprirsi, Bramble lo comunica con parole semplici e inserisce un collegamento al nostro registro dei problemi, invece di mostrare un errore tecnico.
-- Un aggiornamento di sicurezza per Capacitor, il framework su cui si basa l'app.
+- Quando la stessa voce viene modificata su due dispositivi prima della sincronizzazione, Bramble ora conserva entrambe le versioni e mostra il conflitto, così è possibile confrontarle e conservarne una o entrambe. In precedenza, una modifica andava persa in silenzio.
+- Il salvataggio di una modifica non sovrascrive più una modifica sincronizzata durante la modifica.
+- La modifica di una voce archiviata la mantiene archiviata.
+- Importazione da Enpass e AliasVault. Gli accessi già presenti da un altro gestore di password vengono trattenuti invece di essere duplicati.
+- I numeri delle carte vengono mostrati a gruppi e copiati come sole cifre. Le note possono essere selezionate e copiate e il campo note si espande man mano che si digita.
+- Errori di backup di Dropbox più chiari e correzione del rifiuto delle chiavi alias di DuckDuckGo.
 
-Nessun account, nessun cloud. Tutto rimane sui Suoi dispositivi.
+Nessun account, nessun cloud. Tutto rimane sui dispositivi personali.

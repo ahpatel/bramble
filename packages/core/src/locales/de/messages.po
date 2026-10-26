@@ -54,6 +54,11 @@ msgstr "{0} · hinzugefügt am {1}"
 msgid "{0} (your domain)"
 msgstr "{0} (Ihre Domain)"
 
+#. placeholder {0}: heldBack.length
+#: packages/core/src/app/screens/Import/ImportShell.tsx
+msgid "{0} more look like entries you already have (the same site, username and password, or the same card number), so they are held back."
+msgstr "{0} weitere ähneln Einträgen, die Sie bereits haben (dieselbe Website, derselbe Benutzername und dasselbe Passwort oder dieselbe Kartennummer), daher werden sie zurückgestellt."
+
 #: packages/core/src/app/bulk-actions/tags.tsx
 msgid "{affected, plural, one {Tag # entry} other {Tag # entries}}"
 msgstr "{affected, plural, one {# Eintrag taggen} other {# Einträge taggen}}"
@@ -65,6 +70,14 @@ msgstr "{affected, plural, one {Tag von # Eintrag entfernen} other {Tag von # Ei
 #: packages/core/src/app/components/RecoveryCodeDisplay.tsx
 msgid "{appName} recovery code"
 msgstr "{appName} Wiederherstellungs-Code"
+
+#: packages/core/src/app/screens/Settings/components/KdbxExportDialog.tsx
+msgid "{conflicted, plural, one {# entry has a sync conflict. Only the version you see is exported.} other {# entries have a sync conflict. Only the version you see is exported.}}"
+msgstr "{conflicted, plural, one {# Eintrag weist einen Synchronisierungskonflikt auf. Es wird nur die angezeigte Version exportiert.} other {# Einträge weisen einen Synchronisierungskonflikt auf. Es wird nur die angezeigte Version exportiert.}}"
+
+#: packages/core/src/app/bulk-actions/export.tsx
+msgid "{conflicted, plural, one {# of these entries has a sync conflict. Only the version you see is exported.} other {# of these entries have a sync conflict. Only the version you see is exported.}}"
+msgstr "{conflicted, plural, one {# dieser Einträge weist einen Synchronisierungskonflikt auf. Es wird nur die angezeigte Version exportiert.} other {# dieser Einträge weisen einen Synchronisierungskonflikt auf. Es wird nur die angezeigte Version exportiert.}}"
 
 #: packages/core/src/app/screens/VaultHome/SelectionBar.tsx
 msgid "{count, plural, one {# selected} other {# selected}}"
@@ -102,6 +115,10 @@ msgstr "{passkeys, plural, one {# Passkey ist auf diesen Einträgen gespeichert 
 #: packages/core/src/app/screens/Import/util/count-line.tsx
 msgid "{passkeys, plural, one {# passkey} other {# passkeys}}"
 msgstr "{passkeys, plural, one {# Passkey} other {# Passkeys}}"
+
+#: packages/core/src/app/screens/Import/ImportShell.tsx
+msgid "{passwordDiffers} share a site and username with an entry you already have, but with a different password. They will be added as new entries."
+msgstr "{passwordDiffers} teilen sich Website und Benutzername mit einem Eintrag, den Sie bereits haben, haben aber ein anderes Passwort. Sie werden als neue Einträge hinzugefügt."
 
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "{remaining}s left"
@@ -667,6 +684,10 @@ msgstr "Ändern Sie dies auf der Website, um Ihr Konto zu sichern."
 msgid "Change your master password"
 msgstr "Master-Passwort ändern"
 
+#: packages/core/src/app/components/EntryRow.tsx
+msgid "Changed on two devices before they synced"
+msgstr "Auf zwei Geräten geändert, bevor sie synchronisiert wurden"
+
 #: packages/core/src/app/screens/Settings/components/UpdatesSection.tsx
 msgid "Check"
 msgstr "Überprüfen"
@@ -796,6 +817,10 @@ msgstr "Demnächst verfügbar"
 msgid "Comma (,)"
 msgstr "Komma (,)"
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Compare versions"
+msgstr "Versionen vergleichen"
+
 #: packages/core/src/app/screens/Settings/components/RecoveryCodeSection.tsx
 msgid "Confirm"
 msgstr "Bestätigen"
@@ -844,6 +869,10 @@ msgstr "Bestätigen Sie Ihr Master-Passwort, um den Wiederherstellungscode zurü
 #: packages/core/src/app/screens/Settings/components/MasterPasswordSection.tsx
 msgid "Confirm your new password"
 msgstr "Neues Passwort bestätigen"
+
+#: packages/core/src/app/components/EntryRow.tsx
+msgid "Conflict"
+msgstr "Konflikt"
 
 #: packages/core/src/app/screens/Settings/components/BrowserPairingSection.tsx
 #: packages/core/src/app/screens/Settings/components/DesktopLinkSection.tsx
@@ -1100,6 +1129,10 @@ msgstr "Löschen"
 msgid "Delete entry"
 msgstr "Eintrag löschen"
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Delete it"
+msgstr "Löschen"
+
 #: packages/core/src/app/screens/EntryDetail/EntryDetail.tsx
 msgid "Delete this entry permanently?"
 msgstr "Diesen Eintrag dauerhaft löschen?"
@@ -1331,8 +1364,12 @@ msgid "Everything in this file is already in your vault, so there is nothing to 
 msgstr "Alles in dieser Datei ist bereits in Ihrem Tresor, daher gibt es nichts zu importieren."
 
 #: packages/core/src/app/entry-modes/login.tsx
-msgid "Exact hostname only"
-msgstr "Nur exakter Hostname"
+msgid "Exact hostname (and port, if the URL has one)"
+msgstr "Exakter Hostname (und Port, falls die URL einen enthält)"
+
+#: packages/core/src/app/entry-modes/login.tsx
+#~ msgid "Exact hostname only"
+#~ msgstr "Nur exakter Hostname"
 
 #: packages/core/src/app/entry-modes/tags.tsx
 msgid "Existing tags"
@@ -1656,6 +1693,10 @@ msgid "Import from another manager"
 msgstr "Von einem anderen Manager importieren"
 
 #: packages/core/src/app/screens/Import/ImportShell.tsx
+msgid "Import them anyway"
+msgstr "Trotzdem importieren"
+
+#: packages/core/src/app/screens/Import/ImportShell.tsx
 msgid "Imported {imported} items"
 msgstr "{imported} Elemente importiert"
 
@@ -1708,6 +1749,22 @@ msgstr "Ist dies Ihr Gerät?"
 msgid "It calls itself \"{0}\". Only the symbols above prove who it is."
 msgstr "Es nennt sich „{0}“. Nur die Symbole oben beweisen, wer es ist."
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "It holds {extra} passkeys the version shown doesn't."
+msgstr "Enthält {extra} Passkeys, die die angezeigte Version nicht enthält."
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "It holds {shownOnly} passkeys the other version doesn't."
+msgstr "Enthält {shownOnly} Passkeys, die die andere Version nicht enthält."
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "It holds a passkey the other version doesn't."
+msgstr "Enthält einen Passkey, den die andere Version nicht enthält."
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "It holds a passkey the version shown doesn't."
+msgstr "Enthält einen Passkey, den die angezeigte Version nicht enthält."
+
 #: packages/core/src/app/components/ReviewNudgeCard.tsx
 #~ msgid "It's free and open source, and a review is how most people find it. If something is wrong instead, the issue tracker is the place that gets it fixed."
 #~ msgstr "Es ist kostenlos und Open Source, und die meisten Menschen finden es über Bewertungen. Wenn stattdessen etwas nicht stimmt, ist der Issue-Tracker der Ort, an dem es behoben wird."
@@ -1729,6 +1786,10 @@ msgstr "Elemente ({0})"
 msgid "Its credentials were entered in another vault, so this one cannot open them. Edit the target and enter them again to back up now."
 msgstr "Die zugehörigen Zugangsdaten wurden in einem anderen Tresor eingegeben, daher kann dieser sie nicht öffnen. Bearbeiten Sie das Ziel und geben Sie sie erneut ein, um jetzt zu sichern."
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Its password is different from the version shown."
+msgstr "Das Passwort unterscheidet sich von dem der angezeigten Version."
+
 #: packages/core/src/app/screens/VaultSetup/components/ModeTabs.tsx
 #: packages/core/src/app/screens/VaultSetup/components/SetupHeader.tsx
 msgid "Join a device"
@@ -1742,13 +1803,25 @@ msgstr "Tresor beitreten"
 msgid "KDBX export isn't available here."
 msgstr "KDBX-Export ist hier nicht verfügbar."
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Keep both"
+msgstr "Beide behalten"
+
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Keep everything"
 msgstr "Alles behalten"
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Keep it"
+msgstr "Behalten"
+
 #: packages/core/src/app/screens/VaultSetup/VaultSetup.tsx
 msgid "Keep the invite open on your other device while the vault transfers."
 msgstr "Halten Sie die Einladung auf Ihrem anderen Gerät offen, während der Tresor übertragen wird."
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Keep this one"
+msgstr "Diese behalten"
 
 #: packages/core/src/app/screens/VaultSetup/VaultSetup.tsx
 msgid "Keep this screen open until pairing finishes."
@@ -2706,11 +2779,21 @@ msgstr "In einem neuen Login speichern"
 msgid "Save your recovery code"
 msgstr "Speichern Sie Ihren Wiederherstellungscode"
 
+#. placeholder {0}: formatDateTime(saved)
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Saved {0}"
+msgstr "Gespeichert {0}"
+
 #. placeholder {0}: u.label
 #. placeholder {1}: u.entryName
 #: packages/core/src/hooks/usePendingHandoffs.tsx
 msgid "Saved {0} to {1}"
 msgstr "{0} in {1} gespeichert"
+
+#. placeholder {0}: descriptor.label
+#: packages/core/src/app/screens/Settings/components/AliasSection.tsx
+msgid "Saved. {0} can only be checked by creating an alias."
+msgstr "Gespeichert. {0} kann nur durch Erstellen eines Alias überprüft werden."
 
 #: packages/core/src/app/screens/CreateEntry/EntryForm.tsx
 #: packages/core/src/app/screens/Settings/components/MasterPasswordSection.tsx
@@ -3171,6 +3254,10 @@ msgstr "Diese Übertragung enthielt keine importierbaren Daten."
 msgid "That transfer didn't go through."
 msgstr "Diese Übertragung ist fehlgeschlagen."
 
+#: packages/core/src/hooks/useVault.tsx
+#~ msgid "That version is no longer here. It may have synced away."
+#~ msgstr ""
+
 #: packages/core/src/app/entry-modes/card.tsx
 msgid "That year is outside the range cards use."
 msgstr "Dieses Jahr liegt außerhalb des für Karten gültigen Bereichs."
@@ -3207,6 +3294,10 @@ msgstr "Die Desktop-App hat angeboten, ihren Tresor mit diesem Browser zu teilen
 msgid "The one you saved with Export a backup, or a cloud backup."
 msgstr "Die Datei, die Sie mit „Backup exportieren“ oder einem Cloud-Backup gespeichert haben."
 
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "The other version"
+msgstr "Die andere Version"
+
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "The signaling relay that introduces devices. Defaults to the hosted relay; point it at your own or any public Nostr relay."
 msgstr "Der Signalisierungs-Relay, der Geräte einführt. Standardmäßig auf den gehosteten Relay eingestellt; richten Sie ihn auf Ihren eigenen oder einen öffentlichen Nostr-Relay."
@@ -3214,6 +3305,10 @@ msgstr "Der Signalisierungs-Relay, der Geräte einführt. Standardmäßig auf de
 #: packages/core/src/hooks/useCryptoErrorMessage.tsx
 msgid "The vault was locked or switched while that was in progress. Try again."
 msgstr "Der Tresor wurde gesperrt oder gewechselt, während der Vorgang ausgeführt wurde. Versuchen Sie es erneut."
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "The version shown"
+msgstr "Die angezeigte Version"
 
 #: packages/core/src/app/screens/Settings/components/AppearanceSection.tsx
 msgid "Theme"
@@ -3226,6 +3321,10 @@ msgstr "Es gibt keinen Reset durch den Anbieter. Merken Sie sich dieses Passwort
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "These destinations belong to the vault you're in. Every vault keeps its own targets and its own backup folder."
 msgstr "Diese Ziele gehören zu dem Tresor, in dem Sie sich befinden. Jeder Tresor verwaltet seine eigenen Ziele und seinen eigenen Sicherungsordner."
+
+#: packages/core/src/hooks/useVault.tsx
+msgid "These versions changed while you were comparing them. Have another look."
+msgstr "Diese Versionen wurden geändert, während Sie sie verglichen haben. Bitte sehen Sie sich die Versionen noch einmal an."
 
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "They match, approve"
@@ -3315,6 +3414,14 @@ msgstr "Diese Domain und ihre Unterdomänen"
 #: packages/core/src/app/entry-modes/tags.tsx
 msgid "This entry has as many tags as it can hold."
 msgstr "Dieser Eintrag hat bereits die maximale Anzahl an Tags."
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "This entry was changed on two devices before they synced."
+msgstr "Dieser Eintrag wurde auf zwei Geräten geändert, bevor diese synchronisiert wurden."
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "This entry was deleted on one device and changed on another before they synced."
+msgstr "Dieser Eintrag wurde auf einem Gerät gelöscht und auf einem anderen geändert, bevor diese synchronisiert wurden."
 
 #. placeholder {0}: res.skipped
 #: packages/core/src/app/screens/Import/ImportShell.tsx
@@ -3644,9 +3751,17 @@ msgstr "Aktualisiert {0}"
 msgid "Updates"
 msgstr "Aktualisierungen"
 
+#: packages/core/src/app/entry-modes/login.tsx
+msgid "Use {currentSite}"
+msgstr "{currentSite} verwenden"
+
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Use Bramble for passkeys"
 msgstr "Bramble für Passkeys verwenden"
+
+#: packages/core/src/app/entry-modes/login.tsx
+msgid "Use current site"
+msgstr "Aktuelle Website verwenden"
 
 #: packages/core/src/app/entry-modes/card.tsx
 msgid "Use digits only."
@@ -3663,6 +3778,10 @@ msgstr "Verwenden Sie nur Ziffern, Leerzeichen oder Bindestriche."
 #: packages/core/src/app/components/PasswordGenerator.tsx
 msgid "Use password"
 msgstr "Passwort verwenden"
+
+#: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
+msgid "Use this one"
+msgstr "Diese verwenden"
 
 #: packages/core/src/app/components/ui/weak-password-notice.tsx
 msgid "Use this password anyway"

@@ -1,8 +1,7 @@
-// Convergent merge over HLC-stamped records. See docs/p2p-sync.md.
-// This is the transport-free kernel of vault sync: it merges two replica
-// states into one, deterministically and order-independently, so pairwise
-// gossip across N devices converges to the same result. It works on any record
-// carrying an `id` and an `hlc`; phase 1 wires the real EncryptedEntry into it.
+// Convergent last-writer-wins merge over HLC-stamped records. See docs/p2p-sync.md.
+// It merges two replica states into one, deterministically and order-independently, so pairwise
+// gossip across N devices converges. The device roster merges with it; vault entries keep
+// concurrent versions instead (sync/vault-merge.ts).
 
 import { compareHlc, type Hlc } from "./hlc";
 

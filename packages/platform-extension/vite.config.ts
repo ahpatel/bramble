@@ -10,10 +10,11 @@ const root = resolve(import.meta.dirname, "src");
 // TARGET=firefox builds the Gecko variant into dist-firefox with the Firefox
 // manifest (event-page background, no offscreen/webAuthenticationProxy). Default is
 // the Chromium build into dist. The two outputs never clobber each other.
+// EXTENSION_OUT_DIR builds into another folder (the combining e2e's build).
 const target = process.env.TARGET === "firefox" ? "firefox" : "chromium";
 const outDir = resolve(
 	import.meta.dirname,
-	target === "firefox" ? "dist-firefox" : "dist-chromium",
+	process.env.EXTENSION_OUT_DIR ?? (target === "firefox" ? "dist-firefox" : "dist-chromium"),
 );
 const manifestSrc = resolve(import.meta.dirname, `../manifests/${target}/manifest.json`);
 

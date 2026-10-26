@@ -32,9 +32,13 @@ interface Harness {
 	rotated: number;
 	/** Ordered log, so "sealed before written" is assertable rather than assumed. */
 	steps: string[];
+	/** Every outer payload sealed, in order. */
+	sealed: string[];
 }
 
-function makePlatform(over: { failVerify?: boolean; failWrite?: boolean } = {}): Harness {
+function makePlatform(
+	over: { failVerify?: boolean; failWrite?: boolean; payload?: object; failReload?: boolean } = {},
+): Harness {
 	const h: Harness = {
 		platform: null as unknown as Platform,
 		writes: 0,
@@ -42,6 +46,7 @@ function makePlatform(over: { failVerify?: boolean; failWrite?: boolean } = {}):
 		locks: 0,
 		rotated: 0,
 		steps: [],
+		sealed: [],
 	};
 	const registry = { vaults: [{ id: "v1", label: "", createdAt: 1 }] };
 	// A blob with one password slot and some entries ciphertext, which is all rotation reads.
@@ -102,17 +107,26 @@ function makePlatform(over: { failVerify?: boolean; failWrite?: boolean } = {}):
 			wrappedVek: b64(48),
 		})),
 		encryptEntry: vi.fn(async () => ({
-			ciphertext: b64(16),
+			ciphertext: h.rotated ? "sealed-under-new-key" : b64(16),
 			iv: b64(12),
 			wrappedDek: b64(48),
 			dekIv: b64(12),
 		})),
-		encryptWithVek: vi.fn(async () => {
+		encryptWithVek: vi.fn(async (plaintext: string) => {
+			h.sealed.push(plaintext);
 			h.steps.push("seal");
 			return { iv: b64(12), ciphertext: b64(32) };
 		}),
-		decryptWithVek: vi.fn(async () => JSON.stringify({ entries: [], tombstones: [] })),
-		decryptEntries: vi.fn(async () => []),
+		decryptWithVek: vi.fn(async () => {
+			// After a verified write, the reload that follows fails: a display problem, not a rollback.
+			if (over.failReload && h.steps.includes("verified")) throw new Error("reload failed");
+			if (h.steps.includes("write")) h.steps.push("verified");
+			return JSON.stringify(over.payload ?? { entries: [], tombstones: [] });
+		}),
+		decryptEntries: vi.fn(async (ps: { ciphertext: string }[]) => {
+			h.steps.push(`decrypt:${ps.map((p) => p.ciphertext).join(",")}`);
+			return ps.map(() => JSON.stringify({ type: "note", name: "n" }));
+		}),
 	};
 	h.platform = {
 		storage,
@@ -155,6 +169,62 @@ describe("rotateSecret", () => {
 		expect(h.writes).toBe(1);
 		expect(h.steps.indexOf("rotate")).toBeLessThan(h.steps.indexOf("seal"));
 		expect(h.steps.indexOf("seal")).toBeLessThan(h.steps.indexOf("write"));
+	});
+
+	// Sibling versions are sealed under DEKs the old key wraps; once it is gone they can't be
+	// opened to re-seal, so rotation has to read them first (docs/sync-conflicts.md).
+	it("opens sibling versions before the old key goes", async () => {
+		const stamp = { wall: 1, counter: 0, node: "n" };
+		const env = (ciphertext: string) => ({
+			id: "a",
+			wrappedDek: "w",
+			dekIv: "d",
+			ciphertext,
+			iv: "i",
+			hlc: { ...stamp, wall: ciphertext === "shown" ? 2 : 1 },
+			vv: { [ciphertext]: { ...stamp, wall: ciphertext === "shown" ? 2 : 1 } },
+		});
+		const h = makePlatform({
+			payload: { entries: [env("shown")], tombstones: [], conflicts: [env("sibling")] },
+		});
+		const get = await actions(h);
+		await act(async () => {
+			await get()
+				.rotateSecret("hunter2")
+				.catch(() => {});
+		});
+		expect(h.steps).toContain("decrypt:sibling");
+		expect(h.steps.indexOf("decrypt:sibling")).toBeLessThan(h.steps.indexOf("rotate"));
+	});
+
+	// The in-memory siblings are still sealed under the old key until a reload replaces them. If
+	// that reload fails, the next write must not put the old-key envelopes back on disk.
+	it("keeps the re-sealed siblings in memory even when the reload fails", async () => {
+		const stamp = { wall: 1, counter: 0, node: "n" };
+		const env = (ciphertext: string, wall: number) => ({
+			id: "a",
+			wrappedDek: "w",
+			dekIv: "d",
+			ciphertext,
+			iv: "i",
+			hlc: { ...stamp, wall },
+			vv: { [ciphertext]: { ...stamp, wall } },
+		});
+		const h = makePlatform({
+			payload: { entries: [env("shown", 2)], tombstones: [], conflicts: [env("sibling", 1)] },
+			failReload: true,
+		});
+		const get = await actions(h);
+		await act(async () => {
+			await get().rotateSecret("hunter2");
+		});
+		await act(async () => {
+			await get().addEntry({ type: "note", name: "after" });
+		});
+		const last = JSON.parse(h.sealed[h.sealed.length - 1] as string);
+		expect(last.conflicts.map((c: { ciphertext: string }) => c.ciphertext)).toEqual([
+			"sealed-under-new-key",
+		]);
 	});
 
 	it("returns a fresh recovery code, because the old one can no longer work", async () => {

@@ -13,6 +13,9 @@ import type { AliasAccount, AliasClient, AliasResult } from "./types";
 // is. The contract can change without notice, because nothing promises it; and a token acquired
 // that way may be tied to a browser session rather than to the account, so "the provider rejected
 // this API key" may mean "it expired" with no remedy the settings screen can name.
+//
+// It also answers a bare 403 to some HTTP-library User-Agents (curl's, OkHttp's), while a browser's,
+// an app's own or none at all get through, so a transport must not send a library default.
 // See docs/email-aliases.md.
 
 export const DUCKDUCKGO_DEFAULT_BASE_URL = "https://quack.duckduckgo.com";
@@ -27,20 +30,6 @@ const DUCK_DOMAIN = "duck.com";
 
 /** The local part only, hence the join below. Measured; nothing documents it. */
 const CreateSchema = z.object({ address: z.string() });
-
-/**
- * The dashboard, for the settings screen to show something recognisable.
- *
- * Every field is optional and the object is permissive because this response has never been seen:
- * no account existed to prove it against, and a `verify` that rejects an unrecognised-but-
- * successful body would report a working token as broken. The endpoint is measured to exist (an
- * unauthenticated GET answers 401 where a nonexistent path answers 404).
- */
-const DashboardSchema = z
-	.object({
-		user: z.object({ username: z.string().optional() }).loose().optional(),
-	})
-	.loose();
 
 function headers(key: string): Record<string, string> {
 	return {
@@ -62,13 +51,11 @@ export function createDuckDuckGoClient(
 	const call = requestVia(transport);
 
 	return {
+		// The copied token is the access token, which only the address calls accept: the dashboard
+		// wants the login token and answers 401 invalid_token, and listing addresses is a 404 (#123).
+		// Only creating an address proves it, and a check must not spend one.
 		async verify(): Promise<AliasAccount> {
-			const res = await call(`${base}/api/email/dashboard`, { headers: h }, DashboardSchema);
-			// The username is the personal Duck Address's local part, so naming the whole address is
-			// more recognisable than the bare handle. No quota: the service is unmetered and reports
-			// no allowance, so inventing one would be worse than showing none.
-			const username = res.user?.username;
-			return { label: username ? `${username}@${DUCK_DOMAIN}` : undefined };
+			return { unchecked: true };
 		},
 
 		async create(): Promise<AliasResult> {

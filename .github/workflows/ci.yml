@@ -93,6 +93,14 @@ jobs:
       - name: Build extension
         run: pnpm run build
 
+      # The same extension with combining switched on, for the sync suite's second run (release B2's
+      # behaviour). Its own folder, so the ordinary build stays what ships.
+      - name: Build extension (combining on)
+        run: pnpm --filter @vault/platform-extension run build:chromium
+        env:
+          VITE_COMBINE_CONCURRENT_EDITS: "1"
+          EXTENSION_OUT_DIR: dist-chromium-combine
+
       # The sync suite runs the mobile SPA, which loads its crypto from public/wasm - a
       # gitignored directory built by a DIFFERENT wasm-pack target than the extension's. Without
       # this the mobile peer dies on "Failed to fetch dynamically imported module" and simply
@@ -113,6 +121,13 @@ jobs:
         with:
           name: dist-chromium
           path: packages/platform-extension/dist-chromium
+          retention-days: 1
+
+      - name: Upload the built extension (combining on)
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-chromium-combine
+          path: packages/platform-extension/dist-chromium-combine
           retention-days: 1
 
   transport-contract-chromium:
@@ -254,6 +269,12 @@ jobs:
           name: dist-chromium
           path: packages/platform-extension/dist-chromium
 
+      - name: Download the built extension (combining on)
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-chromium-combine
+          path: packages/platform-extension/dist-chromium-combine
+
       # The mobile peer is a real SPA and loads its crypto from here; see the build job.
       - name: Download the mobile WASM
         uses: actions/download-artifact@v8
@@ -267,6 +288,10 @@ jobs:
       # The relay and the mobile dev server are started by playwright.sync.config.ts.
       - name: E2E sync
         run: pnpm run test:e2e:sync
+
+      # Again with combining on, as release B2 ships it; the config serves its own mobile peer.
+      - name: E2E sync (combining on)
+        run: pnpm exec playwright test --config playwright.sync-combine.config.ts
 
       - name: Upload the report on failure
         if: failure()

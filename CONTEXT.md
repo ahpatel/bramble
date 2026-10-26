@@ -7,11 +7,33 @@ module-level concepts that name good seams.
 
 ## Vault entries
 
-- **VaultEntries** — the in-memory triple that fully describes the entry state of
-  a vault: `{ entries, stamps, tombstones }`. `entries` is the decrypted
-  `Entry[]`; `stamps` maps entry id -> its HLC stamp; `tombstones` maps a deleted
-  id -> the HLC of its deletion. Sync convergence depends on stamps and tombstones
-  travelling with the entries, so they are one value, not three.
+- **VaultEntries** — the in-memory value that fully describes the entry state of
+  a vault: `{ entries, stamps, causal, tombstones, tombstoneCausal, conflicts,
+  settings }`. `entries` is the decrypted `Entry[]`; `stamps` maps entry id -> its
+  HLC stamp; `tombstones` maps a deleted id -> the HLC of its deletion; `causal` and
+  `tombstoneCausal` hold each one's causal history; `conflicts` holds sibling
+  versions, still sealed. Sync convergence depends on all of it travelling with the
+  entries, so it is one value: anything a write doesn't thread through is erased.
+- **Causal history**: what a version descends from: a per-writer version vector
+  (`vv`) plus an optional `floor` inherited from versions an older build wrote. It is
+  what lets a merge tell an ancestor from a concurrent edit (`core/sync/causal.ts`,
+  docs/sync-conflicts.md).
+- **Sibling**: a version of an entry that no other held version descends from.
+  The highest-stamp sibling is displayed; the others are conflicts, kept sealed in
+  the payload until someone chooses between them.
+- **Part**: a piece of an entry that combines on its own (`core/vault/parts.ts`):
+  username, password and TOTP move together as one credential part (card and SSH key
+  fields likewise), every other field is its own part, and URLs, tags and passkeys
+  combine item by item.
+- **Part stamps**: `partStamps`, `itemStamps` and `partStampsAt` inside the encrypted
+  entry, saying which write last changed each part and added each item. Only
+  `withPartStamps` writes them. A version whose `partStampsAt` isn't its own stamp was
+  rewritten by an older build, so every part counts as changed at its stamp.
+- **Combined version**: what combining siblings that changed different parts writes
+  (`core/sync/combine.ts`): a pure function of the siblings it replaces, stamped
+  `~merge:<hash>`, so every device that combines the same set writes the same version.
+  The rules are a wire protocol, versioned by `COMBINE_RULES_VERSION`. Switched off by
+  `COMBINE_CONCURRENT_EDITS` until most devices record part stamps.
 - **EntryMutations** — the module (`core/vault/entry-mutations.ts`) that owns every
   local change to VaultEntries: add, import (bulk, one write), update, delete
   (single or bulk), archive/restore. Each mutation is a transition

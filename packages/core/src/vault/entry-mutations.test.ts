@@ -1,50 +1,34 @@
 import { describe, expect, it } from "vitest";
-import type { EntryData, LoginEntryData } from "../hooks/useVault";
-import { compareHlc, HybridClock } from "../sync";
-import { base64ToBytes, bytesToBase64 } from "../util/bytes";
+import type { Entry, EntryData, LoginEntryData } from "../hooks/useVault";
 import {
-	decodeVaultBlob,
-	encodeVaultBlob,
-	LEN_IV,
-	LEN_SALT,
-	LEN_SLOT_ID,
-	LEN_VERIFIER,
-	LEN_WRAP_IV,
-	LEN_WRAPPED_VEK,
-	type PasswordSlot,
-	SLOT_KIND_PASSWORD,
-} from "../vault-format";
-import { createEntryMutations, type VaultEntries } from "./entry-mutations";
+	compareHlc,
+	containsHistory,
+	decodeEntriesPayload,
+	type EntriesPayload,
+	type Hlc,
+	isAncestor,
+	mergeEntriesPayload,
+} from "../sync";
+import type { EncryptedEntry } from "../vault-format";
+import {
+	conflictsOf,
+	type OpenedVersion,
+	type VaultEntries,
+	vaultEntriesFromPayload,
+} from "./entry-mutations";
+import { harness } from "./entry-mutations.harness";
+import { effectivePartStamps, PART_STAMP_FIELDS } from "./parts";
 
-const te = new TextEncoder();
-const td = new TextDecoder();
-
-function fillBytes(length: number, base = 0): Uint8Array {
-	const arr = new Uint8Array(length);
-	for (let i = 0; i < length; i++) arr[i] = (base + i) & 0xff;
-	return arr;
-}
-
-function passwordSlot(): PasswordSlot {
-	return {
-		kind: SLOT_KIND_PASSWORD,
-		slotId: fillBytes(LEN_SLOT_ID, 0x10),
-		salt: fillBytes(LEN_SALT, 0x20),
-		verifier: fillBytes(LEN_VERIFIER, 0x30),
-		wrapIv: fillBytes(LEN_WRAP_IV, 0x40),
-		wrappedVek: fillBytes(LEN_WRAPPED_VEK, 0x50),
-	};
-}
-
-function emptyVaultBytes(): Uint8Array {
-	return encodeVaultBlob({
-		slots: [passwordSlot()],
-		entriesIv: fillBytes(LEN_IV, 0x70),
-		entriesCiphertext: new Uint8Array(0),
-	});
-}
-
-const empty = (): VaultEntries => ({ entries: [], stamps: new Map(), tombstones: new Map() });
+/** A written entry's stamps as combining reads them (own-stamp ones are left out on disk). */
+const eff = (e: Entry) => effectivePartStamps(e, { hlc: e.partStampsAt! });
+const empty = (): VaultEntries => ({
+	entries: [],
+	stamps: new Map(),
+	causal: new Map(),
+	tombstones: new Map(),
+	tombstoneCausal: new Map(),
+	conflicts: [],
+});
 const login = (name: string): EntryData => ({
 	type: "login",
 	name,
@@ -62,50 +46,6 @@ const loginWith = (name: string, over: Partial<LoginEntryData> = {}): LoginEntry
 	password: "p",
 	...over,
 });
-
-// Wires the module to a fake crypto/storage/autofill plus an in-memory "disk"
-// that round-trips through the real encode/decode, so the persist primitive is
-// exercised end to end. The clock is a real HybridClock with a frozen wall time,
-// so stamps differ only by their monotonic counter.
-function harness(now: () => number = () => 1000) {
-	let disk = emptyVaultBytes();
-	let writes = 0;
-	const indexCalls: unknown[][] = [];
-	const crypto = {
-		encryptEntry: async (json: string) => ({
-			ciphertext: `ct:${json}`,
-			iv: "iv",
-			wrappedDek: "wd",
-			dekIv: "di",
-		}),
-		encryptWithVek: async (plaintext: string) => ({
-			iv: bytesToBase64(fillBytes(LEN_IV)),
-			ciphertext: bytesToBase64(te.encode(plaintext)),
-		}),
-		decryptWithVek: async (_iv: string, ciphertext: string) => td.decode(base64ToBytes(ciphertext)),
-	};
-	const storage = {
-		writeVaultBlob: async (bytes: Uint8Array) => {
-			disk = bytes;
-			writes++;
-		},
-	};
-	const autofill = {
-		setIndex: async (entries: { type: string }[]) => {
-			indexCalls.push(entries);
-		},
-	};
-	const readDecodedBlob = async () => ({ blob: decodeVaultBlob(disk) });
-	const c = new HybridClock("device-a", now);
-	const mutations = createEntryMutations({
-		crypto,
-		storage,
-		autofill,
-		readDecodedBlob,
-		clock: async () => c,
-	});
-	return { mutations, writes: () => writes, indexCalls };
-}
 
 describe("createEntryMutations", () => {
 	it("add stamps the new entry and writes once", async () => {
@@ -224,6 +164,31 @@ describe("createEntryMutations", () => {
 		expect(afterUse.entries[0]!.updatedAt).toBe(1000);
 	});
 
+	// A use is not an edit: restamping would let copying a password on one device silently
+	// discard an edit made to the same entry on another before they synced.
+	it("touch keeps the sync stamp, so an edit made elsewhere still wins the merge", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const afterAdd = await h.mutations.add(empty(), login("a"));
+		const id = afterAdd.entries[0]!.id;
+		const added = afterAdd.stamps.get(id)!;
+		const [base] = (await h.mutations.readEntriesPayload()).entries;
+		const remoteEdit = {
+			...base!,
+			ciphertext: "ct:edited elsewhere",
+			hlc: { wall: 2000, counter: 0, node: "device-b" },
+		};
+
+		t = 200_000;
+		const afterUse = await h.mutations.touch(afterAdd, id);
+		expect(afterUse.entries[0]!.lastUsedAt).toBe(200_000);
+		expect(compareHlc(afterUse.stamps.get(id)!, added)).toBe(0);
+
+		const local = await h.mutations.readEntriesPayload();
+		const merged = mergeEntriesPayload(local, { entries: [remoteEdit], tombstones: [] });
+		expect(merged.entries).toEqual([remoteEdit]);
+	});
+
 	it("touch coalesces repeat uses within the window into one write", async () => {
 		let t = 1000;
 		const h = harness(() => t);
@@ -243,6 +208,34 @@ describe("createEntryMutations", () => {
 		const same = await h.mutations.touch(state, "nope");
 		expect(same).toBe(state);
 		expect(h.writes()).toBe(0);
+	});
+
+	// Opening a login re-checks a stale breach status and saves it; a restamp there would let
+	// viewing an entry on one device overwrite an edit made to it on another.
+	it("setBreach keeps the sync stamp and updatedAt", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		t = 9000;
+		const next = await h.mutations.setBreach(a, id, { leaked: true, checkedAt: 9000 });
+		expect(next.entries[0]).toMatchObject({
+			breach: { leaked: true, checkedAt: 9000 },
+			updatedAt: 1000,
+		});
+		expect(compareHlc(next.stamps.get(id)!, a.stamps.get(id)!)).toBe(0);
+		const [onDisk] = (await h.mutations.readEntriesPayload()).entries;
+		expect(onDisk!.ciphertext).toContain('"leaked":true');
+	});
+
+	it("setBreach no-ops for an unknown id or a non-login", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), note("n"));
+		const writes = h.writes();
+		const breach = { leaked: true, checkedAt: 1 };
+		expect(await h.mutations.setBreach(a, "nope", breach)).toBe(a);
+		expect(await h.mutations.setBreach(a, a.entries[0]!.id, breach)).toBe(a);
+		expect(h.writes()).toBe(writes);
 	});
 
 	it("rejects invalid entry data before writing", async () => {
@@ -371,7 +364,10 @@ describe("createEntryMutations", () => {
 		// anyway, and the round-trip through disk must not resurrect the archived state.
 		expect(restored.entries[0]).not.toHaveProperty("archivedAt");
 		const payload = await h.mutations.readEntriesPayload();
-		expect(JSON.stringify(payload)).not.toContain("archivedAt");
+		// The field is gone from the entry itself (its part stamp, recording the restore, stays).
+		expect(
+			payload.entries.map((e) => JSON.parse(e.ciphertext.slice(3)) as Record<string, unknown>),
+		).toEqual([expect.not.objectContaining({ archivedAt: expect.anything() })]);
 	});
 
 	it("archives a whole selection in one write, skipping ids already archived", async () => {
@@ -535,8 +531,18 @@ describe("createEntryMutations", () => {
 // invisible locally: the value is still on screen from memory, and only reverts on reload or when
 // a peer merges the emptied payload back.
 describe("createEntryMutations: synced settings survive entry writes", () => {
+	const elsewhere: EncryptedEntry = {
+		id: "elsewhere",
+		wrappedDek: "w",
+		dekIv: "d",
+		ciphertext: "s",
+		iv: "i",
+		hlc: { wall: 400, counter: 0, node: "other" },
+		vv: { other: { wall: 400, counter: 0, node: "other" } },
+	};
 	const withSetting = (): VaultEntries => ({
 		...empty(),
+		conflicts: [elsewhere],
 		settings: {
 			"pref.aliasProvider": {
 				hlc: { wall: 500, counter: 0, node: "other" },
@@ -605,11 +611,21 @@ describe("createEntryMutations: synced settings survive entry writes", () => {
 				return h.mutations.touch(a, a.entries[0]!.id);
 			},
 		],
+		[
+			"setBreach",
+			async (h: ReturnType<typeof harness>, s: VaultEntries) => {
+				const a = await h.mutations.add(s, login("x"));
+				return h.mutations.setBreach(a, a.entries[0]!.id, { leaked: false, checkedAt: 1 });
+			},
+		],
 	])("%s preserves the map, in memory and on disk", async (_name, run) => {
 		const h = harness();
 		const next = await run(h, withSetting());
 		expect(next.settings).toEqual(withSetting().settings);
 		expect(await onDisk(h)).toEqual(withSetting().settings);
+		// Another entry's sibling versions ride every write the same way.
+		expect(next.conflicts).toEqual([elsewhere]);
+		expect((await h.mutations.readEntriesPayload()).conflicts).toEqual([elsewhere]);
 	});
 
 	it("add preserves the map", async () => {
@@ -676,5 +692,581 @@ describe("createEntryMutations: synced settings survive entry writes", () => {
 		const next = await h.mutations.setSetting(added, "pref.aliasProvider", { provider: "addy" });
 		expect(next.entries).toEqual(added.entries);
 		expect(next.stamps).toEqual(added.stamps);
+	});
+});
+
+// Each write records which versions it supersedes (docs/sync-conflicts.md, Phase A): an edit only
+// the displayed one, a delete every version it can see, and nothing written may drop siblings.
+describe("createEntryMutations: version history", () => {
+	const at = (wall: number, node: string): Hlc => ({ wall, counter: 0, node });
+	const sib = (id: string, wall: number, node = "other"): EncryptedEntry => ({
+		id,
+		wrappedDek: "old-wd",
+		dekIv: "d",
+		ciphertext: 'ct:{"type":"note","name":"sibling"}',
+		iv: "i",
+		hlc: at(wall, node),
+		vv: { [node]: at(wall, node) },
+	});
+	const versionOf = (s: VaultEntries, id: string) => ({
+		hlc: s.stamps.get(id)!,
+		...s.causal.get(id),
+	});
+
+	it("add stamps a version of its own", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		expect(a.causal.get(id)).toEqual({ vv: { "device-a": a.stamps.get(id) } });
+		const [onDisk] = (await h.mutations.readEntriesPayload()).entries;
+		expect(onDisk!.vv).toEqual({ "device-a": a.stamps.get(id) });
+	});
+
+	it("update supersedes only the displayed version", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		const seeded = { ...a, conflicts: [sib(id, 500)] };
+		const next = await h.mutations.update(seeded, id, login("a2"));
+		expect(next.conflicts).toEqual([sib(id, 500)]);
+		expect(isAncestor(versionOf(a, id), versionOf(next, id))).toBe(true);
+		expect(isAncestor(sib(id, 500), versionOf(next, id))).toBe(false);
+		const disk = await h.mutations.readEntriesPayload();
+		expect(disk.conflicts).toEqual([sib(id, 500)]);
+		expect(disk.entries[0]!.vv).toEqual(next.causal.get(id)!.vv);
+	});
+
+	it("an edit around this device's own sibling is stamped under its fork key", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		// The phone's version is shown; this device's own earlier edit is the sibling.
+		const seeded: VaultEntries = {
+			...a,
+			stamps: new Map([[id, at(5000, "phone")]]),
+			causal: new Map([[id, { vv: { phone: at(5000, "phone") } }]]),
+			conflicts: [{ ...sib(id, 3000, "device-a") }],
+		};
+		const next = await h.mutations.update(seeded, id, login("a2"));
+		const stamp = next.stamps.get(id)!;
+		expect(stamp.node.startsWith("device-a~")).toBe(true);
+		expect(next.causal.get(id)!.vv[stamp.node]).toEqual(stamp);
+		expect(next.conflicts).toHaveLength(1);
+	});
+
+	it("update of an entry with a legacy version inherits its floor", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		const next = await h.mutations.update({ ...a, causal: new Map() }, id, login("a2"));
+		expect(next.causal.get(id)!.floor).toEqual(a.stamps.get(id));
+	});
+
+	it("archiving and tagging supersede only the displayed version", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		const seeded = { ...a, conflicts: [sib(id, 500)] };
+		const archived = await h.mutations.setArchived(seeded, [id], true);
+		expect(archived.conflicts).toEqual([sib(id, 500)]);
+		expect(archived.causal.get(id)?.floor).toBeUndefined();
+		expect(isAncestor(versionOf(a, id), versionOf(archived, id))).toBe(true);
+		expect(isAncestor(sib(id, 500), versionOf(archived, id))).toBe(false);
+		const tagged = await h.mutations.setTags(archived, [id], { add: ["work"] });
+		expect(tagged.conflicts).toEqual([sib(id, 500)]);
+		expect(isAncestor(versionOf(archived, id), versionOf(tagged, id))).toBe(true);
+		expect(isAncestor(sib(id, 500), versionOf(tagged, id))).toBe(false);
+	});
+
+	it("remove supersedes every sibling and the old tombstone", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		const oldTomb = { hlc: at(300, "z"), vv: { z: at(300, "z") } };
+		const seeded: VaultEntries = {
+			...a,
+			conflicts: [sib(id, 500), sib("other-id", 600)],
+			tombstones: new Map([[id, oldTomb.hlc]]),
+			tombstoneCausal: new Map([[id, { vv: oldTomb.vv }]]),
+		};
+		const next = await h.mutations.remove(seeded, id);
+		expect(next.conflicts).toEqual([sib("other-id", 600)]);
+		expect(next.causal.has(id)).toBe(false);
+		const tomb = { hlc: next.tombstones.get(id)!, ...next.tombstoneCausal.get(id) };
+		expect(containsHistory(tomb, sib(id, 500))).toBe(true);
+		expect(containsHistory(tomb, versionOf(a, id))).toBe(true);
+		expect(containsHistory(tomb, oldTomb)).toBe(true);
+		const disk = await h.mutations.readEntriesPayload();
+		expect(disk.tombstones.find((t) => t.id === id)!.vv).toEqual(tomb.vv);
+	});
+
+	it("a write keeps other entries' history on disk", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const b = await h.mutations.add(a, login("b"));
+		const [idA, idB] = b.entries.map((e) => e.id) as [string, string];
+		await h.mutations.update(b, idB, login("b2"));
+		const disk = await h.mutations.readEntriesPayload();
+		expect(disk.entries.find((e) => e.id === idA)!.vv).toEqual(b.causal.get(idA)!.vv);
+	});
+
+	// Rotation opens the siblings while the old key still exists, then re-seals them under the new
+	// one: sealAll runs after the old key is gone, so it can't open them itself.
+	it("sealAll re-seals conflicts from plaintext opened before the key rotated", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		const seeded = { ...a, conflicts: [sib(id, 500)] };
+		const opened = await h.mutations.openConflicts(seeded);
+		expect(opened).toEqual(['{"type":"note","name":"sibling"}']);
+		const sealed = await h.mutations.sealAll(seeded, opened);
+		const json = new TextDecoder().decode(sealed.entriesCiphertext);
+		const payload: EntriesPayload = decodeEntriesPayload(json);
+		expect(payload.conflicts).toHaveLength(1);
+		expect(payload.conflicts![0]).toMatchObject({
+			id,
+			hlc: sib(id, 500).hlc,
+			vv: sib(id, 500).vv,
+			wrappedDek: "wd",
+			ciphertext: 'ct:{"type":"note","name":"sibling"}',
+		});
+	});
+
+	it("vaultEntriesFromPayload keeps vv, floor and conflicts, and stamps only what decrypted", () => {
+		const env = (id: string, hlc: Hlc, extra: object = {}): EncryptedEntry => ({
+			id,
+			wrappedDek: "w",
+			dekIv: "d",
+			ciphertext: "c",
+			iv: "i",
+			hlc,
+			...extra,
+		});
+		const payload: EntriesPayload = {
+			entries: [
+				env("a", at(10, "n"), { vv: { n: at(10, "n") }, floor: at(5, "q") }),
+				env("b", at(20, "n")),
+				env("gone", at(30, "n")),
+			],
+			tombstones: [
+				{ id: "t", hlc: at(3, "n"), vv: { n: at(3, "n") } },
+				{ id: "u", hlc: at(4, "n") },
+			],
+			conflicts: [sib("a", 1)],
+		};
+		const decrypted = [
+			{ id: "a", type: "note", name: "a" },
+			{ id: "b", type: "note", name: "b" },
+		] as Entry[];
+		const state = vaultEntriesFromPayload(payload, decrypted);
+		expect(state.entries).toBe(decrypted);
+		expect([...state.stamps.keys()]).toEqual(["a", "b"]);
+		expect(state.causal.get("a")).toEqual({ vv: { n: at(10, "n") }, floor: at(5, "q") });
+		expect(state.causal.has("b")).toBe(false);
+		expect(state.tombstoneCausal.get("t")).toEqual({ vv: { n: at(3, "n") } });
+		expect(state.tombstoneCausal.has("u")).toBe(false);
+		expect(state.conflicts).toEqual(payload.conflicts);
+	});
+
+	it("conflictsOf reports siblings and concurrent deletes from memory", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), login("a"));
+		const id = a.entries[0]!.id;
+		expect(conflictsOf(a).size).toBe(0);
+		expect(conflictsOf({ ...a, conflicts: [sib(id, 500)] }).get(id)).toEqual({
+			versions: 1,
+			deleted: false,
+		});
+		const concurrentDelete: VaultEntries = {
+			...a,
+			tombstones: new Map([[id, at(400, "z")]]),
+			tombstoneCausal: new Map([[id, { vv: { z: at(400, "z") } }]]),
+		};
+		expect(conflictsOf(concurrentDelete).get(id)).toEqual({ versions: 0, deleted: true });
+	});
+});
+
+// A resolution supersedes every version held for the entry, siblings and tombstone alike, so the
+// conflict disappears on every device it reaches (docs/sync-conflicts.md).
+describe("createEntryMutations: resolving a conflict", () => {
+	const at = (wall: number, node: string): Hlc => ({ wall, counter: 0, node });
+	const sib = (id: string): EncryptedEntry => ({
+		id,
+		wrappedDek: "w",
+		dekIv: "d",
+		ciphertext: "s",
+		iv: "i",
+		hlc: at(500, "other"),
+		vv: { other: at(500, "other") },
+	});
+	const conflicted = async (
+		h: ReturnType<typeof harness>,
+		data = loginWith("a", { password: "mine" }),
+	) => {
+		const a = await h.mutations.add(empty(), data);
+		const id = a.entries[0]!.id;
+		const state: VaultEntries = {
+			...a,
+			conflicts: [sib(id)],
+			tombstones: new Map([[id, at(400, "z")]]),
+			tombstoneCausal: new Map([[id, { vv: { z: at(400, "z") } }]]),
+		};
+		return { state, id };
+	};
+	const versionOf = (s: VaultEntries, id: string) => ({
+		hlc: s.stamps.get(id)!,
+		...s.causal.get(id),
+	});
+
+	it("keep supersedes every sibling and the tombstone with the displayed content", async () => {
+		const h = harness();
+		const { state, id } = await conflicted(h);
+		expect(conflictsOf(state).get(id)).toEqual({ versions: 1, deleted: true });
+		const next = await h.mutations.resolve(state, id, { kind: "keep", superseded: [] });
+		expect(next.conflicts).toEqual([]);
+		expect(conflictsOf(next).size).toBe(0);
+		const content = (e: Entry) => {
+			const rest: Record<string, unknown> = { ...e };
+			for (const f of PART_STAMP_FIELDS) delete rest[f];
+			return rest;
+		};
+		expect(next.entries.map(content)).toEqual(state.entries.map(content));
+		expect(containsHistory(versionOf(next, id), sib(id))).toBe(true);
+		expect(next.tombstones.has(id)).toBe(true);
+		const disk = await h.mutations.readEntriesPayload();
+		expect(disk.conflicts).toBeUndefined();
+	});
+
+	// Keeping a version over a delete restores everything the delete removed: each part and item
+	// it keeps is a choice made now, not the old write's (docs/sync-conflicts.md, Part stamps).
+	it("keeping a version over a delete restamps everything it keeps", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const { state, id } = await conflicted(h, loginWith("a", { tags: ["work"], notes: "n" }));
+		t = 2000;
+		const next = await h.mutations.resolve(state, id, { kind: "keep", superseded: [] });
+		const stamp = next.stamps.get(id)!;
+		const kept = eff(next.entries[0]!);
+		expect(new Set(Object.values(kept.parts))).toEqual(new Set([stamp]));
+		expect(Object.values(kept.items.tags)).toEqual([stamp]);
+	});
+
+	it("use writes the sibling's content and keeps the displayed password in the changelog", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const { state, id } = await conflicted(h);
+		t = 2000;
+		const theirs = loginWith("a", { password: "theirs" });
+		const next = await h.mutations.resolve(state, id, {
+			kind: "use",
+			data: theirs,
+			superseded: [state.entries[0]!, theirs],
+		});
+		const e = next.entries[0]!;
+		expect(e.type === "login" && e.password).toBe("theirs");
+		expect(e.type === "login" && e.passwordChangelog?.map((c) => c.value)).toEqual(["mine"]);
+		expect(e.updatedAt).toBe(2000);
+		expect(next.conflicts).toEqual([]);
+	});
+
+	it("keepBoth adds the sibling as a new entry and resolves the original", async () => {
+		const h = harness();
+		const { state, id } = await conflicted(h);
+		const writes = h.writes();
+		const next = await h.mutations.resolve(state, id, {
+			kind: "keepBoth",
+			data: note("other"),
+			superseded: [],
+		});
+		expect(h.writes()).toBe(writes + 1);
+		expect(next.entries.map((e) => e.name)).toEqual(["a", "other"]);
+		expect(next.entries[1]!.id).not.toBe(id);
+		expect(next.conflicts).toEqual([]);
+		expect(conflictsOf(next).size).toBe(0);
+	});
+
+	it("resolve is one write and no-ops for an entry that isn't shown", async () => {
+		const h = harness();
+		const { state, id } = await conflicted(h);
+		const writes = h.writes();
+		await h.mutations.resolve(state, id, { kind: "keep", superseded: [] });
+		expect(h.writes()).toBe(writes + 1);
+		expect(await h.mutations.resolve(state, "nope", { kind: "keep", superseded: [] })).toBe(state);
+	});
+
+	// Resolving must not lose a credential: every discarded version's password, and its own
+	// changelog rows, go into the kept entry's changelog (final review, finding B2).
+	it("keep folds a discarded version's password and changelog into the changelog", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const { state, id } = await conflicted(h);
+		t = 3000;
+		const theirs = loginWith("a", {
+			password: "theirs",
+			passwordChangelog: [{ value: "older-theirs", changedAt: 1500 }],
+		});
+		const next = await h.mutations.resolve(state, id, { kind: "keep", superseded: [theirs] });
+		const e = next.entries[0]!;
+		expect(e.type === "login" && e.password).toBe("mine");
+		expect(e.type === "login" && e.passwordChangelog?.map((c) => c.value)).toEqual([
+			"theirs",
+			"older-theirs",
+		]);
+	});
+
+	it("use keeps the chosen version's own changelog as well as the shown password", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const { state, id } = await conflicted(h);
+		t = 3000;
+		const theirs = loginWith("a", {
+			password: "theirs",
+			passwordChangelog: [{ value: "phone-interim", changedAt: 2000 }],
+		});
+		const next = await h.mutations.resolve(state, id, {
+			kind: "use",
+			data: theirs,
+			superseded: [state.entries[0]!, theirs],
+		});
+		const values =
+			next.entries[0]!.type === "login"
+				? next.entries[0]!.passwordChangelog?.map((c) => c.value)
+				: [];
+		expect(values).toEqual(["mine", "phone-interim"]);
+	});
+});
+
+// Every write records which parts it changed (docs/sync-conflicts.md, Phase B), so two devices'
+// edits to different parts can later combine.
+describe("createEntryMutations: part stamps", () => {
+	const at = (wall: number, node = "device-a"): Hlc => ({ wall, counter: 0, node });
+	const stampOf = (s: VaultEntries, id: string) => s.stamps.get(id)!;
+
+	it("add and import stamp every part at the write's stamp", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a", { tags: ["work"] }));
+		const e = a.entries[0]!;
+		const s = stampOf(a, e.id);
+		expect(eff(e).parts).toEqual({ name: s, credential: s });
+		expect(eff(e).items.tags).toEqual({ work: s });
+		expect(e.partStampsAt).toEqual(s);
+		t = 2000;
+		const foreign = {
+			...loginWith("b"),
+			partStamps: { name: at(1, "elsewhere") },
+			partStampsAt: at(1, "elsewhere"),
+		};
+		const imported = await h.mutations.importMany(a, [foreign as EntryData]);
+		const b = imported.entries[1]!;
+		expect(eff(b).parts.name).toEqual(stampOf(imported, b.id));
+		expect(b.partStampsAt).toEqual(stampOf(imported, b.id));
+	});
+
+	it("update restamps only the parts it changed", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a", { notes: "x" }));
+		const id = a.entries[0]!.id;
+		const first = stampOf(a, id);
+		t = 2000;
+		const next = await h.mutations.update(a, id, loginWith("a", { notes: "y" }));
+		const second = stampOf(next, id);
+		expect(eff(next.entries[0]!).parts).toEqual({ name: first, notes: second, credential: first });
+		expect(next.entries[0]!.partStampsAt).toEqual(second);
+		const [onDisk] = (await h.mutations.readEntriesPayload()).entries;
+		expect(onDisk!.ciphertext).toContain('"partStampsAt"');
+	});
+
+	it("archive stamps archivedAt and tagging stamps the tags it added", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a"));
+		const id = a.entries[0]!.id;
+		const first = stampOf(a, id);
+		t = 2000;
+		const archived = await h.mutations.setArchived(a, [id], true);
+		expect(eff(archived.entries[0]!).parts.archivedAt).toEqual(stampOf(archived, id));
+		expect(eff(archived.entries[0]!).parts.name).toEqual(first);
+		t = 3000;
+		const tagged = await h.mutations.setTags(archived, [id], { add: ["work"] });
+		expect(eff(tagged.entries[0]!).items.tags).toEqual({ work: stampOf(tagged, id) });
+		expect(tagged.entries[0]!.partStampsAt).toEqual(stampOf(tagged, id));
+	});
+
+	it("resolve keeps the kept content's stamps and sets partStampsAt to the new stamp", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a"));
+		const id = a.entries[0]!.id;
+		const first = stampOf(a, id);
+		t = 2000;
+		const next = await h.mutations.resolve(a, id, { kind: "keep", superseded: [] });
+		expect(next.entries[0]!.partStamps).toEqual({ name: first, credential: first });
+		expect(next.entries[0]!.partStampsAt).toEqual(stampOf(next, id));
+	});
+
+	it("resolve restamps the parts a superseded version disagreed with", async () => {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a"));
+		const id = a.entries[0]!.id;
+		const first = stampOf(a, id);
+		t = 2000;
+		const kept = await h.mutations.resolve(a, id, {
+			kind: "keep",
+			superseded: [loginWith("a", { notes: "theirs" })],
+		});
+		expect(eff(kept.entries[0]!).parts).toEqual({
+			name: first,
+			credential: first,
+			notes: stampOf(kept, id),
+		});
+		t = 3000;
+		// Keeping both: the chosen version became a copy, so the original chose against it too.
+		const both = await h.mutations.resolve(a, id, {
+			kind: "keepBoth",
+			data: loginWith("b"),
+			superseded: [],
+		});
+		expect(eff(both.entries[0]!).parts.name).toEqual(stampOf(both, id));
+	});
+
+	it("an edit around its own sibling stamps parts with its fork-key stamp", async () => {
+		const h = harness();
+		const a = await h.mutations.add(empty(), loginWith("a"));
+		const id = a.entries[0]!.id;
+		const seeded: VaultEntries = {
+			...a,
+			stamps: new Map([[id, at(5000, "phone")]]),
+			causal: new Map([[id, { vv: { phone: at(5000, "phone") } }]]),
+			conflicts: [
+				{
+					id,
+					wrappedDek: "w",
+					dekIv: "d",
+					ciphertext: "s",
+					iv: "i",
+					hlc: at(3000),
+					vv: { "device-a": at(3000) },
+				},
+			],
+		};
+		const next = await h.mutations.update(seeded, id, loginWith("a2"));
+		const stamp = stampOf(next, id);
+		expect(stamp.node.startsWith("device-a~")).toBe(true);
+		expect(eff(next.entries[0]!).parts.name).toEqual(stamp);
+		expect(next.entries[0]!.partStampsAt).toEqual(stamp);
+	});
+});
+
+// The edit form keeps the values it opened with, so its save supersedes the version it opened,
+// not whatever is displayed by then (docs/sync-conflicts.md, "Saving the edit form").
+describe("createEntryMutations: saving from the version the form opened", () => {
+	const at = (wall: number, node: string): Hlc => ({ wall, counter: 0, node });
+
+	/** `id` written here as A, then replaced by the phone's B the way a sync would. */
+	async function openedThenReplaced() {
+		let t = 1000;
+		const h = harness(() => t);
+		const a = await h.mutations.add(empty(), loginWith("a"));
+		const id = a.entries[0]!.id;
+		const opened: OpenedVersion = {
+			hlc: a.stamps.get(id)!,
+			...a.causal.get(id),
+			data: a.entries[0]!,
+		};
+		const theirs = at(2000, "phone");
+		const shown = a.entries[0]!;
+		const replaced: VaultEntries = {
+			...a,
+			entries: [
+				{
+					...shown,
+					notes: "theirs",
+					partStamps: { ...shown.partStamps, notes: theirs },
+					partStampsAt: theirs,
+				} as Entry,
+			],
+			stamps: new Map([[id, theirs]]),
+			causal: new Map([[id, { vv: { ...a.causal.get(id)!.vv, phone: theirs } }]]),
+		};
+		t = 3000;
+		return { h, a, id, opened, replaced, theirs };
+	}
+
+	it("a save from a version no longer displayed becomes a sibling of the one that is", async () => {
+		const { h, id, opened, replaced, theirs } = await openedThenReplaced();
+		const next = await h.mutations.update(
+			replaced,
+			id,
+			loginWith("a", { password: "mine" }),
+			opened,
+		);
+		const save = { hlc: next.stamps.get(id)!, ...next.causal.get(id) };
+		expect(next.entries[0]).toMatchObject({ password: "mine" });
+		expect(next.conflicts.map((e) => e.hlc)).toEqual([theirs]);
+		expect(JSON.parse(next.conflicts[0]!.ciphertext.slice(3))).toMatchObject({ notes: "theirs" });
+		expect(next.conflicts[0]!.vv).toEqual(replaced.causal.get(id)!.vv);
+		expect(isAncestor(opened, save)).toBe(true);
+		expect(isAncestor({ hlc: theirs, ...replaced.causal.get(id) }, save)).toBe(false);
+		expect(conflictsOf(next).get(id)).toEqual({ versions: 1, deleted: false });
+		const onDisk = await h.mutations.readEntriesPayload();
+		expect(onDisk.conflicts?.map((e) => e.hlc)).toEqual([theirs]);
+	});
+
+	it("refuses a version opened on another entry", async () => {
+		const { h, a, id, opened } = await openedThenReplaced();
+		const elsewhere = { ...opened, data: { ...opened.data, id: "another-entry" } };
+		await expect(h.mutations.update(a, id, loginWith("a"), elsewhere)).rejects.toThrow();
+	});
+
+	it("a save from the displayed version works as before", async () => {
+		const { h, a, id, opened } = await openedThenReplaced();
+		const next = await h.mutations.update(a, id, loginWith("a", { password: "mine" }), opened);
+		expect(next.conflicts).toEqual([]);
+		expect(isAncestor(opened, { hlc: next.stamps.get(id)!, ...next.causal.get(id) })).toBe(true);
+	});
+
+	it("the save restamps only parts it changed relative to the version opened", async () => {
+		const { h, id, opened, replaced } = await openedThenReplaced();
+		const next = await h.mutations.update(
+			replaced,
+			id,
+			loginWith("a", { password: "mine" }),
+			opened,
+		);
+		const saved = next.entries[0] as Entry & LoginEntryData;
+		expect(eff(saved).parts).toEqual({ name: opened.hlc, credential: next.stamps.get(id) });
+		expect(saved.passwordChangelog?.map((c) => c.value)).toEqual(["p"]);
+	});
+
+	it("a save from a version that became a sibling supersedes it", async () => {
+		const { h, a, id, opened, theirs } = await openedThenReplaced();
+		// The phone's B is concurrent with A and won the display; A was moved aside, sealed.
+		const shown = a.entries[0]!;
+		const sealedA = {
+			id,
+			wrappedDek: "wd",
+			dekIv: "di",
+			iv: "iv",
+			ciphertext: `ct:${JSON.stringify({ ...shown, id: undefined })}`,
+			hlc: opened.hlc,
+			vv: opened.vv,
+		} as EncryptedEntry;
+		const sideways: VaultEntries = {
+			...a,
+			entries: [{ ...shown, notes: "theirs" } as Entry],
+			stamps: new Map([[id, theirs]]),
+			causal: new Map([[id, { vv: { phone: theirs } }]]),
+			conflicts: [sealedA],
+		};
+		const next = await h.mutations.update(
+			sideways,
+			id,
+			loginWith("a", { password: "mine" }),
+			opened,
+		);
+		expect(next.conflicts.map((e) => e.hlc)).toEqual([theirs]);
 	});
 });

@@ -1,5 +1,8 @@
 package app.bramble.mobile
 
+import android.content.Context
+import android.content.SharedPreferences
+
 // Shared identifiers for the native Android AutofillService and its unlock Activity.
 // The Android peer of iOS BrambleConstants.swift. The biometric alias + prefs MUST match
 // BiometricVaultPlugin.java byte-for-byte so the service and the app share one
@@ -46,4 +49,10 @@ object BrambleAutofill {
     const val DEFAULT_OFFER_TO_SAVE = true
 
     const val LOG_TAG = "BrambleAutofill"
+
+    // For prefs the app's process writes (CAPACITOR_PREFS, BIOMETRIC_PREFS). Android caches prefs per
+    // process and re-reads a changed file only for MODE_MULTI_PROCESS; otherwise :autofill keeps its first read.
+    @Suppress("DEPRECATION")
+    fun appPrefs(context: Context, name: String): SharedPreferences =
+        context.getSharedPreferences(name, Context.MODE_MULTI_PROCESS)
 }

@@ -109,6 +109,12 @@ interface BaseEntryData {
 	 * the vault and in exports, but leave the list and every autofill projection.
 	 */
 	archivedAt?: number;
+	/** Which write last changed each part (docs/sync-conflicts.md, Phase B); vault/parts.ts writes it. */
+	partStamps?: Record<string, Hlc>;
+	/** Which write added each list item, by list and item key. */
+	itemStamps?: Partial<Record<"urls" | "tags" | "passkeys", Record<string, Hlc>>>;
+	/** The version stamp these were written with; a mismatch means a build without them rewrote it. */
+	partStampsAt?: Hlc;
 }
 
 /**
@@ -184,15 +190,20 @@ import { backupTargetsKeyFor } from "../backup/config";
 import { exportToOs } from "../exchange";
 import { toKdbxEntries } from "../export/kdbx";
 import {
+	COMBINE_CONCURRENT_EDITS,
+	combinePayload,
+	compareHlc,
 	DEVICE_ID_KEY,
 	decodeEntriesPayload,
 	decodePairingCode,
 	type EntriesPayload,
+	type EntryConflict,
 	emptyEntriesPayload,
 	ensureDeviceId,
 	type Hlc,
 	type HybridClock,
 	makeClock,
+	mergeEntriesPayload,
 	type SyncedSettings,
 } from "../sync";
 import { PER_VAULT_SYNC_KEYS, syncKeyFor } from "../sync/sync-keys";
@@ -210,7 +221,14 @@ import {
 	buildVaultBytes,
 } from "../vault/build-vault";
 import { createEntriesBlobStore } from "../vault/entries-blob";
-import { createEntryMutations, type VaultEntries } from "../vault/entry-mutations";
+import {
+	conflictsOf,
+	createEntryMutations,
+	emptyVaultEntries,
+	type OpenedVersion,
+	type VaultEntries,
+	vaultEntriesFromPayload,
+} from "../vault/entry-mutations";
 import { entryDataSchema, normalizeEntryData } from "../vault/entry-normalize";
 import { quarantineEntries } from "../vault/quarantine";
 import { decryptEntriesOrRecover } from "../vault/recover-entries";
@@ -268,6 +286,8 @@ export interface VaultState {
 	/** The last setup-flow join failure (e.g. password mismatch), or null. */
 	joinError: string | null;
 	entries: Entry[];
+	/** Entries with sibling versions or a concurrent delete, by id (docs/sync-conflicts.md). */
+	conflicts: ReadonlyMap<string, EntryConflict>;
 	error: string | null;
 	/** A vault exists on disk but its blob couldn't be read/decoded; null when readable. */
 	vaultError: string | null;
@@ -316,7 +336,13 @@ export interface VaultActions {
 	exportToApp(): Promise<string[]>;
 	addEntry(data: EntryData): Promise<void>;
 	importEntries(items: EntryData[]): Promise<void>;
-	updateEntry(id: string, data: EntryData): Promise<void>;
+	/** The displayed version of an entry, for an edit form to save against (see `updateEntry`). */
+	openVersion(id: string): OpenedVersion | undefined;
+	/**
+	 * Save an edit. Pass the version the form opened: if another one is displayed by the time it
+	 * saves, that one becomes a sibling instead of being overwritten.
+	 */
+	updateEntry(id: string, data: EntryData, opened?: OpenedVersion): Promise<void>;
 	deleteEntry(id: string): Promise<void>;
 	/** Delete a bulk selection in one write. Each id is tombstoned, as with `deleteEntry`. */
 	deleteEntries(ids: string[]): Promise<void>;
@@ -333,6 +359,12 @@ export interface VaultActions {
 	setEntriesTags(ids: string[], change: { add?: string[]; remove?: string[] }): Promise<void>;
 	/** Record a use (copy/fill): bumps only the entry's `lastUsedAt`. */
 	touchEntry(id: string): Promise<void>;
+	/** Save a re-checked breach status on a login without restamping it (see `EntryMutations.setBreach`). */
+	setEntryBreach(id: string, breach: { leaked: boolean; checkedAt: number }): Promise<void>;
+	/** The entry's sibling versions, decrypted, newest first. */
+	readConflictVersions(id: string): Promise<ConflictVersion[]>;
+	/** Resolve the entry's conflict; every version this device holds is superseded. */
+	resolveConflict(id: string, choice: ConflictChoice): Promise<void>;
 	/** The current entries, read synchronously: includes writes committed before their
 	 * render has landed, so sequential mutations see their own earlier writes. */
 	readEntries(): Entry[];
@@ -382,6 +414,37 @@ export interface VaultActions {
 
 /** The full vault API: reactive state plus actions. */
 export interface UseVault extends VaultState, VaultActions {}
+
+/** One sibling version of an entry, decrypted for the compare view. */
+export interface ConflictVersion {
+	hlc: Hlc;
+	data: EntryData;
+}
+
+/**
+ * A resolution as the UI states it: a sibling is named by its stamp, and `seen` lists the stamps
+ * of every sibling the user compared, so a version that synced in meanwhile isn't superseded unseen.
+ */
+export type ConflictChoice =
+	| { kind: "keep"; seen: Hlc[] }
+	| { kind: "use"; hlc: Hlc; seen: Hlc[] }
+	| { kind: "keepBoth"; hlc: Hlc; seen: Hlc[] };
+
+/** The entry's versions changed after the user looked at them; show them again before resolving. */
+export class ConflictChangedError extends Error {}
+
+const sameStamps = (a: readonly Hlc[], b: readonly Hlc[]) =>
+	a.length === b.length && a.every((x) => b.some((y) => compareHlc(x, y) === 0));
+
+/** Everything a vault's entry state holds besides the decrypted entries. */
+type VaultSyncState = Omit<VaultEntries, "entries">;
+
+function emptyVaultSyncState(): VaultSyncState {
+	const { entries: _entries, ...rest } = emptyVaultEntries();
+	return rest;
+}
+
+const NO_CONFLICTS: ReadonlyMap<string, EntryConflict> = new Map();
 
 // State and actions ride separate contexts so a pure-action consumer (useVaultActions)
 // never re-renders on a state change, and the state value carries only state deps.
@@ -461,15 +524,15 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	// mounted once for the whole app and vaults switch underneath it, so "cache it forever" is not
 	// the same as "cache it for this vault".
 	const clockRef = useRef<{ vaultId: string | null; clock: HybridClock } | null>(null);
-	const stampsRef = useRef<Map<string, Hlc>>(new Map());
-	const tombstonesRef = useRef<Map<string, Hlc>>(new Map());
-	// Vault-scoped settings, held here for the same reason the two above are: every mutation
-	// rebuilds the payload from this value, so anything not threaded through is erased by the
-	// next entry edit. See docs/synced-settings.md.
-	const settingsRef = useRef<SyncedSettings | undefined>(undefined);
+	// Every mutation rebuilds the payload from this, so anything not threaded through it (stamps,
+	// histories, the graveyard, sibling versions, synced settings) is erased by the next entry
+	// edit. One ref, reset in one piece, so a closing vault can't leave a field behind.
+	// See docs/synced-settings.md and docs/sync-conflicts.md.
+	const vaultStateRef = useRef<VaultSyncState>(emptyVaultSyncState());
 	// Mirrored in state so consumers re-render when a value changes, including when a remote
 	// merge lands one. The ref is what mutations thread; this is what the UI reads.
 	const [syncedSettings, setSyncedSettings] = useState<SyncedSettings | undefined>(undefined);
+	const [conflicts, setConflicts] = useState<ReadonlyMap<string, EntryConflict>>(NO_CONFLICTS);
 
 	/** Lazily load this device's id and build its clock. The device id is per-vault (each vault
 	 * is its own sync group with its own roster membership), so read/write it under the active
@@ -576,9 +639,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			});
 			const { blob } = await readDecodedBlob();
 			if (blob.entriesCiphertext.length === 0) {
-				stampsRef.current = new Map();
-				tombstonesRef.current = new Map();
-				settingsRef.current = undefined;
+				vaultStateRef.current = emptyVaultSyncState();
+				latestRef.current = { ...latestRef.current, entries: [] };
+				setConflicts(NO_CONFLICTS);
 				setSyncedSettings(undefined);
 				setEntries([]);
 				await publishIndex([], indexLease);
@@ -600,21 +663,44 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			// message instead of leaking raw decoder/zod internals to the unlock screen.
 			let payload: EntriesPayload;
 			try {
-				payload = decodeEntriesPayload(outerJson);
+				// Canonical before anything reads it: a quarantine can leave siblings with nothing shown.
+				payload = mergeEntriesPayload(decodeEntriesPayload(outerJson), emptyEntriesPayload());
 			} catch (e) {
 				console.error("[vault] entries payload failed to decode:", e);
 				throw new UserFacingError(
 					"This vault was created by an incompatible version and can't be opened. Its data format has changed.",
 				);
 			}
-			tombstonesRef.current = new Map(payload.tombstones.map((t) => [t.id, t.hlc]));
-			settingsRef.current = payload.settings;
+			// Siblings that changed different parts open as one version, written back so peers
+			// converge on it. A failure leaves them a conflict, as before combining.
+			if (COMBINE_CONCURRENT_EDITS) {
+				try {
+					const combined = await combinePayload(payload, crypto);
+					if (combined.stamps.length > 0) {
+						const store = createEntriesBlobStore({
+							crypto,
+							storage,
+							readDecodedBlob,
+							verifyVekBeforeWrite: true,
+						});
+						// Into what's on disk now, not over it: the extension background writes the same
+						// blob without asking, and may have saved something while this combined.
+						const current = mergeEntriesPayload(await store.readEntriesPayload(), combined.payload);
+						await store.writeEntriesBlob(current);
+						payload = current;
+					}
+				} catch (e) {
+					console.warn("[vault] combining siblings on load failed; keeping the conflict:", e);
+				}
+			}
 			setSyncedSettings(payload.settings);
 			// Advance this device's clock past every stamp it just read, so the next
 			// local write is causally ordered after them.
 			const clock = await ensureClock();
-			for (const e of payload.entries) clock.witness(e.hlc);
-			for (const t of payload.tombstones) clock.witness(t.hlc);
+			for (const v of [...payload.entries, ...(payload.conflicts ?? []), ...payload.tombstones]) {
+				clock.witness(v.hlc);
+				for (const stamp of Object.values(v.vv ?? {})) clock.witness(stamp);
+			}
 			// One decrypt call for the whole vault: on the extension that is a single
 			// offscreen round-trip instead of one per entry (~1s -> a fraction on large
 			// vaults). Plaintexts come back in the same order as the entries.
@@ -627,7 +713,6 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 				})),
 			);
 			// Decode everything readable BEFORE any write: a failed open must leave the vault as it was.
-			const readable: EncryptedEntry[] = [];
 			const unreadable: EncryptedEntry[] = [];
 			const decrypted: Entry[] = [];
 			payload.entries.forEach((enc, i) => {
@@ -636,7 +721,6 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 					unreadable.push(enc);
 					return;
 				}
-				readable.push(enc);
 				decrypted.push({ id: enc.id, ...normalizeEntryData(JSON.parse(plaintext)) });
 			});
 			if (unreadable.length > 0) {
@@ -664,7 +748,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 					unreadable,
 				);
 			}
-			stampsRef.current = new Map(readable.map((e) => [e.id, e.hlc]));
+			const loaded = vaultEntriesFromPayload(payload, decrypted);
+			const { entries: _entries, ...syncState } = loaded;
+			// Stamps and entries change together, as in commitEntries: a write or an opened version
+			// read before the render lands would otherwise pair new stamps with old content.
+			vaultStateRef.current = syncState;
+			latestRef.current = { ...latestRef.current, entries: decrypted };
+			setConflicts(conflictsOf(loaded));
 			setEntries(decrypted);
 			await publishIndex(toAutofillIndex(decrypted), indexLease);
 		},
@@ -774,9 +864,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	// so the guard redirects to the unlock screen.
 	useEffect(() => {
 		return crypto.onExternalLock(() => {
-			stampsRef.current = new Map();
-			tombstonesRef.current = new Map();
-			settingsRef.current = undefined;
+			vaultStateRef.current = emptyVaultSyncState();
+			setConflicts(NO_CONFLICTS);
 			setSyncedSettings(undefined);
 			setEntries([]);
 			setIsLocked(true);
@@ -842,9 +931,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	const lock = useCallback(async () => {
 		await crypto.lock();
 		await autofill.clearIndex();
-		stampsRef.current = new Map();
-		tombstonesRef.current = new Map();
-		settingsRef.current = undefined;
+		vaultStateRef.current = emptyVaultSyncState();
+		setConflicts(NO_CONFLICTS);
 		setSyncedSettings(undefined);
 		setEntries([]);
 		setIsLocked(true);
@@ -1053,9 +1141,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 				emptyEntriesPayload(),
 			);
 			await storage.writeVaultBlob(bytes, newId);
-			stampsRef.current = new Map();
-			tombstonesRef.current = new Map();
-			settingsRef.current = undefined;
+			vaultStateRef.current = emptyVaultSyncState();
+			setConflicts(NO_CONFLICTS);
 			setSyncedSettings(undefined);
 			setHasVault(true);
 			setEntries([]);
@@ -1119,21 +1206,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	// Snapshot the current entry state (latest entries + the stamp/tombstone refs).
 	// Reads entries from latestRef so the callback stays stable across entry changes.
 	const snapshotEntries = useCallback(
-		(): VaultEntries => ({
-			entries: latestRef.current.entries,
-			stamps: stampsRef.current,
-			tombstones: tombstonesRef.current,
-			settings: settingsRef.current,
-		}),
+		(): VaultEntries => ({ entries: latestRef.current.entries, ...vaultStateRef.current }),
 		[],
 	);
 
 	// Commit a mutation's next state. Only ever runs after a successful persist,
 	// so a failed write leaves entries + refs untouched.
 	const commitEntries = useCallback((next: VaultEntries) => {
-		stampsRef.current = next.stamps;
-		tombstonesRef.current = next.tombstones;
-		settingsRef.current = next.settings;
+		const { entries: _entries, ...syncState } = next;
+		vaultStateRef.current = syncState;
+		setConflicts(conflictsOf(next));
 		// Advance the mirror ahead of the render setEntries schedules: a second mutation
 		// before it lands must snapshot the first one's committed result.
 		latestRef.current = { ...latestRef.current, entries: next.entries };
@@ -1150,10 +1232,21 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			commitEntries(await mutations.importMany(snapshotEntries(), items)),
 		[mutations, snapshotEntries, commitEntries],
 	);
+	const openVersion = useCallback((id: string): OpenedVersion | undefined => {
+		const data = latestRef.current.entries.find((e) => e.id === id);
+		const hlc = vaultStateRef.current.stamps.get(id);
+		return data && hlc ? { hlc, ...vaultStateRef.current.causal.get(id), data } : undefined;
+	}, []);
 	const updateEntry = useCallback(
-		async (id: string, data: EntryData) =>
-			commitEntries(await mutations.update(snapshotEntries(), id, data)),
-		[mutations, snapshotEntries, commitEntries],
+		async (id: string, data: EntryData, opened?: OpenedVersion) => {
+			const next = await mutations.update(snapshotEntries(), id, data, opened);
+			commitEntries(next);
+			// A save that left siblings may combine with them: a load combines and writes it back.
+			if (COMBINE_CONCURRENT_EDITS && next.conflicts.some((e) => e.id === id)) {
+				await loadEntries();
+			}
+		},
+		[mutations, snapshotEntries, commitEntries, loadEntries],
 	);
 	const deleteEntry = useCallback(
 		async (id: string) => commitEntries(await mutations.remove(snapshotEntries(), id)),
@@ -1176,6 +1269,80 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 	const touchEntry = useCallback(
 		async (id: string) => commitEntries(await mutations.touch(snapshotEntries(), id)),
 		[mutations, snapshotEntries, commitEntries],
+	);
+	const setEntryBreach = useCallback(
+		async (id: string, breach: { leaked: boolean; checkedAt: number }) =>
+			commitEntries(await mutations.setBreach(snapshotEntries(), id, breach)),
+		[mutations, snapshotEntries, commitEntries],
+	);
+	// Decrypted on demand only: siblings never reach the list, autofill or the index.
+	const readConflictVersions = useCallback(
+		async (id: string): Promise<ConflictVersion[]> => {
+			const siblings = vaultStateRef.current.conflicts
+				.filter((e) => e.id === id)
+				.sort((a, b) => compareHlc(b.hlc, a.hlc));
+			const plaintexts = await crypto.decryptEntries(
+				siblings.map(({ ciphertext, iv, wrappedDek, dekIv }) => ({
+					ciphertext,
+					iv,
+					wrappedDek,
+					dekIv,
+				})),
+			);
+			return siblings.flatMap((e, i) => {
+				const plaintext = plaintexts[i];
+				return plaintext == null
+					? []
+					: [{ hlc: e.hlc, data: normalizeEntryData(JSON.parse(plaintext)) }];
+			});
+		},
+		[crypto],
+	);
+	const resolveConflict = useCallback(
+		async (id: string, choice: ConflictChoice) => {
+			const versions = await readConflictVersions(id);
+			const changed = () =>
+				new ConflictChangedError(
+					t`These versions changed while you were comparing them. Have another look.`,
+				);
+			if (
+				!sameStamps(
+					versions.map((v) => v.hlc),
+					choice.seen,
+				)
+			)
+				throw changed();
+			// Every version the kept entry replaces, so its passwords go into the changelog.
+			const siblings = versions.map((v) => v.data);
+			if (choice.kind === "keep") {
+				commitEntries(
+					await mutations.resolve(snapshotEntries(), id, { kind: "keep", superseded: siblings }),
+				);
+				return;
+			}
+			const chosen = versions.find((v) => compareHlc(v.hlc, choice.hlc) === 0);
+			if (!chosen) throw changed();
+			const others = versions.filter((v) => v !== chosen).map((v) => v.data);
+			const shown = latestRef.current.entries.find((e) => e.id === id);
+			commitEntries(
+				await mutations.resolve(
+					snapshotEntries(),
+					id,
+					choice.kind === "use"
+						? {
+								kind: "use",
+								data: chosen.data,
+								superseded: [...(shown ? [shown] : []), chosen.data, ...others],
+								// Its own stamp and history, so the content taken keeps its part stamps.
+								version: vaultStateRef.current.conflicts.find(
+									(e) => e.id === id && compareHlc(e.hlc, chosen.hlc) === 0,
+								),
+							}
+						: { kind: "keepBoth", data: chosen.data, superseded: others },
+				),
+			);
+		},
+		[mutations, snapshotEntries, commitEntries, readConflictVersions, t],
 	);
 	const readEntries = useCallback((): Entry[] => latestRef.current.entries, []);
 
@@ -1299,13 +1466,20 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			// Read before rotating: this is the last moment the old key can open anything.
 			const { blob } = await readDecodedBlob();
 			const snapshot = snapshotEntries();
+			// Sibling versions are sealed under DEKs the old key wraps, so open them while it exists.
+			const conflictPlaintexts = await mutations.openConflicts(snapshot);
 
 			await crypto.rotateVek();
 			// From here the old key is gone. Everything below re-derives from plaintext held in
 			// memory, and any failure has to end in a restore.
 			let code: string;
+			let resealed: EncryptedEntry[] = [];
 			try {
-				const sealed = await mutations.sealAll(snapshot);
+				const { conflicts: resealedConflicts, ...sealed } = await mutations.sealAll(
+					snapshot,
+					conflictPlaintexts,
+				);
+				resealed = resealedConflicts;
 				code = makeRecoveryCode();
 				const withPassword = upsertPasswordSlot(
 					{ ...blob, ...sealed },
@@ -1347,6 +1521,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			// Committed: the file is written and verified. Refreshing the view comes after the
 			// rollback boundary on purpose — failing to re-read entries is a display problem, and
 			// undoing a good rotation over it would invalidate a recovery code the user was shown.
+			// The siblings in memory are still under the old key until that reload, so swap in the
+			// re-sealed ones now, or a failed reload lets the next write put them back on disk.
+			vaultStateRef.current = { ...vaultStateRef.current, conflicts: resealed };
 			await refreshSlotMetadata().catch(() => {});
 			await loadEntries().catch(() => {});
 			return code;
@@ -1638,6 +1815,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			joining: pendingJoin !== null,
 			joinError,
 			entries,
+			conflicts,
 			error,
 			vaultError,
 			hasWebauthnSlot,
@@ -1658,6 +1836,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			pendingJoin,
 			joinError,
 			entries,
+			conflicts,
 			error,
 			vaultError,
 			hasWebauthnSlot,
@@ -1756,12 +1935,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			exportToApp,
 			addEntry,
 			importEntries,
+			openVersion,
 			updateEntry,
 			deleteEntry,
 			deleteEntries,
 			setEntriesArchived,
 			setEntriesTags,
 			touchEntry,
+			setEntryBreach,
+			readConflictVersions,
+			resolveConflict,
 			readEntries,
 			verifyMasterPassword,
 			verifyWithWebauthnKey,
@@ -1794,12 +1977,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 			exportToApp,
 			addEntry,
 			importEntries,
+			openVersion,
 			updateEntry,
 			deleteEntry,
 			deleteEntries,
 			setEntriesArchived,
 			setEntriesTags,
 			touchEntry,
+			setEntryBreach,
+			readConflictVersions,
+			resolveConflict,
 			readEntries,
 			verifyMasterPassword,
 			verifyWithWebauthnKey,
@@ -1889,4 +2076,4 @@ export function useVault(): UseVault {
 	return { ...useVaultState(), ...useVaultActions() };
 }
 
-export type { EncryptedEntry };
+export type { EncryptedEntry, OpenedVersion };

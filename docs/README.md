@@ -29,6 +29,9 @@ comments point here instead of repeating it.
 | [routing.md](routing.md) | Router guards, back navigation, pop-out handoff |
 | [multiple-vaults.md](multiple-vaults.md) | Plan: parallel vaults on one device (local-id registry, one active vault at a time, active-vault-only sync, a primary vault for autofill/biometric) |
 | [p2p-sync.md](p2p-sync.md) | Cross-device P2P sync: WebRTC transport, Nostr-subset relay, enrollment + roster-auth, the entry-level merge engine (HLC + tombstones) |
+| [sync-conflicts.md](sync-conflicts.md) | Plan: stop losing concurrent edits to one entry. Phase A keeps every concurrent version as version-vector siblings and shows the conflict; Phase B merges field groups inside the crypto core, falling back to a Phase A conflict when both sides changed the same group |
+| [sync-conflicts-phase-a.md](sync-conflicts-phase-a.md) | Implementation plan for Phase A: causal history primitives, the sibling merge, local and background writes, resolution, the badge and compare view |
+| [sync-conflicts-phase-b.md](sync-conflicts-phase-b.md) | Implementation plan for Phase B: part stamps on every writer, the versioned combine function, combining during sync and load behind a flag, edit-form saves that supersede the opened version |
 | [p2p-sync-testing.md](p2p-sync-testing.md) | Exercising device sync locally with two browser profiles + the relay |
 | [sync-vault-pinning-and-quarantine.md](sync-vault-pinning-and-quarantine.md) | Plan: pin extension sync to one vault, silently quarantine entries a vault can't decrypt, refuse foreign entries at merge, calm unlock errors |
 | [file-attachments.md](file-attachments.md) | Plan: files in a vault (entry attachments + standalone Files items); why the bytes cannot ride the entries payload, the immutable content-addressed blob store, per-file FEK + STREAM chunked AEAD, and the direct-only transfer that structurally cannot use TURN |

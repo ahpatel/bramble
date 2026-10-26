@@ -109,6 +109,41 @@ export function adbReverse(port: number): () => void {
 	};
 }
 
+/** Stop the app outright, the way swiping it away or the system reclaiming it would. */
+export function stopApp(): void {
+	adb(["shell", "am", "force-stop", APP_ID]);
+}
+
+/**
+ * Attach to the app's WebView, launching the app if it isn't running. For a spec that restarts
+ * the app: a new process is a new devtools socket, so it attaches again after each restart. The
+ * first attach after a cold start can time out while the WebView comes up, so it retries.
+ */
+export async function attachApp(): Promise<{ page: Page; detach: () => Promise<void> }> {
+	requireDevice();
+	const stopForward = forwardDevtools(appPid());
+	let browser: Browser | undefined;
+	for (let attempt = 0; !browser; attempt++) {
+		try {
+			browser = await chromium.connectOverCDP(`http://localhost:${PORT}`, { noDefaults: true });
+		} catch (e) {
+			if (attempt >= 10) throw e;
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+		}
+	}
+	const page = browser.contexts()[0]?.pages()[0];
+	if (!page) throw new Error("the app's WebView has no page");
+	await page.locator("#root").waitFor();
+	const attached = browser;
+	return {
+		page,
+		detach: async () => {
+			await attached.close();
+			stopForward();
+		},
+	};
+}
+
 export const test = base.extend<{ browser: Browser; context: BrowserContext; page: Page }>({
 	// biome-ignore lint/correctness/noEmptyPattern: Playwright requires the fixtures destructuring param.
 	browser: async ({}, use) => {
