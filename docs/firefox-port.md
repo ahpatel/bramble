@@ -334,8 +334,8 @@ differs from Chrome.
   authenticator so a page's WebAuthn never hangs or breaks.
 - **Disabled / passthrough.** The override is always injected, so when the provider is off (or the
   origin is one we won't serve, e.g. a cross-origin child frame) the background replies `passthrough`
-  and the shim calls the captured native method. The same relay powers the **no-match handoff**
-  (tracker #18): when the vault cannot serve a request (e.g. a step-up get whose `allowCredentials`
+  and the shim calls the captured native method. The same relay powers the **no-match handoff**:
+  when the vault cannot serve a request (e.g. a step-up get whose `allowCredentials`
   name devices registered elsewhere), the background replies `fallback` and the shim relays the
   page's own options to the native authenticator, so a provider-enabled Firefox still reaches
   the user's other registered devices, with no card and no state change. Firefox therefore has

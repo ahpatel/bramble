@@ -434,7 +434,7 @@ the stranded-RESUME path looks hard to reach in practice. Left pinned as a HOLE 
 driving a rewrite. (The F2 port makes the remaining strand unreachable regardless: a destroyed
 popup disconnects its port, and the disconnect IS the resume.)
 
-## The no-match handoff: never dead-end a request the vault cannot serve (tracker #18)
+## The no-match handoff: never dead-end a request the vault cannot serve
 
 All-or-nothing interception has a second edge beyond the pause hole: while attached, Bramble is
 the browser's ONLY WebAuthn authenticator, so a request the vault cannot serve used to fail the

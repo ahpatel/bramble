@@ -3,8 +3,8 @@ import { expect, test } from "./fixtures";
 import { addVirtualAuthenticator, backgroundWorker, createVault, openPopup } from "./helpers";
 
 // The passkey provider end-to-end, through the real chrome.webAuthenticationProxy in the
-// built extension. This is the regression suite for the Cloudflare Access filing
-// (tracker bramble-planning#18): with the provider attached, a get() the vault cannot
+// built extension. This is the regression suite for the Cloudflare Access filing: with the
+// provider attached, a get() the vault cannot
 // serve used to dead-end the whole browser: Touch ID, iCloud Keychain and any YubiKey
 // became unreachable. Now the no-match card hands the request to the user's other
 // authenticators, and the create ceremony still mints and stores a passkey.
@@ -97,7 +97,7 @@ async function clickCardPrimary(page: Page, yOffsetFromBottom = 40): Promise<voi
 	await page.mouse.click(box!.x + 100, box!.y + box!.height - yOffsetFromBottom);
 }
 
-test("a step-up get() with no matching passkey hands off instead of dead-ending (tracker #18)", async ({
+test("a step-up get() with no matching passkey hands off instead of dead-ending", async ({
 	context,
 	extensionId,
 }) => {
