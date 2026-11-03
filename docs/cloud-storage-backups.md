@@ -17,7 +17,10 @@ A Bramble backup is already client-side-encrypted ciphertext: the backed-up
 provider it is.
 
 Note that `.bramble` now covers two things. A **backup** is the whole vault blob,
-copied byte for byte, and opens with the master password. A **portable vault** is a
+copied byte for byte, and opens with the master password. (A vault with file
+attachments is backed up as a ZIP holding that same blob plus the attachments'
+sealed files; see "Backups with attachments" below. Without attachments the file is
+exactly the blob, as it always was.) A **portable vault** is a
 selection exported from the vault list, sealed under a password chosen for that file
 and holding no other key. Both are VLT1, so a reader takes either apart the same
 way; what differs is which key opens it and whether the entries inside are
@@ -252,14 +255,133 @@ which is why testing against it never showed the problem.
 
 ### Restore
 
-Restore already exists: creating a new vault lets the user select a `.bramble`
-file, and a backup `.bramble` is the raw vault blob, so opening one is a full
-restore. No new restore flow is needed for this feature.
+Restore takes either kind of backup file and tells them apart by their first bytes
+(`VLT1` or a ZIP's `PK`), never by the name. A plain backup is written as the vault
+unchanged. An archive's inner vault is written as the vault, then each attachment is
+put into that vault's own store (see "Backups with attachments").
 
-Restore replaces the vault on the device; it is not the same path as importing a
-portable vault, which merges. That split is deliberate: at setup time there is no
-vault to replace, and a user recovering from a backup wants exactly the state in
-the file.
+Restore never overwrites a vault: with none on the device the backup becomes the first
+one and is unlocked; otherwise it is added as a new vault, left locked. It is not the
+same path as importing a portable vault, which merges entries into the open vault, and
+Import turns a full backup away and points at Restore. That split is deliberate: a user
+recovering from a backup wants exactly the state in the file, as its own vault.
+
+The decisions live in `core/backup/restore.ts` rather than in the screen, so they are
+tested: `readPickedBackup` classifies the file, and `commitRestore` runs once the password
+is verified, in a fixed order (record, vault, attachments, unlock) so the restored vault
+never opens with its files missing.
+
+### Backups with attachments
+
+A vault with [file attachments](file-attachments.md) is backed up as **one
+self-contained file**: a ZIP holding `vault.bramble` (the same bytes a plain backup
+has) plus `blobs/<hash>` for each attachment. One file restores everything, with
+nothing else to reach, which is the property a backup exists for. Code:
+`core/backup/archive.ts` and `core/backup/zip.ts`.
+
+**A backup is the whole vault, or it is not made.** There is no size limit and no
+partial backup. An earlier version capped backups at 100 MB and, over it or with files
+missing, uploaded the vault without them and said so in amber. A backup that looks like
+one and is not is worse than none, so that is gone, and the rule now is to scale or to
+refuse loudly, never to drop data quietly.
+
+- **A vault without attachments is unchanged.** It is backed up as its raw blob, byte
+  for byte, fingerprinted with the same hash the runners always stored, so no target
+  re-uploads because the code changed, and older builds still restore those files.
+- **Still `.bramble`.** The ZIP keeps the extension, the way `.1pux` is a ZIP with its
+  own, so the snapshot names the prune matches and the file-picker filters keep working.
+  Anyone can rename one to `.zip` and look inside; `unzip -t` and Python's zipfile
+  accept it, CRCs included.
+- **Our own ZIP, laid out rather than built.** Stored entries only (everything inside is
+  ciphertext, which does not compress), a fixed DOS timestamp so identical content packs
+  to identical bytes, and ZIP64 exactly where a size or offset needs it. The archive is a
+  list of parts, header bytes in memory and references into the blob store, read on
+  demand: its size is exact before anything is read, and no platform ever holds it
+  whole. fflate is not used for this because both its halves hold the archive in memory.
+- **Which attachments go in** is read from the vault's own manifest, so a deleted
+  attachment whose file has not been collected yet never rides along.
+- **When a backup cannot be whole, it waits.** `planBackup` sets `blocked`:
+  - `missing`: the vault lists files this device does not hold (they have not arrived
+    from another device yet).
+  - `locked`: the list is sealed and no key in hand opens it.
+
+  The runner then uploads nothing, marks each due target `waiting` with the reason, shown
+  in amber under the last backup, and leaves it due; the next backup that is made clears
+  it. Waiting is not failing, so it never feeds the retry backoff. "Export a backup" and
+  "Back up now" refuse the same way, with the same reason.
+- **A locked vault is planned from a cached list.** Each plan that can read the list
+  stores it (`backup.attachments:<vaultId>`, just the blob hashes, which already name the
+  files on this device's disk) with the hash of the vault bytes it was read from. While
+  locked, a list cached for those exact bytes stands in: no write reaches a vault without
+  its key, so it is exactly right. Anything else waits for an unlock. An empty store says
+  nothing on its own, because synced records can name files that never arrived; treating
+  it as "no attachments" would upload a vault without them.
+- **Every writer packs the same way.** The scheduled runner, "Back up now" and "Export a
+  backup" all go through `planBackup` and store the same fingerprint (the vault's hash
+  plus the attachment hashes), so a manual backup is not followed by a redundant
+  scheduled one. `backupPlanner` keeps one plan per vault per run, so the fingerprint,
+  the wait and the upload describe the same file and the archive is laid out once.
+- **Deciding reads no attachment.** The fingerprint comes from hashes; only laying out
+  the archive reads each attachment, once, for its CRC.
+
+**Uploading one of any size.** Every provider takes a body read on demand
+(`BackupUpload`), and anything from one part (`PART_SIZE`, 16 MB) up goes up in pieces
+that each fit one request:
+
+- **S3** uses a multipart upload. The object exists only once completed, so it is as
+  atomic as one PUT. The completion's ETags come from the server's own ListParts rather
+  than from response headers, which no transport returns, and that list is checked
+  against what was sent, so a part the server lost stops the completion. On any failure
+  the upload is aborted, and `sweepIncomplete` aborts this vault's stale ones during the
+  prune, since an abandoned multipart upload holds storage the user pays for but cannot
+  see. MinIO sends ETags with `&#34;` for their quotes, which the parser leaves as is;
+  they are decoded before they go back (the real-server test caught this).
+- **Dropbox** uses an upload session (start, append in parts, finish with the commit).
+  The file appears only at the commit, and Dropbox expires abandoned sessions itself.
+- **WebDAV** has no standard way to upload in parts, so a large backup is one PUT whose
+  body the transport streams (see `HttpBodySource` in `core/adapters/http.ts`). Before the
+  temporary file is moved into place its stored size is checked with a PROPFIND, so a
+  server that took a short body without complaint never gets a snapshot out of it.
+
+**Restoring one of any size.** The picked file is read in slices (`fileSource`): the
+vault and the ZIP directory up front, then each attachment streamed into the restored
+vault's store in 1 MiB reads, verified by an incremental SHA-256 (`createBlobHasher`,
+`@noble/hashes`) rather than one that buffers the file. The reader is strict, because a
+backup is untrusted input: only `vault.bramble` and `blobs/<64 lowercase hex>`, no
+duplicates, stored entries whose local headers agree with the directory, no entries
+whose bytes overlap, no comment, and the vault's CRC must match. The archive itself
+needs no trust: the vault authenticates itself, and each attachment is re-hashed
+against its name as it is stored, so no vault key is involved. A tampered archive can
+fail an attachment, and the restore then says so; it cannot deliver wrong data.
+
+**Per platform**, the parts no shared code can do:
+
+- **Extension.** Chrome ends a service worker whose `fetch()` response takes over 30
+  seconds or whose one call takes over 5 minutes, and a large upload does both. So the
+  scheduled runner sends from the offscreen document instead (`http-host.ts`,
+  `background/host-http.ts`): each request is a job started with one message and polled
+  with more, so no message waits on the upload, and each poll is an extension API call
+  that keeps the worker alive meanwhile. Bodies cross as a Blob in the IndexedDB handoff
+  store. Exports are assembled into a Blob a chunk at a time and downloaded.
+- **Desktop.** Large bodies cross the IPC in raw chunks into a sink in the shell
+  (`src-tauri/src/stream.rs`): a request whose body reads from a bounded channel, or an
+  export written beside the chosen file and renamed into place only once it holds every
+  byte. The upload's length is declared rather than chunked, since some WebDAV servers
+  refuse a chunked PUT, and its timeout scales with the size.
+- **Mobile.** Reads go native (`readFileRange`), since Capacitor's Filesystem only reads
+  whole files. A large body is spooled to a cache file a chunk at a time and sent from it
+  natively (`sendFile`), with the file's length declared.
+
+Tested against real servers, not only against mocks: the provider integration suite
+(`BRAMBLE_IT=1`, `docker compose up -d`) uploads past one part to MinIO and Nextcloud
+and reads it back, and `e2e/extension/backup-attachments-servers.spec.ts` attaches 120 MB
+to a vault, lets the scheduled run back it up from the background to each server, reads
+the result back with `mc` and `curl`, checks it with `unzip -t`, restores it, and opens
+the attachments byte for byte.
+
+The extension's runner can reach a locked vault's targets too, on credentials wrapped under
+another unlocked vault's key (the device-global list they were migrated from). A locked vault
+holding attachments is planned from its cached list there, or waits, as on desktop below.
 
 ### Helper text
 
@@ -313,6 +435,17 @@ the shell regardless, the credential has no reason to travel back to JavaScript.
   provider clients in `@core/backup` are unchanged apart from taking a
   `BackupTransport`, so object naming and keep-N retention stay single-sourced
   across every platform.
+  A request with a body goes through `backup_send_raw` instead: the body as raw
+  IPC bytes, the rest of the request base64'd JSON in an `x-bramble-request`
+  header. Tauri's JSON IPC would carry the body as an array of numbers, several
+  hundred megabytes of JSON for one part. A body too large for one call (a large
+  WebDAV backup) streams through `backup_stream_open` instead; see "Backups with
+  attachments".
+- **Locked vaults are planned from a cached list.** Which attachments go in is
+  sealed in the payload, so a locked vault's list cannot be read. The list cached
+  at its last unlock stands in while the vault's bytes are unchanged; without one
+  the vault waits for an unlock rather than going up alone (see "Backups with
+  attachments"). A backup made while locked is as complete as one made unlocked.
 - **Schedule:** a thread in the shell emits `backup://tick` every 5 minutes, and
   the main window runs the same `runScheduledBackups` the extension does. The
   tick is in Rust because this window is usually hidden and a hidden webview's
@@ -467,8 +600,8 @@ On a machine that gets rebooted and then used through the browser extension all 
 backup is not a daily backup. So the desktop app can start at login, and Settings, General carries
 a toggle for it: **Start Bramble at login**, phrased by what it buys rather than by what it does.
 
-`tauri-plugin-autostart` over the `auto-launch` crate, which means a login item
-(`~/Library/LaunchAgents`) on macOS, a `Run` registry value on Windows, and an XDG
+On macOS a launch agent the app writes itself (below), and elsewhere `tauri-plugin-autostart` over
+the `auto-launch` crate, which means a `Run` registry value on Windows and an XDG
 `~/.config/autostart` entry on Linux. XDG rather than a systemd user unit deliberately: this is a
 tray app, and an XDG entry starts once the graphical session exists where a user unit wanting
 `default.target` can come up with no display to render into. The TPM tier above is the reason that
@@ -478,13 +611,39 @@ The plugin records `current_exe()` and has no way to name anything else. Under N
 `.bramble-desktop-wrapped`, which started directly misses the environment `wrapGAppsHook3` sets: no
 TLS backend for WebKit, no loader for the tray icon (#108). So the Nix wrapper sets
 `BRAMBLE_LAUNCHER` to itself, and when that is an absolute path the app repairs the entry the
-plugin wrote: the desktop adapter calls `autostart_repoint` right after `enable()`, and every launch
-does the same for an entry an earlier build or version left. The repair swaps the program on the
+plugin wrote: `autostart_set_enabled` does it right after the plugin enables, and every launch does
+the same for an entry an earlier build or version left. The repair swaps the program on the
 `Exec=` line in place, keeping any key a desktop added to switch the entry off, and reads the file
 where auto-launch writes it (`$HOME/.config/autostart/Bramble.desktop`, which ignores
-`XDG_CONFIG_HOME`). Without the variable, and on macOS and Windows, the command does nothing. The
-path is still a store path, so after an upgrade the entry starts the old version until the new one
-is launched once, and nothing if the old path was collected first.
+`XDG_CONFIG_HOME`). Without the variable the repair does nothing. The path is still a store path,
+so after an upgrade the entry starts the old version until the new one is launched once, and
+nothing if the old path was collected first.
+
+**macOS writes its own agent, so System Settings names the app** (#138). The plugin's was
+`~/Library/LaunchAgents/Bramble.plist` holding only `Label`, `ProgramArguments` and `RunAtLoad`,
+and Login Items & Extensions listed it under the signing team, "Webvana Inc.", with a generic
+icon; the notification on enabling said "Software from 'Webvana Inc.'" as well.
+`launchd.plist(5)` says an app installing a legacy plist should name its bundle identifier in
+`AssociatedBundleIdentifiers`, but adding the key to that file was not enough. Tested by hand on
+macOS 26.6 against the signed 0.13.0, reading the records with `sfltool dumpbtm`:
+
+- macOS keeps one record per label and picks its parent the first time it sees the plist. It does
+  read a later edit (the record's generation goes up and it gains the bundle id), but the parent
+  stays: the key turned the generic icon into the app's, still under "Webvana Inc.".
+- Deleting the plist and writing it again under the same label reuses that record, parent and all.
+- An unseen label written with the key in a single write is filed under the app, and the
+  notification says "Bramble.app" can run in the background.
+- A deleted agent's record outlives its file for a while, then goes.
+
+So the agent is labelled with the bundle identifier and lives at `app.bramble.desktop.plist`,
+written whole by `autostart_set_enabled`, key included. Every launch moves a `Bramble.plist` the
+plugin left to the new label, starting the same program, and deletes it; one that does not parse
+is kept and logged. Switching off removes both. The plugin stays on Windows and Linux. The move
+makes a new record, which comes up enabled even where someone switched the old one off in System
+Settings and left the in-app toggle on. The toggle only ever reflected whether the file exists, so
+the two already disagreed, and the move announces itself with the same notification.
+
+Status: each step above was tested by hand; a signed build doing the move end to end has not been.
 
 The registered entry passes `--hidden`, and the main window is configured `visible: false` so an
 ordinary launch shows it explicitly and a login launch never flashes one. That inverts the usual
@@ -593,7 +752,7 @@ Nix store, and the shipped macOS disk image carries it at `Contents/MacOS/brambl
   The round trip, keep-N against the server's own listing, and **two vaults sharing one folder
   staying out of each other's retention**, against real Nextcloud and real MinIO. That last one is
   the finding from the security review, now covered against servers rather than a fake.
-- `cargo test -- --ignored` in `platform-desktop/src-tauri` — 1 passing. The Rust SigV4 signer
+- `cargo test -- --ignored` in `clients/desktop/src-tauri` — 1 passing. The Rust SigV4 signer
   against MinIO, which validates strictly, for PUT, a byte-identical GET, and DELETE. Our vectors
   only ever proved the two signers agreed with each other; this proves the desktop's agrees with a
   server, and it is the whole desktop S3 path end to end apart from the UI.
@@ -689,7 +848,7 @@ and the "no credential store" UI that adapter drives is for a Linux session miss
 Service, not for a phone.
 
 **What mobile cannot promise is a schedule.** There is no background scheduler on either OS, so
-`platform-mobile/src/backup.ts` runs on unlock and on resume, and the frequency setting means
+`clients/mobile/src/backup.ts` runs on unlock and on resume, and the frequency setting means
 "next time you open Bramble after this long" rather than a wall-clock time. Credentials stay
 VEK-wrapped, so a run only happens while that vault is open.
 

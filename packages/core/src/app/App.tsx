@@ -11,6 +11,7 @@ import { DevFlagsModal, useHydrateDevFlags } from "./components/DevFlagsModal";
 import { ToastProvider } from "./components/ui/toast";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { PopOutProvider } from "./hooks/usePopOut";
+import { concealSecrets } from "./hooks/useRevealState";
 import { ThemeProvider } from "./hooks/useTheme";
 import { LocaleGate } from "./LocaleGate";
 import { setPendingCreateEntry } from "./pending-create-entry";
@@ -60,10 +61,13 @@ function InnerApp({
 	pendingLogin?: PendingLogin;
 	pendingTotp?: string;
 }) {
-	const { isLocked, ready, entries } = useVault();
+	const { isLocked, ready, entries, unlockedWithRecoveryCode } = useVault();
 	const { ready: registryReady, vaults, activeId } = useVaultRegistry();
 	const { shell } = usePlatform();
-	const vault = useMemo(() => ({ isLocked, ready, entries }), [isLocked, ready, entries]);
+	const vault = useMemo(
+		() => ({ isLocked, ready, entries, unlockedWithRecoveryCode }),
+		[isLocked, ready, entries, unlockedWithRecoveryCode],
+	);
 	// Registry slice for the launch-time picker decision.
 	const registry = useMemo(
 		() => ({ ready: registryReady, count: vaults.length, hasActive: activeId != null }),
@@ -105,6 +109,9 @@ function InnerApp({
 			void router.navigate({ href });
 		});
 	}, [router, shell]);
+
+	// The window reopens on this route with its state intact, but not with a password showing.
+	useEffect(() => shell.onHide?.(concealSecrets), [shell]);
 
 	// `vault`/`registry` are the change triggers, not body inputs: dropping them would fire
 	// invalidate only on mount and defeat the reactive guards.

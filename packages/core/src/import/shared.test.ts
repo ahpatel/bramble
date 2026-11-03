@@ -1,6 +1,7 @@
+import { strToU8, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
-import type { EntryData } from "../hooks/useVault";
-import { parseCsvRows, summarize, toCustomFields } from "./shared";
+import type { EntryData, LoginEntryData } from "../hooks/useVault";
+import { parseCsvRows, summarize, toCustomFields, unzipCapped } from "./shared";
 
 describe("summarize", () => {
 	it("validates output against the EntryData schema and drops malformed entries", () => {
@@ -21,6 +22,80 @@ describe("summarize", () => {
 		const res = summarize([bad], 0, []);
 		expect(res.imported).toHaveLength(0);
 		expect(res.skipped).toBe(1);
+	});
+
+	it("counts a file whose item it drops, and keeps the rest", () => {
+		const good: EntryData = { type: "note", name: "ok" };
+		const bad = { type: "wormhole", name: "x" } as unknown as EntryData;
+		const file = (entry: EntryData, name: string) => ({
+			entry,
+			name,
+			mime: "text/plain",
+			source: { kind: "bytes" as const, bytes: new Uint8Array(1) },
+			size: 1,
+		});
+		const res = summarize([good, bad], 0, [], [file(good, "kept.txt"), file(bad, "lost.txt")]);
+		expect(res.attachments?.map((a) => [a.entry, a.name])).toEqual([[good, "kept.txt"]]);
+		expect(res.warnings).toContain("1 attachment(s) belonged to items that couldn't be imported.");
+	});
+});
+
+// A URL with a port is one service among several on that host (#145), and only `exact` pins it.
+describe("summarize: logins on a port", () => {
+	const login = (urls: string[], over: Partial<LoginEntryData> = {}): LoginEntryData => ({
+		type: "login",
+		name: "NAS",
+		urls,
+		username: "admin",
+		password: "pw",
+		...over,
+	});
+	const modeOf = (...entries: EntryData[]) =>
+		summarize(entries, 0, []).imported.map((e) => (e as LoginEntryData).subdomainMatch);
+
+	it("matches a login exactly when its URL names a port", () => {
+		expect(modeOf(login(["http://nas.local:5000"]), login(["https://10.0.0.2:8443/ui"]))).toEqual([
+			"exact",
+			"exact",
+		]);
+	});
+
+	// exact would narrow the other websites too, which ports say nothing about.
+	it("leaves a login with several websites on the default", () => {
+		expect(
+			modeOf(
+				login(["https://nas.local", "https://nas.local:9000"]),
+				login(["http://nas.local:5000", "http://nas.local:9000"]),
+			),
+		).toEqual([undefined, undefined]);
+	});
+
+	it("doesn't count an app link as a second website", () => {
+		expect(modeOf(login(["https://nas.local:5001", "androidapp://com.synology.dsfile"]))).toEqual([
+			"exact",
+		]);
+	});
+
+	it("reads a default port as no port", () => {
+		expect(modeOf(login(["https://nas.local:443"]), login(["http://nas.local:80"]))).toEqual([
+			undefined,
+			undefined,
+		]);
+	});
+
+	it("leaves a login with no port, or only an app link, on the default", () => {
+		expect(
+			modeOf(login(["https://github.com"]), login(["androidapp://com.example:5000"]), login([])),
+		).toEqual([undefined, undefined, undefined]);
+	});
+
+	it("keeps a mode the source file chose", () => {
+		expect(
+			modeOf(
+				login(["http://nas.local:5000"], { subdomainMatch: "subdomain" }),
+				login(["http://nas.local:5000"], { subdomainMatch: "etld1" }),
+			),
+		).toEqual(["subdomain", "etld1"]);
 	});
 });
 
@@ -92,5 +167,28 @@ describe("parseCsvRows", () => {
 
 	it("returns nothing for empty input", () => {
 		expect(parseCsvRows("")).toEqual([]);
+	});
+});
+
+describe("unzipCapped", () => {
+	/** A two-byte zip whose central directory claims `declared` bytes uncompressed. */
+	function lyingZip(declared: number): Uint8Array {
+		const zip = zipSync({ "data.json": strToU8("{}") });
+		const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+		for (let i = 0; i + 4 <= zip.length; i++) {
+			// Central directory file header; its uncompressed size is at offset 24.
+			if (view.getUint32(i, true) === 0x02014b50) view.setUint32(i + 24, declared, true);
+		}
+		return zip;
+	}
+
+	// fflate allocates the declared size up front, so the cap has to apply before inflating.
+	it("refuses an archive that declares more than the cap, before inflating it", () => {
+		expect(() => unzipCapped(lyingZip(300 * 1024 * 1024), "corrupt")).toThrow(/looks unsafe/);
+	});
+
+	it("unzips an archive under the cap", () => {
+		const files = unzipCapped(zipSync({ "data.json": strToU8("{}") }), "corrupt");
+		expect(Object.keys(files)).toEqual(["data.json"]);
 	});
 });

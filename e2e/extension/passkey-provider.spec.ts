@@ -1,6 +1,13 @@
 import type { BrowserContext, Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { addVirtualAuthenticator, backgroundWorker, createVault, openPopup } from "./helpers";
+import {
+	actOnPasskeyCard,
+	addVirtualAuthenticator,
+	backgroundWorker,
+	createVault,
+	openPopup,
+	STRONG_PW,
+} from "./helpers";
 
 // The passkey provider end-to-end, through the real chrome.webAuthenticationProxy in the
 // built extension. This is the regression suite for the Cloudflare Access filing: with the
@@ -163,38 +170,33 @@ test("an enrollment create() still mints and stores a passkey through the provid
 }) => {
 	const setup = await context.newPage();
 	await createVault(setup, extensionId);
-	await enableProvider(context, extensionId);
+	// Enable directly, as the PRF e2e does: the Settings popup would close and lock the
+	// vault, and this test is about the create ceremony, not the toggle.
+	await setup.evaluate(() =>
+		chrome.runtime.sendMessage({
+			type: "PASSKEY_PROVIDER_SET_ENABLED",
+			payload: { enabled: true },
+		}),
+	);
 
 	const page = await context.newPage();
 	await serve(page);
 	await page.goto("http://localhost/");
 
-	await page.locator("#enroll").click();
-	const card = page.locator("#bramble-corner-prompt");
-	await expect(card).toBeAttached({ timeout: 10_000 });
-	// The save card's actions row sits ABOVE the "what declining does" subnote, whose
-	// height depends on wrapping; the note is inert, so sweep candidate offsets until
-	// "Save passkey" lands. A landed click detaches the card and the page's promise
-	// settles a beat later, so poll for the change rather than reading it instantly.
 	const out = page.locator("#out");
-	for (const fromBottom of [134, 118, 150, 102]) {
-		const box = await card.boundingBox().catch(() => null);
-		if (!box) break; // the card is gone: a click already landed
-		await page.mouse.click(box.x + 85, box.y + box.height - fromBottom);
-		const changed = await expect
-			.poll(async () => out.innerText(), { timeout: 4_000 })
-			.not.toBe("idle")
-			.then(() => true)
-			.catch(() => false);
-		if (changed) break;
-	}
+	// The fixture asks for UV, so approving the card opens the confirm-it's-you window.
+	const verifyWindow = context.waitForEvent("page");
+	const result = actOnPasskeyCard(page, "passkey-approve", () => page.locator("#enroll").click());
+	const verify = await verifyWindow;
+	await verify.getByLabel("Master password").fill(STRONG_PW);
+	await verify.getByRole("button", { name: "Confirm" }).click();
+	await result;
 	await expect(out).toHaveText(/enroll :: resolved public-key/i, { timeout: 10_000 });
 
 	// The minted passkey really is in the vault: the popup lists the new login for the site.
-	// (The popup reopens on the Settings route persisted by the enableProvider step, so
-	// step back to the vault list first.)
 	const popup = await context.newPage();
 	await openPopup(popup, extensionId);
-	await popup.getByRole("button", { name: "Go to vault" }).click();
+	const goToVault = popup.getByRole("button", { name: "Go to vault" });
+	if (await goToVault.isVisible().catch(() => false)) await goToVault.click();
 	await expect(popup.getByText(/localhost/).first()).toBeVisible({ timeout: 10_000 });
 });

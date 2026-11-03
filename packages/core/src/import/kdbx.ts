@@ -1,10 +1,11 @@
-import type { KdbxRawEntry } from "../adapters/crypto";
+import type { KdbxOpened } from "../adapters/crypto";
 import type { EntryData } from "../hooks/useVault";
+import { mimeFor } from "../vault/mime";
 import { mapKeepassEntry } from "./keepass";
 import { type ConversionTally, systemicFailureWarning } from "./passkey-fields";
 import type { RawField } from "./shared";
 import { summarize } from "./shared";
-import type { ImportParserContext, ImportResult } from "./types";
+import type { ImportAttachment, ImportParserContext, ImportResult } from "./types";
 
 /**
  * Map decrypted KDBX entries (opened in WASM) to an ImportResult, through the same per-entry
@@ -14,22 +15,37 @@ import type { ImportParserContext, ImportResult } from "./types";
  * warnings array, which meant nothing the .kdbx import skipped could ever be reported.
  */
 export async function kdbxEntriesToResult(
-	entries: KdbxRawEntry[],
+	opened: Pick<KdbxOpened, "entries" | "attachments">,
 	context: ImportParserContext,
 ): Promise<ImportResult> {
 	const warnings: string[] = [];
 	const tally: ConversionTally = { converted: 0, failed: 0 };
 	const importedAt = Date.now();
 	const mapped: EntryData[] = [];
-	for (const entry of entries) {
+	const attachments: ImportAttachment[] = [];
+	let missing = 0;
+	for (const entry of opened.entries) {
 		const fields: RawField[] = entry.strings.map((s) => ({
 			key: s.key,
 			value: s.value,
 			hidden: s.protected,
 		}));
-		mapped.push(await mapKeepassEntry(fields, context, importedAt, warnings, tally));
+		const data = await mapKeepassEntry(fields, context, importedAt, warnings, tally);
+		mapped.push(data);
+		for (const b of entry.binaries ?? []) {
+			const held = opened.attachments[b.index];
+			if (!held) {
+				missing++;
+				continue;
+			}
+			const name = b.name.trim() || "attachment";
+			attachments.push({ entry: data, name, mime: mimeFor(name), ...held });
+		}
 	}
 	const systemic = systemicFailureWarning(tally, "database");
 	if (systemic) warnings.push(systemic);
-	return summarize(mapped, 0, warnings);
+	if (missing > 0) {
+		warnings.push(`${missing} attachment(s) are named in this database but not stored in it.`);
+	}
+	return summarize(mapped, 0, warnings, attachments);
 }

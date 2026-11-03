@@ -8,7 +8,8 @@
 import type { CardEntryData, Entry, LoginEntryData, PasskeyCredential } from "../hooks/useVault";
 import { base64ToBase64Url, bytesToBase64Url } from "../util/bytes";
 import { parseTotp } from "../util/totp";
-import { COSE_ES256 } from "../vault/passkey";
+import { withScheme } from "../util/url";
+import { COSE_ES256, isPrfSecret, keptExtensions } from "../vault/passkey";
 import { pkcs8FromScalar } from "./passkey-key";
 import {
 	CXF_VERSION,
@@ -24,6 +25,8 @@ export interface CxfExportOptions {
 	exporterDisplayName: string;
 	/** Epoch ms; injected so tests don't depend on the clock. */
 	now: number;
+	/** False when the OS drops passkey `fido2Extensions` (iOS before 26.4). Defaults to true. */
+	passkeyExtensions?: boolean;
 }
 
 export interface CxfExportResult {
@@ -57,15 +60,17 @@ function toUrls(urls: readonly string[]): string[] {
 	const out: string[] = [];
 	for (const raw of urls) {
 		const u = raw.trim();
-		if (!u) continue;
-		if (/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) out.push(u);
-		else out.push(`https://${u}`);
+		if (u) out.push(withScheme(u));
 	}
 	return out;
 }
 
 /** Null when the stored key isn't a P-256 scalar we can express as PKCS#8. */
-function passkeyCredential(p: PasskeyCredential): CxfCredential | null {
+function passkeyCredential(
+	p: PasskeyCredential,
+	warnings: string[],
+	name: string,
+): CxfCredential | null {
 	// pkcs8FromScalar wraps ANY 32 bytes in a P-256 PKCS#8 prefix, and an Ed25519 seed is also
 	// 32 bytes, so without this gate an imported EdDSA passkey would export as a corrupt P-256
 	// key that decodes fine and then verifies against nothing. Skipping is warned about upstream.
@@ -75,6 +80,31 @@ function passkeyCredential(p: PasskeyCredential): CxfCredential | null {
 	// is what "contains unsupported data" looks like from the user's end.
 	const key = pkcs8FromScalar(p.privateKey);
 	if (!key) return null;
+	// Both halves always go out: Apple rejects the whole payload when credWithoutUV is missing, or
+	// when one won't decode, so an unreadable pair is left out rather than sinking the transfer.
+	const prf =
+		p.prf && isPrfSecret(p.prf.credWithUV) && isPrfSecret(p.prf.credWithoutUV) ? p.prf : undefined;
+	if (p.prf && !prf)
+		warnings.push(
+			`A passkey on "${name}" has PRF secrets Bramble can't read; it went without them.`,
+		);
+	const { kept, badLargeBlob } = keptExtensions(p.fido2Extensions);
+	if (badLargeBlob)
+		warnings.push(
+			`A passkey on "${name}" has a large blob Bramble can't read; it went without it.`,
+		);
+	const fido2Extensions = {
+		...kept,
+		...(prf
+			? {
+					hmacCredentials: {
+						algorithm: "hmac-sha256",
+						credWithUV: base64ToBase64Url(prf.credWithUV),
+						credWithoutUV: base64ToBase64Url(prf.credWithoutUV),
+					},
+				}
+			: {}),
+	};
 	return {
 		type: "passkey",
 		credentialId: base64ToBase64Url(p.credentialId),
@@ -84,7 +114,23 @@ function passkeyCredential(p: PasskeyCredential): CxfCredential | null {
 		userDisplayName: p.userDisplayName ?? p.userName ?? "",
 		userHandle: base64ToBase64Url(p.userHandle),
 		key,
+		...(Object.keys(fido2Extensions).length ? { fido2Extensions } : {}),
 	};
+}
+
+/** Drop `fido2Extensions` from every passkey credential; returns how many carried some. */
+function withholdPasskeyExtensions(items: CxfItem[]): number {
+	let withheld = 0;
+	for (const item of items) {
+		// Our own output, so each credential is an object we built.
+		for (const c of (item.credentials ?? []) as Record<string, unknown>[]) {
+			if (c.type === "passkey" && c.fido2Extensions) {
+				delete c.fido2Extensions;
+				withheld++;
+			}
+		}
+	}
+	return withheld;
 }
 
 /** Structured TOTP, or null when the stored key isn't one we can parse (HOTP, garbage). */
@@ -137,7 +183,7 @@ function loginCredentials(e: LoginEntryData, warnings: string[]): CxfCredential[
 		}
 	}
 	for (const p of e.passkeys ?? []) {
-		const credential = passkeyCredential(p);
+		const credential = passkeyCredential(p, warnings, e.name);
 		if (credential) out.push(credential);
 		else warnings.push(`A passkey on "${e.name}" uses a key we can't export and was left behind.`);
 	}
@@ -214,6 +260,14 @@ function itemFor(e: Entry, warnings: string[]): CxfItem {
 export function toCxf(entries: readonly Entry[], opts: CxfExportOptions): CxfExportResult {
 	const warnings: string[] = [];
 	const items = entries.map((e) => itemFor(e, warnings));
+	if (opts.passkeyExtensions === false) {
+		const n = withholdPasskeyExtensions(items);
+		if (n > 0) {
+			warnings.push(
+				`${n === 1 ? "1 passkey" : `${n} passkeys`} went without ${n === 1 ? "its" : "their"} PRF secrets or other extension data, which this iOS version can't transfer. Update to iOS 26.4 or later and transfer again to bring it.`,
+			);
+		}
+	}
 	return {
 		payload: {
 			version: { ...CXF_VERSION },

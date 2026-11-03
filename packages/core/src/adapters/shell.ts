@@ -1,6 +1,7 @@
 import type { PasskeyCredential } from "../hooks/useVault";
 import type { EntriesPayload, RosterEntry, RosterPayload, WireRecoverySlot } from "../sync";
 import type { SubdomainMatchMode } from "./autofill";
+import type { HttpBodySource } from "./http";
 
 /** Minimal login shape for current-tab matching: id + the fields the hostname policy reads. */
 interface CurrentTabLogin {
@@ -65,9 +66,14 @@ export interface ShellAdapter {
 	 * Save bytes to a file the user keeps, for the vault export / backup flow. Extension: a
 	 * download. Absent where there is no save mechanism, which hides the export affordance.
 	 * The bytes are the encrypted vault, so the file is safe at rest (still needs the master
-	 * password to open).
+	 * password to open). A backup arrives as a body source, read on demand, since a vault with
+	 * attachments has no size limit: written a chunk at a time, never held whole.
 	 */
-	exportBytes?(suggestedName: string, bytes: Uint8Array, mimeType: string): Promise<void>;
+	exportBytes?(
+		suggestedName: string,
+		bytes: Uint8Array | HttpBodySource,
+		mimeType: string,
+	): Promise<void>;
 	/**
 	 * Origin (protocol + hostname[:port]) of the active tab, to pre-populate "Website URL".
 	 * Null for chrome://, about:, non-http(s) pages, or when the tab can't be read.
@@ -88,6 +94,12 @@ export interface ShellAdapter {
 	 */
 	notifyFilePickerOpening?(): void;
 	/**
+	 * Match the OS status and navigation bar icons to the app's resolved theme, which the user
+	 * can set apart from the OS's. Absent where the app draws under no system bars (extension,
+	 * desktop).
+	 */
+	setSystemBarsDark?(dark: boolean): void;
+	/**
 	 * Subscribe to foreground-active transitions, reporting the current state immediately.
 	 * "Active" is the OS's own notion (iOS didBecomeActive, Android onResume), which is later
 	 * than the webview painting and later than Capacitor's `resume` (willEnterForeground): iOS
@@ -99,6 +111,8 @@ export interface ShellAdapter {
 	popOut(handoff?: PopOutHandoff): Promise<void>;
 	/** Read (and clear) the handoff stashed by a preceding popOut(). Null when there's nothing to restore. Called once during boot. */
 	consumeHandoff(): Promise<PopOutHandoff | null>;
+	/** Extension only: answer the passkey provider's confirm-it's-you window (`id` from its URL). */
+	reportPasskeyVerification?(id: string, verified: boolean): Promise<void>;
 	/**
 	 * Persist the current route so a normal (non-detached) popup resumes where it was after
 	 * being closed and reopened while the session is still unlocked. Fire-and-forget; only
@@ -117,6 +131,13 @@ export interface ShellAdapter {
 	 * unlock screen rather than bypassing it. Returns an unsubscribe.
 	 */
 	onNavigateRequest?(callback: (href: string) => void): () => void;
+	/**
+	 * Subscribe to the host putting this window away WITHOUT unloading it (the desktop closing to
+	 * the tray, mobile going to the background), so it reopens with its state intact. Revealed
+	 * secrets are masked again here. Absent where closing unloads the page (extension). Returns an
+	 * unsubscribe.
+	 */
+	onHide?(callback: () => void): () => void;
 	/** True when already running inside a popped-out window; used to hide the pop-out affordance there. */
 	isDetached(): boolean;
 	// Static per-target capability flags live in flags.ts `CAPABILITIES` (resolved via `useCan`).

@@ -34,9 +34,9 @@ index and only one of them consumes the others' work:
    pushes. It also feeds the iOS credential provider through `setIndex`, so
    filtering here removes archived entries from the OS QuickType and passkey
    identity stores as well.
-2. `platform-extension/background/autofill-index.ts` (`hydrateIndexForOwner`),
+2. `clients/extension/background/autofill-index.ts` (`hydrateIndexForOwner`),
    which rebuilds from the vault file when no view has pushed an index.
-3. `platform-mobile/android/.../VaultReader.kt` (`readLogins`, `readPasskeys`),
+3. `clients/mobile/android/.../VaultReader.kt` (`readLogins`, `readPasskeys`),
    which reads the vault file directly through uniffi and never sees the
    TypeScript index at all.
 
@@ -86,12 +86,23 @@ ignore ports.
 This is Bitwarden's "Host" match detection per login, and a Bitwarden import that
 used Host (or any non-default mode) already lands on `exact` with its URLs intact.
 
+Every import also lands a login on `exact` when its one website names a port and
+the source file left the mode unset (issue #145), whichever format it came from:
+the file importers, KeePass `.kdbx` and credential exchange all return through
+`summarize` in `import/shared.ts`. Bitwarden's global "Default URI match detection"
+is not in its export, so a vault set to Host there arrives unset. A login with
+several websites stays on the default, since `exact` would narrow the others too;
+an app link doesn't count as one. A mode the file did choose is kept, and
+Bramble's own `.bramble` restore is left alone. Entries imported before this keep
+`etld1`; re-importing doesn't fix them, since dedup holds the same login back.
+
 There is no separate mode for it on purpose: `subdomainMatch` is persisted and
 synced, so a new enum value would be a format change that released clients reject.
 The port rides the index instead (`LoginIndexEntry.ports`, lined up with
 `hostnames` by `loginHosts`), which the extension holds in memory only. A URL
-saved without a scheme (`nas.local:5000`) is not read as a host and port, so it
-matches nothing, as before.
+saved without a scheme (`nas.local:5000`) is read as https (`withScheme` in
+`util/url.ts`), so it gets its host and port like any other; `URL` alone takes
+`nas.local` for the scheme and finds no host at all.
 
 Every page-side caller passes the page's port: the content-script query and fill
 authorization, the corner prompt's dedupe and update check (the port is stashed

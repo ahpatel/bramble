@@ -1,10 +1,11 @@
 Nouveautés de cette version :
 
-- Lorsqu’une même entrée est modifiée sur deux appareils avant leur synchronisation, Bramble conserve désormais les deux versions et affiche le conflit, afin que vous puissiez les comparer et en garder une seule ou les deux. Auparavant, l’une des modifications était silencieusement perdue.
-- L’enregistrement d’une modification ne remplace plus un changement qui s’est synchronisé pendant que vous modifiiez l’entrée.
-- Modifier une entrée archivée la laisse archivée.
-- Importation depuis Enpass et AliasVault. Les identifiants que vous possédez déjà dans un autre gestionnaire de mots de passe sont retenus au lieu d’être dupliqués.
-- Les numéros de carte s’affichent groupés et se copient sous forme de chiffres simples. Les notes peuvent être sélectionnées et copiées, et le champ des notes s’agrandit à mesure que vous saisissez du texte.
-- Messages d’erreur de sauvegarde Dropbox plus clairs et correction du rejet des clés d’alias DuckDuckGo.
+- Vous avez oublié votre mot de passe principal ? Après avoir déverrouillé l’application avec votre code de récupération, vous pouvez définir un nouveau mot de passe immédiatement, en utilisant ce code au lieu de l’ancien mot de passe.
+- Import de vos identifiants depuis Dashlane et RoboForm.
+- Si la synchronisation cesse de fonctionner sur cet appareil, l’écran Synchronisation vous l’indique désormais et vous explique comment y remédier, au lieu d’afficher « Synchronisé ».
+- L’ajout d’un appareil fonctionne de nouveau après l’expiration d’une invitation précédente.
+- Les mots de passe révélés sont de nouveau masqués lorsque vous quittez l’application.
+- Après la suppression d’un coffre, l’application ouvre celui qui reste.
+- Mises à jour de sécurité des bibliothèques sur lesquelles repose l’application.
 
 Pas de compte, pas de cloud. Tout reste sur vos appareils.

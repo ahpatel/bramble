@@ -1,10 +1,11 @@
 Novedades de esta versión:
 
-- Cuando se edita la misma entrada en dos dispositivos antes de que se sincronicen, Bramble ahora conserva ambas versiones y muestra el conflicto para que pueda compararlas y conservar una o ambas. Antes, una edición se perdía silenciosamente.
-- Guardar una edición ya no sobrescribe un cambio que se sincronizó mientras se editaba.
-- Editar una entrada archivada la mantiene archivada.
-- Importar desde Enpass y AliasVault. Los inicios de sesión que ya tiene de otro gestor de contraseñas se omiten en lugar de duplicarse.
-- Los números de tarjeta se muestran en grupos y, al copiarlos, se incluyen solo los dígitos. Las notas se pueden seleccionar y copiar, y el campo de notas crece a medida que escribe.
-- Errores de copia de seguridad de Dropbox más claros y una corrección para el rechazo de claves de alias de DuckDuckGo.
+- ¿Olvidó su contraseña maestra? Después de desbloquear con su código de recuperación, puede establecer una contraseña nueva de inmediato, usando el código en lugar de la contraseña anterior.
+- Importar sus datos de acceso desde Dashlane y RoboForm.
+- Si la sincronización deja de funcionar en este dispositivo, la pantalla Sincronización ahora lo indica y le explica cómo solucionarlo, en lugar de mostrar «Sincronizado».
+- Agregar un dispositivo vuelve a funcionar después de que una invitación anterior haya caducado.
+- Las contraseñas reveladas se vuelven a ocultar al salir de la aplicación.
+- Después de eliminar una caja fuerte, la aplicación abre la que queda.
+- Actualizaciones de seguridad en las bibliotecas en las que se basa la aplicación.
 
 Sin cuenta, sin nube. Todo permanece en sus dispositivos.

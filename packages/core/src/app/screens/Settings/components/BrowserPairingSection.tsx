@@ -3,9 +3,11 @@ import { Chrome, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PairedBrowser } from "../../../../adapters/pairing";
 import { usePlatform } from "../../../../context/PlatformContext";
+import { UnrecognizedDeviceError } from "../../../../hooks/useSyncEnrollment";
 import { useVault, useVaultActions } from "../../../../hooks/useVault";
 import { formatDate } from "../../../../util/format-date";
 import { Button } from "../../../components/ui/button";
+import { InlineConfirm } from "../../../components/ui/inline-confirm";
 import { Modal } from "../../../components/ui/modal";
 import { PasswordField } from "../../../components/ui/password-field";
 import { Row, Section } from "./primitives";
@@ -133,7 +135,13 @@ export function BrowserPairingSection() {
 		} catch (e) {
 			// The link may be up even though the invite failed. Say so rather than looking as if
 			// nothing happened: delegation will work and sync will not.
-			setError(e instanceof Error ? e.message : String(e));
+			setError(
+				e instanceof UnrecognizedDeviceError
+					? t`This device can't add devices right now: your other devices no longer recognize it. Disconnect, then join again with a code from another device.`
+					: e instanceof Error
+						? e.message
+						: String(e),
+			);
 		}
 	};
 
@@ -217,14 +225,21 @@ export function BrowserPairingSection() {
 											<Trans>Connected {formatDate(browser.pairedAt)}</Trans>
 										</p>
 									</div>
-									<Button
-										variant="ghost"
-										size="sm"
-										aria-label={t`Disconnect this browser`}
-										onClick={() => void forget(browser.publicKey)}
-									>
-										<Trash2 className="w-4 h-4" />
-									</Button>
+									<InlineConfirm
+										variant="destructiveOutline"
+										confirmLabel={<Trans>Disconnect</Trans>}
+										onConfirm={() => forget(browser.publicKey)}
+										trigger={(arm) => (
+											<Button
+												variant="ghost"
+												size="sm"
+												aria-label={t`Disconnect this browser`}
+												onClick={arm}
+											>
+												<Trash2 className="w-4 h-4" />
+											</Button>
+										)}
+									/>
 								</div>
 							))}
 						</div>

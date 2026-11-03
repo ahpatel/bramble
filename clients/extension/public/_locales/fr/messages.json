@@ -1,0 +1,193 @@
+{
+	"extDescription": {
+		"message": "Gestionnaire de mots de passe chiffré, axé sur le local. Aucune base de données dans le cloud.",
+		"description": "Chrome Web Store / extension description shown under the name."
+	},
+	"cmdLockVault": {
+		"message": "Verrouiller Bramble",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
+	"notNow": {
+		"message": "Pas maintenant",
+		"description": "Dismiss button on the save / passkey corner prompt."
+	},
+	"toggleShow": {
+		"message": "Afficher",
+		"description": "Reveal the captured password in the save-login card."
+	},
+	"toggleHide": {
+		"message": "Masquer",
+		"description": "Hide the revealed password in the save-login card."
+	},
+	"menuNeverForSite": {
+		"message": "Jamais pour ce site",
+		"description": "Overflow-menu action: stop offering to save logins on this site."
+	},
+	"fieldUsername": {
+		"message": "Nom d'utilisateur",
+		"description": "Field label in the save-login card."
+	},
+	"fieldPassword": {
+		"message": "Mot de passe",
+		"description": "Field label in the save-login card."
+	},
+	"fieldAccount": {
+		"message": "Compte",
+		"description": "Field label showing the account name in the update / passkey card."
+	},
+	"saveNewLogin": {
+		"message": "Enregistrer la nouvelle connexion",
+		"description": "Title of the card offering to save a newly captured login."
+	},
+	"actionSave": {
+		"message": "Enregistrer",
+		"description": "Primary button: save the captured login."
+	},
+	"actionUnlockAndSave": {
+		"message": "Déverrouiller et enregistrer",
+		"description": "Primary button when the vault is locked: unlock, then save."
+	},
+	"updateExistingTitle": {
+		"message": "Mettre à jour une connexion existante ?",
+		"description": "Card title when several saved logins could be updated."
+	},
+	"updateSavedTitle": {
+		"message": "Mettre à jour la connexion enregistrée ?",
+		"description": "Card title when one saved login could be updated."
+	},
+	"actionUpdate": {
+		"message": "Mettre à jour",
+		"description": "Primary button: update the saved login with the new password."
+	},
+	"actionUnlockAndUpdate": {
+		"message": "Déverrouiller et mettre à jour",
+		"description": "Primary button when the vault is locked: unlock, then update."
+	},
+	"saveAsNew": {
+		"message": "Enregistrer comme nouveau",
+		"description": "Secondary button: save as a separate login instead of updating."
+	},
+	"saveAsNewHint": {
+		"message": "Enregistrer en tant que connexion distincte au lieu de la mettre à jour",
+		"description": "Tooltip for the 'Save as new' button."
+	},
+	"passkeySignInWhich": {
+		"message": "Se connecter avec quelle clé de passe ?",
+		"description": "Passkey card title when the site offers a choice of passkeys."
+	},
+	"passkeyUseTitle": {
+		"message": "Utiliser votre clé de passe ?",
+		"description": "Passkey card title when signing in with a single passkey."
+	},
+	"passkeyAddToTitle": {
+		"message": "Ajouter cette clé de passe à...",
+		"description": "Passkey card title: choose which saved login to attach a new passkey to."
+	},
+	"passkeyAddTitle": {
+		"message": "Ajouter une clé de passe ?",
+		"description": "Passkey card title when adding a passkey to an existing login."
+	},
+	"passkeySaveTitle": {
+		"message": "Enregistrer une clé de passe ?",
+		"description": "Passkey card title when saving a brand-new passkey."
+	},
+	"passkeyUnlockUseNote": {
+		"message": "Déverrouillez Bramble pour utiliser vos clés de passe pour ce site.",
+		"description": "Explains the locked passkey sign-in prompt."
+	},
+	"passkeyUnlockSaveNote": {
+		"message": "Déverrouillez Bramble pour enregistrer une clé de passe pour ce site.",
+		"description": "Explains the locked passkey save prompt."
+	},
+	"passkeyRequestedBy": {
+		"message": "Demandé par",
+		"description": "Label in the passkey card naming the site that asked, when it isn't the page the card is shown on (an embedded frame)."
+	},
+	"passkeyAddsTo": {
+		"message": "Ajoute à",
+		"description": "Label showing which login a new passkey will be attached to."
+	},
+	"passkeyCreateNewLogin": {
+		"message": "Créer une nouvelle connexion",
+		"description": "Option to attach the passkey to a brand-new login instead of an existing one."
+	},
+	"passkeyUse": {
+		"message": "Utiliser la clé de passe",
+		"description": "Primary button: sign in with the passkey."
+	},
+	"passkeyAdd": {
+		"message": "Ajouter la clé de passe",
+		"description": "Primary button: attach the passkey to a login."
+	},
+	"passkeySave": {
+		"message": "Enregistrer la clé de passe",
+		"description": "Primary button: save the new passkey."
+	},
+	"passkeyUnlockUse": {
+		"message": "Déverrouiller et Utiliser",
+		"description": "Primary button when locked: unlock, then sign in with the passkey."
+	},
+	"passkeyUnlockAdd": {
+		"message": "Déverrouiller et Ajouter",
+		"description": "Primary button when locked: unlock, then attach the passkey."
+	},
+	"vaultLocked": {
+		"message": "Coffre verrouillé",
+		"description": "Autofill dropdown row shown when the vault is locked."
+	},
+	"vaultLockedUnlockHint": {
+		"message": "Cliquez pour déverrouiller dans une fenêtre",
+		"description": "Sub-text under 'Vault locked' in the autofill dropdown."
+	},
+	"suggestPasswordUse": {
+		"message": "Utilisez le mot de passe suggéré",
+		"description": "Sub-text under the generated password in the autofill dropdown; the row fills a strong password on signup forms."
+	},
+	"suggestPasswordRegenerate": {
+		"message": "Générez un mot de passe différent",
+		"description": "Accessible label for the regenerate button on the suggested-password row."
+	},
+	"pickerUseKeyboard": {
+		"message": "Appuyez sur ↓ puis Entrée pour remplir sur cette page",
+		"description": "Shown in the autofill dropdown when a click was refused because the browser could not confirm the list is fully visible (something on the page covers or filters it). The arrow-key and Enter path still works."
+	},
+	"aliasUse": {
+		"message": "Utiliser un nouvel alias e-mail",
+		"description": "Sub-text on the email-alias row in the autofill dropdown; the row creates a fresh forwarding address at the user's alias provider and fills it into a signup form."
+	},
+	"aliasTitle": {
+		"message": "Alias e-mail",
+		"description": "Title of the email-alias row in the autofill dropdown."
+	},
+	"aliasWorking": {
+		"message": "Création d’un alias...",
+		"description": "Shown on the email-alias row while the request to the alias provider is in flight."
+	},
+	"aliasFailed": {
+		"message": "Impossible de créer un alias",
+		"description": "Shown on the email-alias row when the alias provider rejected the request. The provider's own explanation is shown beneath as plain text."
+	},
+	"aliasRetry": {
+		"message": "Réessayer",
+		"description": "Accessible label for the retry button on a failed email-alias row."
+	},
+	"cardUsedHere": {
+		"message": "Utilisée ici",
+		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	},
+	"passkeyNoneTitle": {
+		"message": "Aucune clé d'accès Bramble pour ce site"
+	},
+	"passkeyNoneNotePassthrough": {
+		"message": "Bramble n'a aucune clé d'accès enregistrée pour ce site. Continuez avec une autre méthode de connexion ; la demande sera transmise aux autres authentificateurs de votre appareil."
+	},
+	"passkeyNoneNoteDisable": {
+		"message": "Bramble n'a aucune clé d'accès enregistrée pour ce site. Continuez avec une autre méthode de connexion ; « Utiliser Bramble pour les clés d'accès » sera désactivé pour que vos autres authentificateurs puissent traiter la demande. Réessayez ensuite."
+	},
+	"passkeyUseOther": {
+		"message": "Utiliser un autre authentificateur"
+	},
+	"passkeyDeclineNoteDisable": {
+		"message": "Refuser transmet cette demande aux autres authentificateurs de votre appareil et désactive « Utiliser Bramble pour les clés d'accès », afin que la tentative suivante du site les utilise. Réactivez-la dans les Paramètres pour retrouver Bramble."
+	}
+}

@@ -1,10 +1,11 @@
 What's new in this release:
 
-- When the same entry is edited on two devices before they sync, Bramble now keeps both versions and shows the conflict, so you can compare them and keep one or both. Before, one edit was silently lost.
-- Saving an edit no longer overwrites a change that synced in while you were editing.
-- Editing an archived entry keeps it archived.
-- Import from Enpass and AliasVault. Logins you already have from another password manager are held back instead of duplicated.
-- Card numbers show in groups and copy as plain digits. Notes can be selected and copied, and the notes field grows as you type.
-- Clearer Dropbox backup errors, and a fix for DuckDuckGo alias keys being rejected.
+- Forgot your master password? After unlocking with your recovery code, you can set a new password right away, using the code instead of the old password.
+- Import your logins from Dashlane and RoboForm.
+- If sync stops working on this device, the Sync screen now says so and tells you how to fix it, instead of showing "Synced".
+- Adding a device works again after an earlier invite expired.
+- Revealed passwords are hidden again when you leave the app.
+- After you delete a vault, the app opens the one that's left.
+- Security updates to the libraries the app is built on.
 
 No account, no cloud. Everything stays on your devices.

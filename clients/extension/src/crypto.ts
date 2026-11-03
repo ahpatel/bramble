@@ -1,0 +1,313 @@
+/// <reference types="chrome" />
+
+import type {
+	CryptoAdapter,
+	EncryptedPayload,
+	KdbxRawEntry,
+	OpenKdbxInput,
+	OpenPortableVaultInput,
+	PasskeyAssertion,
+	PasskeyImportResult,
+	PasskeyPrfOutput,
+	PasskeyRegistration,
+	PasswordSlotBlob,
+	SaveKdbxInput,
+	SealPortableVaultInput,
+	UnwrapPasswordSlotInput,
+	UnwrapWebauthnSlotInput,
+	VekEncrypted,
+	VerifyPasswordSlotInput,
+	VerifyWebauthnSlotInput,
+	WrapPasswordSlotInput,
+	WrapWebauthnSlotInput,
+} from "@core/adapters/crypto";
+import { fileSource } from "@core/backup/restore";
+import { bytesToBase64 } from "@core/util/bytes";
+import type { FileSource } from "@core/vault/file-mutations";
+import type { PortableVaultBlob } from "@core/wasm";
+import type {
+	CryptoDecrypt,
+	CryptoDecryptBatch,
+	CryptoDecryptOuter,
+	CryptoEncrypt,
+	CryptoEncryptOuter,
+	CryptoMailboxId,
+	CryptoMailboxOpen,
+	CryptoMailboxSeal,
+	CryptoPasskeyGet,
+	CryptoPasskeyImportPkcs8,
+	CryptoPasskeyMake,
+	CryptoPasskeyPrf,
+	CryptoUnlockWithVek,
+	CryptoUnwrapPasswordSlot,
+	CryptoUnwrapWebauthnSlot,
+	CryptoVerifyPasswordSlot,
+	CryptoVerifyWebauthnSlot,
+	CryptoWrapPasswordSlot,
+	CryptoWrapWebauthnSlot,
+} from "./crypto/messages";
+import { dropHandoff, putHandoff, readHandoff } from "./files/idb";
+import { api } from "./platform-api";
+
+// Backstop a stalled offscreen round-trip (e.g. a cold-start createDocument that
+// never resolves) so the UI surfaces a retryable error instead of hanging forever.
+const SEND_TIMEOUT_MS = 30_000;
+
+/** For an op over a whole file or several (attach, open, a KeePass export): hundreds of chunks
+ * through IndexedDB, not one entry's round trip, so longer before it is called stalled. */
+export const FILE_OP_TIMEOUT_MS = 5 * 60_000;
+
+function withTimeout<T>(promise: Promise<T>, label: string, ms: number): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const t = setTimeout(() => reject(new Error(`${label} timed out — try again`)), ms);
+		promise.then(resolve, reject).finally(() => clearTimeout(t));
+	});
+}
+
+// Every CRYPTO_* op carries an optional top-level vaultId (set by withVault). The background's
+// vek-store keys the per-vault VEK map by it; an absent id resolves to the active vault.
+// Exported for the attachment adapter, whose ops take longer than one entry's (see files.ts).
+export async function dispatch<T = unknown>(
+	type: string,
+	payload: unknown,
+	vaultId: string | undefined,
+	timeoutMs = SEND_TIMEOUT_MS,
+): Promise<T> {
+	const res = await withTimeout(
+		api.runtime.sendMessage({ type, vaultId, payload }),
+		type,
+		timeoutMs,
+	);
+	if (!res?.ok) throw new Error(res?.error ?? `crypto ${type} failed`);
+	return res.data as T;
+}
+
+// Per-vault VEK session-key prefix (mirrors background/vek-store.ts). A view watches removal of
+// its own vault's key as the cross-context lock signal, so locking vault A never locks vault B.
+const VEK_KEY_PREFIX = "vault.vek:";
+
+// sendMessage mangles Uint8Array into a plain object; send magicVersion as number[] instead.
+function slotPayload(input: WrapPasswordSlotInput): CryptoWrapPasswordSlot {
+	return {
+		password: input.password,
+		saltB64: input.saltB64,
+		slotIdB64: input.slotIdB64,
+		magicVersion: Array.from(input.magicVersion),
+	};
+}
+
+function webauthnSlotPayload(input: WrapWebauthnSlotInput): CryptoWrapWebauthnSlot {
+	return {
+		hmacSecretB64: input.hmacSecretB64,
+		slotIdB64: input.slotIdB64,
+		magicVersion: Array.from(input.magicVersion),
+	};
+}
+
+/** Build a crypto adapter whose ops target `vaultId` (undefined = the active vault). `withVault`
+ * rebinds it; `useVault` scopes it to the active vault, like it scopes storage. */
+function makeCrypto(vaultId?: string): CryptoAdapter {
+	const send = <T = unknown>(type: string, payload?: unknown): Promise<T> =>
+		dispatch<T>(type, payload, vaultId);
+
+	return {
+		withVault: (id: string) => makeCrypto(id),
+
+		lock: () => send("CRYPTO_LOCK"),
+		isLocked: () => send<boolean>("CRYPTO_IS_LOCKED"),
+
+		onExternalLock(callback: () => void) {
+			// Watch removal of this vault's own VEK session key. No id (base adapter, no active
+			// vault) means nothing to watch.
+			if (vaultId === undefined) return () => {};
+			const key = `${VEK_KEY_PREFIX}${vaultId}`;
+			const handler = (changes: Record<string, chrome.storage.StorageChange>) => {
+				const change = changes[key];
+				// Removal (value gone) means locked; a set value (unlock/resume) is self-driven, ignore.
+				if (change && change.oldValue !== undefined && change.newValue === undefined) {
+					callback();
+				}
+			};
+			api.storage.session.onChanged.addListener(handler);
+			return () => api.storage.session.onChanged.removeListener(handler);
+		},
+
+		onExternalChange(callback: () => void) {
+			const handler = (message: { type?: string } | undefined) => {
+				if (message?.type === "VAULT_CHANGED_EXTERNAL") callback();
+			};
+			api.runtime.onMessage.addListener(handler);
+			return () => api.runtime.onMessage.removeListener(handler);
+		},
+
+		generateVek: () => send<string>("CRYPTO_GENERATE_VEK"),
+		unlockWithVek: (vekB64) =>
+			send("CRYPTO_UNLOCK_WITH_VEK", { vekB64 } satisfies CryptoUnlockWithVek),
+		exportVek: () => send<string>("CRYPTO_EXPORT_VEK"),
+		rotateVek: () => send<string>("CRYPTO_ROTATE_VEK"),
+
+		generateSalt: () => send<string>("CRYPTO_GENERATE_SALT"),
+		generateSlotId: () => send<string>("CRYPTO_GENERATE_SLOT_ID"),
+
+		wrapVekPassword: (input: WrapPasswordSlotInput) =>
+			send<PasswordSlotBlob>("CRYPTO_WRAP_PASSWORD_SLOT", slotPayload(input)),
+
+		unwrapVekPassword: (input: UnwrapPasswordSlotInput) =>
+			send<boolean>("CRYPTO_UNWRAP_PASSWORD_SLOT", {
+				...slotPayload(input),
+				verifierB64: input.verifierB64,
+				wrapIvB64: input.wrapIvB64,
+				wrappedVekB64: input.wrappedVekB64,
+			} satisfies CryptoUnwrapPasswordSlot),
+
+		verifyPasswordSlot: (input: VerifyPasswordSlotInput) =>
+			send<boolean>("CRYPTO_VERIFY_PASSWORD_SLOT", {
+				...slotPayload(input),
+				verifierB64: input.verifierB64,
+			} satisfies CryptoVerifyPasswordSlot),
+
+		wrapVekWebauthn: (input: WrapWebauthnSlotInput) =>
+			send<PasswordSlotBlob>("CRYPTO_WRAP_WEBAUTHN_SLOT", webauthnSlotPayload(input)),
+
+		unwrapVekWebauthn: (input: UnwrapWebauthnSlotInput) =>
+			send<boolean>("CRYPTO_UNWRAP_WEBAUTHN_SLOT", {
+				...webauthnSlotPayload(input),
+				verifierB64: input.verifierB64,
+				wrapIvB64: input.wrapIvB64,
+				wrappedVekB64: input.wrappedVekB64,
+			} satisfies CryptoUnwrapWebauthnSlot),
+
+		verifyWebauthnSlot: (input: VerifyWebauthnSlotInput) =>
+			send<boolean>("CRYPTO_VERIFY_WEBAUTHN_SLOT", {
+				...webauthnSlotPayload(input),
+				verifierB64: input.verifierB64,
+			} satisfies CryptoVerifyWebauthnSlot),
+
+		encryptEntry: (plaintextJson) =>
+			send<EncryptedPayload>("CRYPTO_ENCRYPT", { plaintextJson } satisfies CryptoEncrypt),
+		decryptEntry: (payload) => send<string>("CRYPTO_DECRYPT", payload satisfies CryptoDecrypt),
+		decryptEntries: (payloads) =>
+			send<(string | null)[]>("CRYPTO_DECRYPT_BATCH", {
+				entries: payloads,
+			} satisfies CryptoDecryptBatch),
+		encryptWithVek: (plaintext) =>
+			send<VekEncrypted>("CRYPTO_ENCRYPT_OUTER", { plaintext } satisfies CryptoEncryptOuter),
+		decryptWithVek: (iv, ciphertext) =>
+			send<string>("CRYPTO_DECRYPT_OUTER", { iv, ciphertext } satisfies CryptoDecryptOuter),
+		mailboxId: (groupKeyB64) =>
+			send<string>("CRYPTO_MAILBOX_ID", { groupKeyB64 } satisfies CryptoMailboxId),
+		mailboxSeal: (groupKeyB64, aad, plaintext) =>
+			send<string>("CRYPTO_MAILBOX_SEAL", {
+				groupKeyB64,
+				aad,
+				plaintext,
+			} satisfies CryptoMailboxSeal),
+		mailboxOpen: (groupKeyB64, aad, sealedB64) =>
+			send<string>("CRYPTO_MAILBOX_OPEN", {
+				groupKeyB64,
+				aad,
+				sealedB64,
+			} satisfies CryptoMailboxOpen),
+
+		// The database goes over as a handoff rather than in the message, and its attachments come
+		// back the same way, each staged until the import seals it or the import is dropped.
+		async openKdbx(input: OpenKdbxInput) {
+			const handoff = await putHandoff(new Blob([input.file as BlobPart]));
+			let out: { entries: KdbxRawEntry[]; attachments: { token: string; size: number }[] };
+			try {
+				out = await dispatch(
+					"CRYPTO_OPEN_KDBX",
+					{
+						handoff,
+						password: input.password,
+						keyfileB64: input.keyfile ? bytesToBase64(input.keyfile) : undefined,
+					},
+					vaultId,
+					FILE_OP_TIMEOUT_MS,
+				);
+			} finally {
+				await dropHandoff(handoff).catch(() => {});
+			}
+			const release = async () => {
+				for (const a of out.attachments) await dropHandoff(a.token).catch(() => {});
+			};
+			const attachments: { source: FileSource; size: number }[] = [];
+			for (const a of out.attachments) {
+				const blob = await readHandoff(a.token);
+				if (!blob) {
+					await release();
+					throw new Error("an attachment from the database is no longer staged");
+				}
+				attachments.push({ source: { kind: "blob", blob }, size: a.size });
+			}
+			return { entries: out.entries, attachments, release };
+		},
+		// The host writes the file into a handoff; it is read back here as a Blob and handed on
+		// as a source read in slices, and the parked copy goes as soon as it is read.
+		async saveKdbx(input: SaveKdbxInput) {
+			const token = await dispatch<string>(
+				"CRYPTO_SAVE_KDBX",
+				{
+					entries: input.entries,
+					password: input.password,
+					files: input.files.map(({ entry, record, name }) => ({
+						entry,
+						name,
+						hash: record.hash,
+						size: record.size,
+						wrappedFek: record.wrappedFek,
+						fekIv: record.fekIv,
+						noncePrefix: record.noncePrefix,
+					})),
+				},
+				vaultId,
+				FILE_OP_TIMEOUT_MS,
+			);
+			const file = await readHandoff(token);
+			await dropHandoff(token).catch(() => {});
+			if (!file) throw new Error("the exported file is no longer staged");
+			return fileSource(file);
+		},
+
+		// Portable vault (.bramble). Everything is already base64 except magicVersion, which
+		// goes as number[] like the slot ops: sendMessage mangles a Uint8Array.
+		sealPortableVault: (input: SealPortableVaultInput) =>
+			send<PortableVaultBlob>("CRYPTO_SEAL_PORTABLE_VAULT", {
+				entriesJson: input.entriesJson,
+				password: input.password,
+				magicVersion: Array.from(input.magicVersion),
+			}),
+		openPortableVault: (input: OpenPortableVaultInput) =>
+			send<string | null>("CRYPTO_OPEN_PORTABLE_VAULT", {
+				password: input.password,
+				file: input.file,
+				magicVersion: Array.from(input.magicVersion),
+			}),
+
+		passkeyMakeCredential: (rpId, userVerified) =>
+			send<PasskeyRegistration>("CRYPTO_PASSKEY_MAKE", {
+				rpId,
+				userVerified,
+			} satisfies CryptoPasskeyMake),
+		passkeyGetAssertion: (rpId, privateKeyB64, alg, clientDataHashB64, userVerified) =>
+			send<PasskeyAssertion>("CRYPTO_PASSKEY_GET", {
+				rpId,
+				privateKeyB64,
+				alg,
+				clientDataHashB64,
+				userVerified,
+			} satisfies CryptoPasskeyGet),
+		passkeyImportPkcs8: (pkcs8B64) =>
+			send<PasskeyImportResult>("CRYPTO_PASSKEY_IMPORT_PKCS8", {
+				pkcs8B64,
+			} satisfies CryptoPasskeyImportPkcs8),
+		passkeyPrfEval: (secretB64, firstB64, secondB64) =>
+			send<PasskeyPrfOutput>("CRYPTO_PASSKEY_PRF", {
+				secretB64,
+				firstB64,
+				secondB64,
+			} satisfies CryptoPasskeyPrf),
+	};
+}
+
+export const extensionCrypto: CryptoAdapter = makeCrypto();

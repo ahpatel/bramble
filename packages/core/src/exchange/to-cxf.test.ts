@@ -77,9 +77,13 @@ describe("toCxf: logins", () => {
 	});
 
 	it("carries every url in scope, promoting a bare host to https", () => {
-		const item = run(login({ urls: ["https://github.com", "gist.github.com"] })).payload
-			.accounts?.[0]?.items?.[0];
-		expect(item?.scope?.urls).toEqual(["https://github.com", "https://gist.github.com"]);
+		const item = run(login({ urls: ["https://github.com", "gist.github.com", "nas.local:5000"] }))
+			.payload.accounts?.[0]?.items?.[0];
+		expect(item?.scope?.urls).toEqual([
+			"https://github.com",
+			"https://gist.github.com",
+			"https://nas.local:5000",
+		]);
 	});
 
 	it("splits a stored otpauth uri into the structured TOTP fields", () => {
@@ -130,6 +134,79 @@ describe("toCxf: logins", () => {
 		const e = login({ passkeys: [passkey({ privateKey: bytesToBase64(new Uint8Array(3)) })] });
 		expect(cred(e, "passkey")).toBeUndefined();
 		expect(run(e).warnings[0]).toMatch(/passkey/);
+	});
+});
+
+describe("toCxf: passkey extensions", () => {
+	const PRF = {
+		credWithUV: bytesToBase64(new Uint8Array(32).fill(0xaa)),
+		credWithoutUV: bytesToBase64(new Uint8Array(32).fill(0xbb)),
+	};
+	/** The raw passkey credentials as emitted, before any schema touches them. */
+	const exported = (passkeys: PasskeyCredential[], opts: Parameters<typeof toCxf>[1] = OPTS) => {
+		const out = toCxf([login({ passkeys })], opts);
+		const raw = (out.payload.accounts?.[0]?.items?.[0]?.credentials ?? []) as Record<
+			string,
+			unknown
+		>[];
+		return { warnings: out.warnings, passkeys: raw.filter((c) => c.type === "passkey") };
+	};
+
+	it("exports PRF secrets as hmacCredentials with both halves", () => {
+		const [pk] = exported([passkey({ prf: PRF })]).passkeys;
+		// The same base64url Apple's own encoder writes for these bytes.
+		expect(pk?.fido2Extensions).toEqual({
+			hmacCredentials: {
+				algorithm: "hmac-sha256",
+				credWithUV: "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo",
+				credWithoutUV: "u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7s",
+			},
+		});
+	});
+
+	it("re-emits kept extension members", () => {
+		const largeBlob = { uncompressedSize: 3, data: "AAAA" };
+		const [pk] = exported([passkey({ prf: PRF, fido2Extensions: { largeBlob } })]).passkeys;
+		expect(pk?.fido2Extensions).toMatchObject({ largeBlob, hmacCredentials: expect.any(Object) });
+	});
+
+	it("leaves out PRF secrets it can't read, and says so", () => {
+		const { passkeys, warnings } = exported([
+			passkey({ prf: { credWithUV: "junk!", credWithoutUV: PRF.credWithoutUV } }),
+		]);
+		expect(passkeys[0] && "fido2Extensions" in passkeys[0]).toBe(false);
+		expect(warnings).toEqual([expect.stringMatching(/PRF secrets Bramble can't read/)]);
+	});
+
+	it("leaves out a large blob it can't read, and says so", () => {
+		const largeBlob = { uncompressedSize: -1, data: "AAAA" };
+		const { passkeys, warnings } = exported([
+			passkey({ fido2Extensions: { largeBlob, credBlob: "AQ" } }),
+		]);
+		expect(passkeys[0]?.fido2Extensions).toEqual({ credBlob: "AQ" });
+		expect(warnings).toEqual([expect.stringMatching(/large blob Bramble can't read/)]);
+	});
+
+	it("omits fido2Extensions for a passkey with none", () => {
+		const [pk] = exported([passkey()]).passkeys;
+		expect(pk).toBeDefined();
+		expect(pk && "fido2Extensions" in pk).toBe(false);
+	});
+
+	it("on an OS that can't carry extensions, leaves them out and warns with a count", () => {
+		const { passkeys, warnings } = exported(
+			[
+				passkey({ prf: PRF }),
+				passkey({ credentialId: bytesToBase64(new Uint8Array(16).fill(9)), prf: PRF }),
+				passkey({ credentialId: bytesToBase64(new Uint8Array(16).fill(8)) }),
+			],
+			{ ...OPTS, passkeyExtensions: false },
+		);
+		expect(passkeys).toHaveLength(3);
+		expect(passkeys.some((p) => "fido2Extensions" in p)).toBe(false);
+		expect(warnings.filter((w) => /went without/.test(w))).toEqual([
+			expect.stringMatching(/^2 passkeys went without/),
+		]);
 	});
 });
 

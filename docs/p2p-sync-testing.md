@@ -10,10 +10,10 @@ document, and WebRTC connects them over loopback.
 1. **Run the relay** (separate terminal, leave it running):
 
    ```sh
-   node nostr-relay/node/relay.mjs  # ws://localhost:7400
+   node services/nostr-relay/node/relay.mjs  # ws://localhost:7400
    ```
 
-   See [../nostr-relay/README.md](../nostr-relay/README.md). Any Nostr relay works;
+   See [../services/nostr-relay/README.md](../services/nostr-relay/README.md). Any Nostr relay works;
    this local one keeps testing self-contained.
 
 2. **Build and load the extension as two devices:**
@@ -112,8 +112,10 @@ both of them are the system working:
 - **A device cannot show its own `UNSIGNED` chip.** Opening the popup is what mounts the provider
   and runs the backfill, so the entry is signed before the panel paints, and the panel refreshes
   on that write.
-- **A one-sided strip heals itself.** The peer still holds a signed copy and rebroadcasts every
-  ~4s; if it has re-signed since (a newer stamp), it overwrites the stripped row immediately.
+- **A one-sided strip heals itself.** The peer still holds a signed copy and sends its whole
+  roster again when it reconnects, or within 10 minutes regardless (it no longer resends an
+  unchanged one every 4 s; see [sync-rebroadcast.md](sync-rebroadcast.md)); if it has re-signed
+  since (a newer stamp), that overwrites the stripped row.
   Strip **both** sides back to back, with neither popup open in between.
 
 So: strip both, open peer A's popup and **"Open in window"** to pop it out (the popup dismisses on

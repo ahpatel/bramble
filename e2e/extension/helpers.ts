@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { type BrowserContext, expect, type Page, type Worker } from "@playwright/test";
 
 export const optionsUrl = (id: string) => `chrome-extension://${id}/options.html`;
@@ -96,6 +97,24 @@ export async function seedExampleLogin(popup: Page, url = "https://example.com")
 	await popup.getByLabel("Password", { exact: true }).fill("s3cr3t-pw-01");
 	await popup.getByRole("button", { name: /Save Login/i }).click();
 	await expect(popup.getByText("Example Login")).toBeVisible();
+}
+
+/**
+ * A new vault holding Example Login, open in the popup. `detached` is the pop-out window, where a
+ * file picker survives; the attached popup closes under one.
+ */
+export async function openExampleLogin(
+	context: BrowserContext,
+	extensionId: string,
+	opts: { detached?: boolean } = {},
+): Promise<Page> {
+	await createVault(await context.newPage(), extensionId);
+	const popup = await context.newPage();
+	await popup.goto(`${popupUrl(extensionId)}${opts.detached ? "?detached=1" : ""}`);
+	await expect(popup.locator("#root")).not.toBeEmpty();
+	await seedExampleLogin(popup);
+	await popup.getByText("Example Login").click();
+	return popup;
 }
 
 /** Add a login for example.com carrying an authenticator key, through the popup's own UI. */
@@ -296,4 +315,51 @@ export async function addLogin(page: Page, name: string): Promise<void> {
 		.fill("hunter2-c0rrect-h0rse");
 	await page.getByRole("button", { name: /Save Login/i }).click();
 	await expect(page.getByText(name)).toBeVisible();
+}
+
+/**
+ * Start a ceremony in the page, act on its corner card, and return the page's result. A save card
+ * confirms with "passkey-approve"; a sign-in card lists accounts and acts on "passkey-pick".
+ */
+export async function actOnPasskeyCard<T>(
+	page: Page,
+	action: "passkey-approve" | "passkey-pick",
+	run: () => Promise<T>,
+): Promise<T> {
+	const result = run();
+	const card = page.locator("#bramble-corner-prompt");
+	// The card ignores consent clicks in its first moments (anti-clickjacking), so retry until one
+	// lands and closes it; a closed card also can't be mistaken for the next ceremony's.
+	await expect
+		.poll(
+			async () => {
+				try {
+					await clickCornerAction(page, action);
+				} catch {
+					return false;
+				}
+				return (await card.count()) === 0;
+			},
+			{ timeout: 15_000 },
+		)
+		.toBe(true);
+	return result;
+}
+
+/** In the popup, open `entry` and download `file` from it. */
+export async function downloadAttachment(popup: Page, entry: string, file: string) {
+	await popup.getByText(entry, { exact: true }).click();
+	const row = popup
+		.locator("div")
+		.filter({ hasText: file })
+		.filter({ has: popup.getByRole("button", { name: "Open attachment" }) })
+		.last();
+	const downloading = popup.waitForEvent("download");
+	await row.getByRole("button", { name: "Open attachment" }).click();
+	const saved = readFileSync((await (await downloading).path()) as string);
+	await popup
+		.getByRole("button", { name: /^(Back|Go back)/i })
+		.first()
+		.click();
+	return saved;
 }

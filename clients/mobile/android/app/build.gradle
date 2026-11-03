@@ -1,0 +1,74 @@
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace = "app.bramble.mobile"
+    compileSdk = rootProject.ext.compileSdkVersion
+    // Match the Java 21 source/target the Capacitor template sets in capacitor.build.gradle.
+    kotlinOptions {
+        jvmTarget = '21'
+    }
+    defaultConfig {
+        applicationId "app.bramble.mobile"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        // versionCode is committed (not computed at build) so a rebuild of a tag carries the same
+        // code. `pnpm run release android` bumps it to seconds-since-2020, kept monotonic.
+        versionCode 215569877
+        versionName "0.26.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    // No release signingConfig on purpose: assembleRelease always emits app-release-unsigned.apk,
+    // and `pnpm run release android` signs it afterwards with apksigner, from a keystore that is
+    // age+YubiKey encrypted at rest and only decrypted for the few seconds signing takes. Gradle
+    // (and every plugin in its classpath) therefore never sees the key.
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation "androidx.biometric:biometric:$androidxBiometricVersion"
+    // Inline autofill suggestions (InlinePresentation slices). AndroidX, not a Play API.
+    implementation "androidx.autofill:autofill:$androidxAutofillVersion"
+    // Credential Manager provider API for the passkey CredentialProviderService (API 34+).
+    // Pure AndroidX - verified Play-Services-free (only annotation + kotlin-stdlib + coroutines);
+    // the Play backend is the separate credentials-play-services-auth artifact, NOT used.
+    implementation "androidx.credentials:credentials:$androidxCredentialsVersion"
+    // JNA backs the uniffi-generated crypto glue; the @aar bundles jnidispatch's native libs.
+    implementation "net.java.dev.jna:jna:5.14.0@aar"
+    // The native HTTP transport (NativeHttpPlugin). HttpURLConnection cannot be used: it obeys the
+    // process-global CookieHandler, and Capacitor's Bridge registers CapacitorCookies as a
+    // built-in whose load() points that at the WebView's cookie jar. OkHttp states NO_COOKIES on
+    // its own client instead. Square, not Google: no Play Services (verified, its only transitive
+    // dep is okio + kotlin-stdlib).
+    implementation "com.squareup.okhttp3:okhttp:$okhttpVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+// No Google Play APIs (GitHub-released APKs only, no Play Store): the Capacitor
+// template's com.google.gms.google-services / Firebase push hook was removed.

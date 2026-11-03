@@ -7,7 +7,7 @@
 > historical. The conclusion is unchanged and stronger: WebRTC P2P is the sync path
 > everywhere.
 
-Research notes on shipping `packages/platform-extension` (MV3, currently Chrome-only) as a
+Research notes on shipping `clients/extension` (MV3, currently Chrome-only) as a
 Firefox add-on from one codebase. Captures what was verified about Firefox's platform, what in
 the codebase is already portable, and the sync constraint (no FSA on Firefox, so the WebRTC P2P
 channel is the mandatory v1 sync path).
@@ -57,7 +57,9 @@ on-device checks not yet crossed live are under "Remaining" below.
   stale-peer reaper, epoch-rotating sync room, payload padding. Initial + ongoing sync device-tested
   Chrome↔Firefox. See "Firefox P2P transport".
 - UI/behaviour — popup closes after opening setup, the FSA "vault file location" step is hidden (no
-  picker), dark-mode toolbar icon via manifest `theme_icons`, storage durability (`unlimitedStorage`
+  picker), dark-mode toolbar icon via a themed SVG built from the PNGs (manifest `theme_icons`
+  never reached the Extensions panel, where Firefox kept the black mark on dark themes), storage
+  durability (`unlimitedStorage`
   + `navigator.storage.persist()`).
 
 - **On-page UI localization.** The corner-prompt cards (save / update / passkey), the autofill
@@ -106,7 +108,7 @@ below for what it needs.
 
 ## Chrome API surface in use
 
-Swept from `packages/platform-extension/src` (excluding tests/fixtures). All of the following
+Swept from `clients/extension/src` (excluding tests/fixtures). All of the following
 work on Firefox MV3 as-is **except** `chrome.offscreen` and `chrome.webAuthenticationProxy`:
 
 | API | Where | Firefox status |
@@ -235,8 +237,9 @@ establish a WebRTC data channel (symmetric NAT, no TURN, corporate firewall).
   ordered, both connected). **Implemented:** a **handshake timeout** (roster-sync) so a frame dropped
   mid-handshake abandons cleanly instead of hanging, and a **stale-peer reaper** (the connectionless
   relay transport has no close signal, so a departed peer is dropped after several silent gossip
-  ticks). **Residual:** no per-frame retransmit on the post-handshake data path — a lost gossip frame
-  is recovered by the next 4s re-broadcast rather than resent.
+  ticks). **Residual:** no per-frame retransmit on the post-handshake data path: a lost gossip frame
+  is recovered by a later whole envelope (a reconnect, a resend the receiver asks for after a failed
+  merge, or the 10-minute backstop in [sync-rebroadcast.md](sync-rebroadcast.md)) rather than resent.
 - **Both-online only** — same as the current WebRTC model. Async catch-up would need a
   store-and-forward mailbox (ciphertext at rest on the relay), which we deliberately avoid.
 
@@ -251,7 +254,7 @@ What the relay can observe, and the mitigations:
 
 - **Already good (current signaling):** the event author is a **fresh ephemeral key per session**
   (`nostr-signer.ts`), content is group-key-encrypted, and events use **ephemeral kinds
-  (20000-29999)** so the relay stores nothing (`nostr-relay/cf-worker`). No cross-session author
+  (20000-29999)** so the relay stores nothing (`services/nostr-relay/cf-worker`). No cross-session author
   linkage, nothing at rest.
 - **Room-id linkage → rotate per epoch (implemented).** The sync room is derived per hourly epoch
   (`deriveRoomId(groupKey, label, epoch)`); the mesh publishes to the current epoch and subscribes to
@@ -268,7 +271,7 @@ What the relay can observe, and the mitigations:
   fallback and the Tor-running crowd is the WebRTC-off crowd. Caveat: a browser extension can't
   provide Tor; it needs Tor Browser, an OS SOCKS proxy, or (Firefox-only) the `proxy` API routing
   just the relay socket through a local `tor`. And a Cloudflare Worker can't be an onion service, so
-  onion ⇒ self-host the node relay (`nostr-relay/node`).
+  onion ⇒ self-host the node relay (`services/nostr-relay/node`).
 - **NIP-42 (relay AUTH) — access control, not privacy.** It binds identity to the relay (the wrong
   tool for anonymity) but is the right tool to lock a self-hosted relay to your own devices.
 
@@ -460,7 +463,7 @@ submits the listed version and attaches the source archive; AMO reviews, signs, 
 - `gecko.id` (`firefox@bramble.app`) and `strict_min_version` are set in the manifest.
 - **Source submission is wired:** `sign-firefox.ts` attaches a `git archive` of the source for
   review; `docs/amo-source-build.md` is the reviewer build recipe (`rust-toolchain.toml` pins Rust).
-- Listing copy is localized under `packages/platform-extension/store/firefox/` and pushed via
+- Listing copy is localized under `clients/extension/store/firefox/` and pushed via
   `pnpm run metadata:firefox`; the name + short description come from the package `_locales`.
 - Still dashboard-only (one-time): screenshots, a category, a privacy-policy URL (required for a
   password manager; reuse the Chrome listing's HIBP disclosure), and `data_collection_permissions`.

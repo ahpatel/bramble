@@ -13,7 +13,7 @@ and is marked `[unverified]`. Do a research pass before committing to any of tho
 
 - **Feasible, and the cheapest of the three platform ports so far.** `packages/core` talks to its
   host through eight adapter interfaces injected by `PlatformContext`. A desktop port is a new
-  `packages/platform-desktop` implementing those, plus a Rust binary. The hard parts are not the
+  `clients/desktop` implementing those, plus a Rust binary. The hard parts are not the
   port; they are three net-new native subsystems (browser IPC, auto-type, SSH agent).
 - **Tauri is the right pick, and the reason is `core-rust`, not the framework's merits.** The
   extension reaches the crypto core through wasm-bindgen and mobile reaches it through uniffi. A
@@ -57,7 +57,7 @@ own WebRTC, the browser link, and the whole release and packaging story below.
   rather than copied into a third block, so the struct-returning calls have one body. All
   three feature configurations check clean and the crate's tests still pass: 58 under the
   default wasm features, 51 under `native`, the difference being the wasm-only modules.
-- **`packages/platform-desktop`**: Vite + React SPA mirroring platform-mobile, plus `src-tauri`
+- **`clients/desktop`**: Vite + React SPA mirroring platform-mobile, plus `src-tauri`
   scaffolded by the 2.11.4 CLI (tauri 2.11.3, tauri-build 2.6.3) so the config matches the
   shipped schema rather than being hand-written.
 - **The VEK lives in the Rust process.** `src-tauri/src/crypto.rs` exposes 19 commands wrapping
@@ -161,7 +161,7 @@ in a *platform* package that core does not also happen to use is never generated
 lands in the DOM, matches no rule, and does nothing, which is the worst way for a style to
 fail. The extension and mobile never noticed because their own `.tsx` files are thin mounts
 whose classes all exist in core anyway; desktop is the first package with markup of its own.
-Fixed with `packages/platform-desktop/src/styles/index.css`, which imports core's stylesheet
+Fixed with `clients/desktop/src/styles/index.css`, which imports core's stylesheet
 and adds its own `@source`. Anything styled directly in the other platform packages will need
 the same. Check the built CSS rather than the screen: a missing utility looks identical to one
 that is simply not doing what you expected.
@@ -328,10 +328,7 @@ extension  --native messaging (stdio)-->  bramble-proxy (small spawned binary)
 The proxy is a small Rust binary shipped with the app. It needs a native-messaging host manifest per
 browser (file paths on macOS and Linux, registry keys on Windows) listing the allowed extension IDs.
 Firefox supports the same mechanism with `allowed_extensions` keyed on the addon ID rather than
-Chrome's `chrome-extension://` origins, so both existing targets are covered `[unverified: exact
-paths and key names]`. Firefox is not in fact wired up on any platform: it reads a different
-schema from a different place, and the Firefox build of the extension asks for `nativeMessaging`
-in neither permission array, so a manifest for it would be a file nothing acts on.
+Chrome's `chrome-extension://` origins, from different places; see [Firefox](#firefox).
 
 If the browser-spawned host did the work itself, **no handshake would be needed at all**: the
 browser only spawns hosts whose manifest allowlists the extension ID, and stdio is a private
@@ -728,12 +725,8 @@ a stale path. So under an AppImage the proxy is copied into the app data directo
 manifest names the copy. The copy is rewritten on every launch, through a rename rather than in
 place, because a browser may be running the previous one.
 
-Firefox is still not covered, on any platform. It reads a different schema
-(`allowed_extensions` with the addon id) from a different directory, but the blocker is upstream
-of that: the Firefox build of the extension declares `nativeMessaging` in neither permission array,
-so a manifest for it would be a file no browser would ever act on. Adding it means a permission the
-extension has to declare and AMO has to review, though the Chromium side now declares it optional
-and asks at connect time, which is the cheaper shape to ask a reviewer for.
+Firefox is covered on all three platforms since 2026-10-29; see [Firefox](#firefox). Its
+permission is optional, as Chromium's is, which is the cheaper shape to ask an AMO reviewer for.
 
 **A hybrid-GPU laptop can stall once on first draw, and it is not ours.** On a machine with an
 Intel iGPU rendering and a discrete card runtime-suspended in `D3hot`, the first interaction can
@@ -803,18 +796,38 @@ worker start, which is why `openDesktopLink()` runs there unconditionally. See
 
 ### Firefox
 
-Firefox has no part in the browser link. Its manifest names `nativeMessaging` in neither permission
-array, and the desktop app writes Chromium-shaped host manifests (`allowed_origins`) into Chromium
-support directories, where Firefox wants `allowed_extensions` under Mozilla's. Both ends would need
-work.
+Firefox links the same way, added 2026-10-29. Its manifest declares `nativeMessaging` as optional,
+as Chromium's does, and the desktop app writes it a host manifest of its own, because Firefox
+differs in both shape and place. The shape names the add-on rather than an origin
+(`allowed_extensions: ["firefox@bramble.app"]`, the `gecko.id`); the places are:
 
-The extension adapter is therefore absent unless the running manifest declares the permission
-somewhere, which is what keeps the Settings section from appearing. BOTH arrays count: Chromium now
-declares it optional and asks at connect time, so reading only `permissions` would hide the section
-on the very build that ships the feature. Read from the manifest rather than sniffed from the
-browser, so it turns itself on the day Firefox support lands instead of needing to be remembered.
-Without that gate a Firefox release would have shipped a Connect button whose only possible outcome
-is an error.
+| | Firefox reads | Firefox is detected by |
+|---|---|---|
+| macOS | `~/Library/Application Support/Mozilla/NativeMessagingHosts/` | `~/Library/Application Support/Firefox` |
+| Linux | `~/.mozilla/native-messaging-hosts/`, even under XDG | `~/.mozilla/firefox` or `$XDG_CONFIG_HOME/mozilla/firefox` |
+| Windows | `HKCU\Software\Mozilla\NativeMessagingHosts\app.bramble.desktop` -> `app.bramble.desktop.firefox.json` in the app data dir | `%APPDATA%\Mozilla\Firefox` (roaming) |
+
+Linux is the surprising row: Firefox's XDG support moved new profiles under XDG_CONFIG_HOME, but
+`nsXREDirProvider.cpp` forces the legacy `~/.mozilla` for native manifests ("Keep forcing the legacy
+path for compatibility"). Firefox spawns the host with the manifest path and the add-on id as its
+arguments, where Chrome passes an origin; the proxy reads neither, so it needed no change.
+
+Checked against Firefox on macOS with `web-ext` and a probe add-on carrying the real id: Firefox
+spawns the proxy from the manifest `install_firefox` writes, and without it refuses with "No such
+native application". Linux and Windows are unit-tested only. Not covered or tried: Snap and Flatpak
+Firefox, whose sandboxes handle native messaging their own way.
+
+The pairing flow carries over unchanged. Firefox re-injects APIs into running contexts when a
+permission is granted (`permissionsChanged` in Schemas.sys.mjs), so its background may not need the
+lent pipe Chromium's worker does, but lending is harmless there. An open native port counts as
+activity for Firefox's event page (`activeNativePorts`), so the held link keeps it awake, as it
+keeps Chromium's worker.
+
+The extension adapter is absent unless the running manifest declares the permission somewhere,
+which is what keeps the Settings section from appearing on a build that cannot link. BOTH arrays
+count: both browsers declare it optional and ask at connect time, so reading only `permissions`
+would hide the section on the very builds that ship the feature. Without that gate a release would
+ship a Connect button whose only possible outcome is an error.
 
 Note the two questions this gate does not answer. Whether the permission is HELD is
 `permission.granted()`, and whether a given context can actually call the API is a third thing
@@ -1020,7 +1033,7 @@ cross-compile.
 ### Homebrew
 
 A **cask**, not a formula: it is a GUI app shipped as a disk image. The canonical copy is
-`packages/platform-desktop/homebrew/bramble.rb`. Keeping it here is what lets `pnpm run test:brew`
+`clients/desktop/homebrew/bramble.rb`. Keeping it here is what lets `pnpm run test:brew`
 check it against the live release, and it means a release that renames an artifact fails a test
 rather than a stranger's `brew install`.
 
@@ -1093,14 +1106,14 @@ is cut, which is the intended noise rather than a surprise. The *published* copy
 `brew bump-cask-pr --version X.Y.Z bramble` does it in one command and computes the checksum itself,
 and for a cask with a working livecheck their bot usually opens that PR before you do.
 
-`uninstall` carries a `launchctl:` beside its `quit:`, because autostart landed as a launch agent:
-`autostart.rs` uses `MacosLauncher::LaunchAgent`, so enabling it writes
-`~/Library/LaunchAgents/Bramble.plist`. The label is the trap. auto-launch names both the plist and
-the label after `productName`, so it is `Bramble` rather than `app.bramble.desktop` like every
-other identifier in the file. brew unloads the service and deletes the plist on a plain
-`brew uninstall`, which is the right moment for it: left behind, it is a login item pointing at an
-app that is gone. Note this only shows up in a test if autostart was enabled at least once, since
-nothing writes the plist until it is.
+`uninstall` carries a `launchctl:` beside its `quit:`, because autostart is a launch agent:
+enabling it writes `~/Library/LaunchAgents/app.bramble.desktop.plist`. It lists `Bramble` as well,
+the label tauri-plugin-autostart used before the app wrote its own agent (#138, see
+[cloud-storage-backups.md](cloud-storage-backups.md)), for an install never launched since the
+update that moves it. brew unloads the service and deletes the plist on a plain `brew uninstall`,
+which is the right moment for it: left behind, it is a login item pointing at an app that is gone.
+Note this only shows up in a test if autostart was enabled at least once, since nothing writes the
+plist until it is.
 
 **Submitting it requires a Mac, and not for a technical reason.** homebrew-cask's pull request
 template has a checklist, prefaced with "do not tick a checkbox if you haven't performed its
@@ -1154,7 +1167,7 @@ globs reach into other applications' support directories.
 ### NixOS
 
 `flake.nix` at the repository root builds the app from source
-(`packages/platform-desktop/nix/package.nix`), so NixOS users can install it without waiting on
+(`clients/desktop/nix/package.nix`), so NixOS users can install it without waiting on
 nixpkgs:
 
 ```bash
@@ -1396,7 +1409,7 @@ TargetNotFound rather than no update. It is keyed under both arches instead.
 
 Each phase retires a risk.
 
-- **Phase 0, walking skeleton. DONE**: `packages/platform-desktop` (Vite + React, mirroring
+- **Phase 0, walking skeleton. DONE**: `clients/desktop` (Vite + React, mirroring
   platform-mobile) plus `src-tauri` as its own crate. The `native` feature split. Linux now builds
   and packages as well, and has now been run: the UI renders under WebKitGTK, retiring risk 1.
   **Windows now builds too**, cross-compiled from the Mac a release is cut on (see
@@ -1413,14 +1426,16 @@ Each phase retires a risk.
 - **Phase 3, sync hub. IN PROGRESS.** Enrollment (invite and join), host-side admission signing,
   and ongoing roster sync all run in the vault window on the webview's own WebRTC, with the
   crypto routed to Rust. Browsers on this machine sync over the native link instead of the relay,
-  on both ends. Device identity lives in the OS credential store. Tray residency landed with
+  on both ends, and attachments ride the same link once the browser has said it speaks files
+  (the `caps` request; see [file-attachments.md](file-attachments.md), "The desktop link"). Device identity lives in the OS credential store. Tray residency landed with
   `lifetime`. **Scheduled backups landed**: a 5-minute tick in the shell drives the shared
   `runScheduledBackups`, with target credentials in the OS credential store and the HTTP done in
   Rust (the webview has no CORS grant for `tauri://localhost`), so every vault's schedule is kept
   whether or not it is unlocked. Credentials climb a ladder the app picks with no user input
   (OS store -> kernel keyring on Linux -> vault-wrapped and unlock-gated), and are pinned to the
   one origin they may be sent to. **Autostart landed** on all three
-  platforms (`tauri-plugin-autostart`; a Settings, General toggle, plus a prompt when a backup is
+  platforms (`tauri-plugin-autostart` on Windows and Linux, the app's own launch agent on macOS; a
+  Settings, General toggle, plus a prompt when a backup is
   first scheduled), which is what makes "runs as long as the computer is on" true rather than
   conditional on someone having launched the app. Outstanding: a two-device test. The TPM-sealed
   Linux tier that was queued behind this is **abandoned**: systemd refuses TPM keys in user scope,

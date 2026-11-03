@@ -1,0 +1,472 @@
+// Test harness for the background service worker. Builds an in-memory mock of
+// the chrome.* APIs the background uses, then imports the background entry fresh
+// (vi.resetModules) so each test gets clean module state. Not a test file (no
+// `.test.ts` suffix) so vitest skips it; it is imported by the *.test.ts files.
+
+import { vi } from "vitest";
+
+type AnyMsg = Record<string, any>;
+
+/**
+ * One in-memory `chrome.storage` area over a plain object, mirroring chrome's `get`
+ * overloads: a string key, an array of keys, or null/undefined for everything. Callers own
+ * the backing store, so they can seed it and assert against it after the fact.
+ */
+export function memoryStorageArea(store: Record<string, unknown>) {
+	return {
+		get: async (keys?: string | string[] | null) => {
+			if (keys == null) return { ...store };
+			const list = Array.isArray(keys) ? keys : [keys];
+			const out: Record<string, unknown> = {};
+			for (const k of list) if (k in store) out[k] = store[k];
+			return out;
+		},
+		set: async (obj: Record<string, unknown>) => Object.assign(store, obj),
+		remove: async (key: string) => {
+			delete store[key];
+		},
+	};
+}
+
+export interface OffscreenResponse {
+	ok: boolean;
+	data?: unknown;
+	error?: string;
+}
+
+export interface ChromeMockOptions {
+	/** Seed chrome.storage.session before hydration runs (e.g. to start unlocked). */
+	sessionSeed?: Record<string, unknown>;
+	/** Seed chrome.storage.local before hydration runs. */
+	localSeed?: Record<string, unknown>;
+	/** Override the fake offscreen crypto responder. */
+	offscreen?: (msg: AnyMsg) => OffscreenResponse | Promise<OffscreenResponse>;
+	/** What chrome.windows.getLastFocused resolves to (qr capture). */
+	lastFocusedWindow?: { id?: number };
+	/** Expose chrome.action.openPopup (Chrome 127+). */
+	hasOpenPopup?: boolean;
+	/** Tabs chrome.tabs.query({}) resolves to (lock-state broadcast fan-out). */
+	openTabs?: Array<{ id?: number; url?: string }>;
+	/** Model Chrome delivering session onChanged after set/remove has already resolved. */
+	deferSessionStorageChanges?: boolean;
+}
+
+export interface BackgroundHarness {
+	chrome: any;
+	state: HarnessState;
+	/** Dispatch a runtime message; resolves with { handled, resp } when sendResponse fires. */
+	send: (message: AnyMsg, sender?: any) => Promise<{ handled: boolean; resp: any }>;
+	fireAlarm: (name: string) => void;
+	fireCommand: (command: string) => void;
+	fireIdle: (state: string) => void;
+	fireStorageChanged: (changes: Record<string, unknown>, area: string) => void;
+	/** A tab navigating (`{ url }`) or closing: what ends a card carry. */
+	fireTabUpdated: (tabId: number, change: Record<string, unknown>) => void;
+	fireTabRemoved: (tabId: number) => void;
+	fireInstalled: () => void;
+	fireStartup: () => void;
+	/** Simulate a view (popup/options/pop-out) opening a runtime port; returns a handle whose
+	 * disconnect() models the view closing. */
+	fireConnect: (name?: string) => { disconnect: () => void };
+	/** Drain pending microtasks + timers so async listener work settles. */
+	flush: () => Promise<void>;
+	/** Deliver deferred session storage notifications, if that mode was requested. */
+	flushSessionStorageChanges: () => void;
+}
+
+type AutofillSessionCapability = { vaultId: string; token: string };
+
+/** Exercise the same session-bound cache-mutation protocol used by extensionAutofill. */
+export async function autofillSessionCapability(
+	bg: BackgroundHarness,
+): Promise<AutofillSessionCapability> {
+	const { resp } = await bg.send({ type: "AUTOFILL_GET_SESSION_OWNER" }, extensionSender);
+	if (!resp?.ok) throw new Error(resp?.error ?? "missing autofill session capability");
+	return resp.data as AutofillSessionCapability;
+}
+
+export async function setAutofillIndex(
+	bg: BackgroundHarness,
+	entries: unknown[],
+): Promise<{ handled: boolean; resp: any }> {
+	return bg.send(
+		{
+			type: "AUTOFILL_SET_INDEX",
+			payload: { entries, owner: await autofillSessionCapability(bg) },
+		},
+		extensionSender,
+	);
+}
+
+export async function clearAutofillIndex(
+	bg: BackgroundHarness,
+): Promise<{ handled: boolean; resp: any }> {
+	return bg.send(
+		{ type: "AUTOFILL_CLEAR_INDEX", payload: { owner: await autofillSessionCapability(bg) } },
+		extensionSender,
+	);
+}
+
+interface HarnessState {
+	session: Record<string, unknown>;
+	local: Record<string, unknown>;
+	alarms: Record<string, unknown>;
+	tabMessages: Array<{ tabId: number; message: AnyMsg; options?: AnyMsg }>;
+	broadcasts: AnyMsg[];
+	offscreenCalls: AnyMsg[];
+	windowsCreated: AnyMsg[];
+	windowsRemoved: number[];
+	listeners: Record<string, ((...args: any[]) => any) | undefined>;
+	/** storage.onChanged also permits multiple listeners (vek/session plus background policy). */
+	storageChangedListeners: Array<(changes: Record<string, unknown>, area: string) => void>;
+	/** tabs.onUpdated / onRemoved take several listeners too: the desktop link watches the active
+	 * tab while the card carry watches for the page leaving under it. */
+	tabListeners: {
+		updated: Array<(...args: any[]) => any>;
+		removed: Array<(...args: any[]) => any>;
+	};
+	/** All runtime.onMessage listeners, in registration order. Chrome dispatches a message to
+	 * every listener (not just the last), so the background legitimately registers more than one
+	 * (the router dispatcher + the SYNC_STATUS console mirror); the harness must model that. */
+	messageListeners: Array<(...args: any[]) => any>;
+	pendingSessionStorageChanges: Array<Record<string, unknown>>;
+}
+
+// Node's URL gives chrome-extension:// an opaque "null" origin, so use an https
+// stand-in: isExtensionSender compares sender.origin to the extension's own
+// origin by string equality, which is scheme-agnostic.
+const EXT_ORIGIN = "https://extension.example";
+
+/** A MessageSender on the extension origin (popup/options/offscreen). */
+export const extensionSender = { origin: EXT_ORIGIN };
+/** A MessageSender for a content script on `https://<host>` with an optional tab.
+ * A real content-script sender always carries a frameId (0 = top frame), so set one
+ * whenever a tab is present. */
+export function pageSender(host: string, tabId?: number, frameId = 0): any {
+	const sender: any = { origin: `https://${host}`, url: `https://${host}/login` };
+	if (tabId !== undefined) {
+		sender.tab = { id: tabId, windowId: 1, url: `https://${host}/login` };
+		sender.frameId = frameId;
+	}
+	return sender;
+}
+
+// The per-vault VEK world: the background caches a vek per vault id. Tests run with this vault
+// active (seeded below), so an un-tagged CRYPTO_* op resolves to it and its vek lands at
+// `vault.vek:<TEST_ACTIVE_VAULT>`. See docs/multiple-vaults.md "Per-vault VEK".
+export const TEST_ACTIVE_VAULT = "v1";
+export const TEST_VEK_KEY = `vault.vek:${TEST_ACTIVE_VAULT}`;
+
+/** A `localSeed` registering vaults v1 and v2. Each needs a blob, or the storage migration reaps
+ * the record as a ghost. */
+export const TWO_VAULTS = {
+	"vault.registry": {
+		vaults: [
+			{ id: "v1", label: "", createdAt: 1 },
+			{ id: "v2", label: "", createdAt: 2 },
+		],
+	},
+	"vault-blob-b64:v1": "AA==",
+	"vault-blob-b64:v2": "AA==",
+};
+
+export function defaultOffscreen(msg: AnyMsg): OffscreenResponse {
+	switch (msg.type) {
+		case "CRYPTO_GENERATE_VEK":
+			return { ok: true, data: "VEK_GENERATED" };
+		case "CRYPTO_EXPORT_VEK":
+			return { ok: true, data: "VEK_EXPORTED" };
+		case "CRYPTO_ROTATE_VEK":
+			return { ok: true, data: "VEK_ROTATED" };
+		// Unwraps now reply {ok, vekB64}: the recovered vek rides back with the result (no separate
+		// EXPORT_VEK round-trip), and the background caches it then strips the reply to the boolean.
+		case "CRYPTO_UNWRAP_PASSWORD_SLOT":
+		case "CRYPTO_UNWRAP_WEBAUTHN_SLOT":
+			return { ok: true, data: { ok: true, vekB64: "VEK_EXPORTED" } };
+		case "CRYPTO_UNLOCK_WITH_VEK":
+			return { ok: true, data: null };
+		case "CRYPTO_LOCK":
+			return { ok: true, data: null };
+		case "CRYPTO_ENCRYPT":
+			return { ok: true, data: { ciphertext: "ct", iv: "iv", wrappedDek: "wd", dekIv: "di" } };
+		case "CRYPTO_ENCRYPT_OUTER":
+			return { ok: true, data: { iv: "outerIv", ciphertext: "outerCt" } };
+		case "CRYPTO_DECRYPT_OUTER":
+			return { ok: true, data: '{"entries":[],"tombstones":[]}' };
+		case "CRYPTO_MAILBOX_ID":
+			return { ok: true, data: "mailbox-id" };
+		case "CRYPTO_MAILBOX_SEAL":
+			return { ok: true, data: "sealed" };
+		case "CRYPTO_MAILBOX_OPEN":
+			return { ok: true, data: "opened" };
+		case "CRYPTO_DECRYPT":
+			return { ok: true, data: "{}" };
+		case "CRYPTO_DECRYPT_BATCH":
+			return { ok: true, data: [] };
+		// Batch index hydration: id-keyed results. Empty by default (CRYPTO_DECRYPT_OUTER above
+		// yields no entries), matching the CRYPTO_DECRYPT_BATCH default. Without this case the
+		// hydration path falls through to "unhandled offscreen type" and a background test that
+		// hydrates with no explicit override silently gets locked:true.
+		case "CRYPTO_DECRYPT_INDEX":
+			return { ok: true, data: [] };
+		case "CLIPBOARD_CLEAR":
+			return { ok: true, data: null };
+		default:
+			return { ok: false, error: `unhandled offscreen type ${msg.type}` };
+	}
+}
+
+function makeChrome(opts: ChromeMockOptions): { chrome: any; state: HarnessState } {
+	// Default to a single active vault so un-tagged CRYPTO_* ops resolve a target (an explicit
+	// sessionSeed can override the active id). The vault is still LOCKED until a vek is cached.
+	const session: Record<string, unknown> = {
+		"vault.activeId": TEST_ACTIVE_VAULT,
+		...(opts.sessionSeed ?? {}),
+	};
+	const local: Record<string, unknown> = { ...(opts.localSeed ?? {}) };
+	const state: HarnessState = {
+		session,
+		local,
+		alarms: {},
+		tabMessages: [],
+		broadcasts: [],
+		offscreenCalls: [],
+		windowsCreated: [],
+		windowsRemoved: [],
+		listeners: {},
+		storageChangedListeners: [],
+		tabListeners: { updated: [], removed: [] },
+		messageListeners: [],
+		pendingSessionStorageChanges: [],
+	};
+	let hasDoc = false;
+	const offscreen = opts.offscreen ?? defaultOffscreen;
+
+	const read = (store: Record<string, unknown>, query: unknown): Record<string, unknown> => {
+		if (query == null) return { ...store };
+		const keys =
+			typeof query === "string" ? [query] : Array.isArray(query) ? query : Object.keys(query);
+		const out: Record<string, unknown> = {};
+		for (const k of keys) if (k in store) out[k] = store[k];
+		return out;
+	};
+
+	const emitStorageChanges = (changes: Record<string, unknown>, areaName: string) => {
+		if (Object.keys(changes).length === 0) return;
+		for (const listener of state.storageChangedListeners) listener(changes, areaName);
+	};
+
+	const area = (store: Record<string, unknown>, areaName: string) => ({
+		get: vi.fn(async (query?: unknown) => read(store, query ?? null)),
+		set: vi.fn(async (obj: Record<string, unknown>) => {
+			const changes: Record<string, unknown> = {};
+			for (const [key, value] of Object.entries(obj)) {
+				if (!Object.is(store[key], value)) changes[key] = { oldValue: store[key], newValue: value };
+			}
+			Object.assign(store, obj);
+			if (areaName === "session" && opts.deferSessionStorageChanges) {
+				if (Object.keys(changes).length > 0) state.pendingSessionStorageChanges.push(changes);
+			} else {
+				emitStorageChanges(changes, areaName);
+			}
+		}),
+		remove: vi.fn(async (keyOrKeys: string | string[]) => {
+			const keys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
+			const changes: Record<string, unknown> = {};
+			for (const k of keys) {
+				if (k in store) changes[k] = { oldValue: store[k], newValue: undefined };
+				delete store[k];
+			}
+			if (areaName === "session" && opts.deferSessionStorageChanges) {
+				if (Object.keys(changes).length > 0) state.pendingSessionStorageChanges.push(changes);
+			} else {
+				emitStorageChanges(changes, areaName);
+			}
+		}),
+	});
+
+	const chrome = {
+		runtime: {
+			id: "testext",
+			getURL: (p: string) => `${EXT_ORIGIN}/${p}`,
+			getManifest: () => ({ name: "Bramble" }),
+			onMessage: {
+				// Chrome supports multiple onMessage listeners; keep them all (the mock used to keep
+				// only the last, so a second listener like the SYNC_STATUS mirror clobbered the router).
+				addListener: (fn: any) => {
+					state.messageListeners.push(fn);
+				},
+			},
+			onInstalled: {
+				addListener: (fn: any) => {
+					state.listeners.installed = fn;
+				},
+			},
+			onStartup: {
+				addListener: (fn: any) => {
+					state.listeners.startup = fn;
+				},
+			},
+			onConnect: {
+				addListener: (fn: any) => {
+					state.listeners.connect = fn;
+				},
+			},
+			sendMessage: vi.fn(async (msg: AnyMsg) => {
+				if (msg && msg.target === "offscreen") {
+					state.offscreenCalls.push(msg);
+					return offscreen(msg);
+				}
+				state.broadcasts.push(msg);
+				return undefined;
+			}),
+		},
+		storage: {
+			session: area(session, "session"),
+			local: area(local, "local"),
+			onChanged: {
+				addListener: (fn: any) => {
+					state.storageChangedListeners.push(fn);
+				},
+			},
+		},
+		alarms: {
+			create: vi.fn((name: string, info: unknown) => {
+				state.alarms[name] = info;
+			}),
+			clear: vi.fn(async (name: string) => {
+				const had = name in state.alarms;
+				delete state.alarms[name];
+				return had;
+			}),
+			onAlarm: {
+				addListener: (fn: any) => {
+					state.listeners.alarm = fn;
+				},
+			},
+		},
+		offscreen: {
+			hasDocument: vi.fn(async () => hasDoc),
+			createDocument: vi.fn(async () => {
+				hasDoc = true;
+			}),
+			Reason: { WORKERS: "WORKERS", CLIPBOARD: "CLIPBOARD" },
+		},
+		tabs: {
+			query: vi.fn(async () => opts.openTabs ?? []),
+			sendMessage: vi.fn(async (tabId: number, message: AnyMsg, options?: AnyMsg) => {
+				state.tabMessages.push({ tabId, message, options });
+			}),
+			captureVisibleTab: vi.fn(async () => "data:image/png;base64,AAAA"),
+			onUpdated: {
+				addListener: (fn: any) => {
+					state.tabListeners.updated.push(fn);
+				},
+			},
+			onRemoved: {
+				addListener: (fn: any) => {
+					state.tabListeners.removed.push(fn);
+				},
+			},
+		},
+		windows: {
+			create: vi.fn(async (createOpts: AnyMsg) => {
+				state.windowsCreated.push(createOpts);
+				return { id: 999 };
+			}),
+			get: vi.fn(async (id: number) => ({ id, top: 0, left: 0, width: 500 })),
+			getCurrent: vi.fn(async () => ({ id: 1, top: 0, left: 0, width: 500 })),
+			getLastFocused: vi.fn(async () => opts.lastFocusedWindow ?? { id: 7 }),
+			update: vi.fn(async () => {}),
+			remove: vi.fn(async (id: number) => {
+				state.windowsRemoved.push(id);
+			}),
+		},
+		idle: {
+			onStateChanged: {
+				addListener: (fn: any) => {
+					state.listeners.idle = fn;
+				},
+			},
+		},
+		commands: {
+			onCommand: {
+				addListener: (fn: any) => {
+					state.listeners.command = fn;
+				},
+			},
+		},
+		action: opts.hasOpenPopup ? { openPopup: vi.fn(async () => {}) } : {},
+	};
+
+	return { chrome, state };
+}
+
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+/** Stub global chrome, import the background entry fresh, and return drivers. */
+export async function loadBackground(opts: ChromeMockOptions = {}): Promise<BackgroundHarness> {
+	vi.resetModules();
+	const { chrome, state } = makeChrome(opts);
+	vi.stubGlobal("chrome", chrome);
+	await import("../background/background");
+
+	// Default to an extension-context sender: bg.send models a message from the popup/SW
+	// unless a test passes an explicit pageSender/{} to exercise the content-script gate.
+	const send = (message: AnyMsg, sender: any = extensionSender) =>
+		new Promise<{ handled: boolean; resp: any }>((resolve) => {
+			// Dispatch to every listener, as Chrome does. The first sendResponse wins; a listener
+			// that returns true keeps the channel open for an async response. handled is true iff
+			// some listener took the message (returned true or responded).
+			let settled = false;
+			const respond = (resp: any) => {
+				if (settled) return;
+				settled = true;
+				resolve({ handled: true, resp });
+			};
+			let keptOpen = false;
+			for (const fn of state.messageListeners) {
+				if (fn(message, sender, respond) === true) keptOpen = true;
+			}
+			if (!keptOpen && !settled) resolve({ handled: false, resp: undefined });
+		});
+
+	return {
+		chrome,
+		state,
+		send,
+		fireAlarm: (name) => state.listeners.alarm?.({ name }),
+		fireCommand: (command) => state.listeners.command?.(command),
+		fireIdle: (s) => state.listeners.idle?.(s),
+		fireStorageChanged: (changes, area2) => {
+			for (const listener of state.storageChangedListeners) listener(changes, area2);
+		},
+		fireTabUpdated: (tabId, change) => {
+			for (const listener of state.tabListeners.updated) listener(tabId, change, { id: tabId });
+		},
+		fireTabRemoved: (tabId) => {
+			for (const listener of state.tabListeners.removed) listener(tabId, {});
+		},
+		fireInstalled: () => state.listeners.installed?.(),
+		fireStartup: () => state.listeners.startup?.(),
+		fireConnect: (name = "tp-view") => {
+			const disconnectListeners: Array<() => void> = [];
+			const port = {
+				name,
+				onDisconnect: { addListener: (fn: () => void) => disconnectListeners.push(fn) },
+			};
+			state.listeners.connect?.(port);
+			return {
+				disconnect: () => {
+					for (const fn of [...disconnectListeners]) fn();
+				},
+			};
+		},
+		flush,
+		flushSessionStorageChanges: () => {
+			for (const changes of state.pendingSessionStorageChanges.splice(0)) {
+				for (const listener of state.storageChangedListeners) listener(changes, "session");
+			}
+		},
+	};
+}

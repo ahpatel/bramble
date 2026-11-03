@@ -1,0 +1,179 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SyncBridge } from "../offscreen-core";
+
+const host = vi.hoisted(() => ({
+	loads: 0,
+	fail: false,
+	setSyncBridge: vi.fn(),
+	handleHostMessage: vi.fn(async () => ({ ok: true, data: "done" })),
+}));
+vi.mock("./vek-store", () => ({
+	vekMutationSnapshot: () => 0,
+	getVek: (id: string) => (id === "locked" ? null : `vek:${id}`),
+	resolveActiveVaultId: async () => "active",
+}));
+
+const bridge: SyncBridge = {
+	fetchLocalPayload: async () => "payload",
+	pushRemotePayload: async () => {},
+	fetchLocalRoster: async () => "roster",
+	pushRemoteRoster: async () => {},
+};
+
+beforeEach(() => {
+	vi.resetModules();
+	vi.clearAllMocks();
+	host.loads = 0;
+	host.fail = false;
+	vi.doMock("../offscreen-core", () => {
+		host.loads++;
+		if (host.fail) throw new Error("host chunk failed to load");
+		return { setSyncBridge: host.setSyncBridge, handleHostMessage: host.handleHostMessage };
+	});
+
+	vi.stubGlobal("chrome", { runtime: {} });
+});
+afterEach(() => vi.unstubAllGlobals());
+
+describe("lazy in-process sync host", () => {
+	it("registers the bridge before dispatch, without loading the host at registration", async () => {
+		const client = await import("./offscreen-client");
+		client.setInProcessSyncBridge(bridge);
+		expect(host.loads).toBe(0);
+		await expect(client.sendToOffscreen({ type: "SYNC_ROSTER_SYNC" })).resolves.toEqual({
+			ok: true,
+			data: "done",
+		});
+		expect(host.setSyncBridge).toHaveBeenCalledWith(bridge);
+		expect(host.setSyncBridge.mock.invocationCallOrder[0]).toBeLessThan(
+			host.handleHostMessage.mock.invocationCallOrder[0]!,
+		);
+	});
+	it("propagates a chunk-load failure instead of running without a bridge", async () => {
+		host.fail = true;
+		const client = await import("./offscreen-client");
+		client.setInProcessSyncBridge(bridge);
+		await expect(client.sendToOffscreen({ type: "SYNC_ROSTER_SYNC" })).rejects.toThrow();
+		expect(host.handleHostMessage).not.toHaveBeenCalled();
+	});
+	it("fails explicitly when the bridge has not been registered", async () => {
+		const client = await import("./offscreen-client");
+		await expect(client.sendToOffscreen({ type: "SYNC_ROSTER_SYNC" })).rejects.toThrow(
+			"sync bridge not registered",
+		);
+		expect(host.handleHostMessage).not.toHaveBeenCalled();
+	});
+	// The memo must not cache a rejection: one failure would otherwise reject every later
+	// CRYPTO_*/SYNC_* op for the life of the event page, not just the caller that hit it.
+	it("retries the host load after a transient chunk-load failure", async () => {
+		host.fail = true;
+		const client = await import("./offscreen-client");
+		client.setInProcessSyncBridge(bridge);
+		await expect(client.sendToOffscreen({ type: "SYNC_ROSTER_SYNC" })).rejects.toThrow();
+		host.fail = false;
+		await expect(client.sendToOffscreen({ type: "SYNC_ROSTER_SYNC" })).resolves.toEqual({
+			ok: true,
+			data: "done",
+		});
+	});
+	it("recovers once the bridge is registered after a failed op", async () => {
+		const client = await import("./offscreen-client");
+		await expect(client.sendToOffscreen({ type: "SYNC_ROSTER_SYNC" })).rejects.toThrow(
+			"sync bridge not registered",
+		);
+		client.setInProcessSyncBridge(bridge);
+		await expect(client.sendToOffscreen({ type: "SYNC_ROSTER_SYNC" })).resolves.toEqual({
+			ok: true,
+			data: "done",
+		});
+	});
+	// The other half of the memo: retrying on failure must not turn into re-importing per message.
+	it("loads the host once across repeated ops on the happy path", async () => {
+		const client = await import("./offscreen-client");
+		client.setInProcessSyncBridge(bridge);
+		await client.sendToOffscreen({ type: "SYNC_ROSTER_SYNC" });
+		await client.sendToOffscreen({ type: "SYNC_ROSTER_SYNC" });
+		await client.sendToOffscreen({ type: "SYNC_ROSTER_SYNC" });
+		expect(host.loads).toBe(1);
+		expect(host.setSyncBridge).toHaveBeenCalledTimes(1);
+	});
+	it("uses messaging on Chromium without importing the in-process host", async () => {
+		const sendMessage = vi.fn(async () => ({ ok: true }));
+		vi.stubGlobal("chrome", {
+			runtime: { sendMessage },
+			offscreen: { hasDocument: async () => true },
+		});
+		const client = await import("./offscreen-client");
+		client.setInProcessSyncBridge(bridge);
+		await expect(client.sendToOffscreen({ type: "SYNC_ROSTER_SYNC" })).resolves.toEqual({
+			ok: true,
+		});
+		expect(sendMessage).toHaveBeenCalledWith({ type: "SYNC_ROSTER_SYNC", target: "offscreen" });
+		expect(host.loads).toBe(0);
+	});
+});
+
+// A file op writes to a vault's attachment store, so the store it names and the key it seals
+// under must be the same vault's. Both come from the seam's one resolution, never from the view.
+describe("file ops through the seam", () => {
+	it("injects the vek and the vault id together, over any vault id the view sent", async () => {
+		const client = await import("./offscreen-client");
+		client.setInProcessSyncBridge(bridge);
+		await client.sendToOffscreen({
+			type: "CRYPTO_FILE_SEAL",
+			vaultId: "v1",
+			payload: { handoff: "h", metaJson: "{}", vaultId: "someone-else" },
+		});
+		expect(host.handleHostMessage).toHaveBeenCalledWith("CRYPTO_FILE_SEAL", {
+			handoff: "h",
+			metaJson: "{}",
+			vaultId: "v1",
+			vekB64: "vek:v1",
+		});
+	});
+
+	it("scopes an untagged op to the active vault", async () => {
+		const client = await import("./offscreen-client");
+		client.setInProcessSyncBridge(bridge);
+		await client.sendToOffscreen({ type: "CRYPTO_FILE_OPEN", payload: { hash: "h" } });
+		expect(host.handleHostMessage).toHaveBeenCalledWith("CRYPTO_FILE_OPEN", {
+			hash: "h",
+			vaultId: "active",
+			vekB64: "vek:active",
+		});
+	});
+
+	it("refuses a locked vault without reaching the host", async () => {
+		const client = await import("./offscreen-client");
+		client.setInProcessSyncBridge(bridge);
+		await expect(
+			client.sendToOffscreen({ type: "CRYPTO_FILE_META", vaultId: "locked", payload: {} }),
+		).resolves.toEqual({ ok: false, error: "vault locked" });
+		expect(host.handleHostMessage).not.toHaveBeenCalled();
+	});
+});
+
+// Mailbox crypto runs under one vault's key, the one the op is tagged with, never whichever vault
+// is active; the seam injects it and the offscreen loads it in the same synchronous section.
+describe("mailbox ops through the seam", () => {
+	it("injects the tagged vault's VEK into each mailbox op, not the active vault's", async () => {
+		const client = await import("./offscreen-client");
+		client.setInProcessSyncBridge(bridge);
+		for (const type of ["CRYPTO_MAILBOX_ID", "CRYPTO_MAILBOX_SEAL", "CRYPTO_MAILBOX_OPEN"]) {
+			await client.sendToOffscreen({ type, vaultId: "v1", payload: { groupKeyB64: "g" } });
+			expect(host.handleHostMessage).toHaveBeenLastCalledWith(type, {
+				groupKeyB64: "g",
+				vekB64: "vek:v1",
+			});
+		}
+	});
+
+	it("fails a mailbox op fast while that vault is locked", async () => {
+		const client = await import("./offscreen-client");
+		client.setInProcessSyncBridge(bridge);
+		await expect(
+			client.sendToOffscreen({ type: "CRYPTO_MAILBOX_SEAL", vaultId: "locked", payload: {} }),
+		).resolves.toEqual({ ok: false, error: "vault locked" });
+		expect(host.handleHostMessage).not.toHaveBeenCalled();
+	});
+});

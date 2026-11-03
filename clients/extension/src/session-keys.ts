@@ -1,0 +1,20 @@
+// Keys in chrome.storage.session shared between the UI (popup/options) and the background.
+// Dependency-free so the UI can import them without pulling in any background code.
+
+/**
+ * The id of the currently active/unlocked vault, so the background can sync THAT vault instead
+ * of the primary. Written by the UI on unlock (`shell.setActiveVault`), by the background when it
+ * opens a view to unlock in (`openUnlockView`), and cleared on lock (`clearSession`). It is a
+ * UUID, not a secret. See docs/multiple-vaults.md (Sync).
+ */
+export const ACTIVE_VAULT_SESSION_KEY = "vault.activeId";
+
+/** The vault whose entries the UI loaded since the last unlock: only it may sync. Cleared on lock. */
+export const OPENED_VAULT_KEY = "sync.openedVault";
+
+/**
+ * A corner-prompt capture parked while the vault was locked ("Unlock & Save"), committed by the
+ * background once a view unlocks. Holds a plaintext password, so it lives in session only and is
+ * dropped on lock. Shared here because more than one background concern has to see it.
+ */
+export const CORNER_HANDOFF_KEY = "cornerPrompt.handoff";

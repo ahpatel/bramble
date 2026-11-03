@@ -78,6 +78,24 @@ describe("parseCxf: logins", () => {
 		});
 	});
 
+	it("matches a login on a port exactly (#145)", async () => {
+		const ported = payload(basicAuth).replace("https://github.com", "http://nas.local:5000");
+		const res = await parseCxf(ported, testParserContext);
+		expect(res.imported[0]).toMatchObject({
+			urls: ["http://nas.local:5000"],
+			subdomainMatch: "exact",
+		});
+	});
+
+	it("matches a bare host with a port exactly too", async () => {
+		const bare = payload(basicAuth).replace("https://github.com", "nas.local:5000");
+		const res = await parseCxf(bare, testParserContext);
+		expect(res.imported[0]).toMatchObject({
+			urls: ["nas.local:5000"],
+			subdomainMatch: "exact",
+		});
+	});
+
 	it("rebuilds an otpauth uri from the structured TOTP fields", async () => {
 		const { entry } = await first(basicAuth, {
 			type: "totp",
@@ -137,6 +155,45 @@ describe("parseCxf: passkeys", () => {
 		]);
 	});
 
+	it("gives a passkey item with no scope its rpId as the website", async () => {
+		const unscoped = JSON.parse(
+			payload({
+				type: "passkey",
+				credentialId: "-_--",
+				rpId: "github.com",
+				username: "octocat",
+				userHandle: "-_--",
+				key: keyB64Url,
+			}),
+		);
+		delete unscoped.accounts[0].items[0].scope;
+		const res = await parseCxf(JSON.stringify(unscoped), testParserContext);
+		expect(res.imported[0]).toMatchObject({ urls: ["https://github.com"] });
+	});
+
+	// The caps every file importer applies, before anything is decoded.
+	it("skips a passkey with an invalid relying-party id or oversized ids, and says why", async () => {
+		const base = {
+			type: "passkey",
+			credentialId: "-_--",
+			rpId: "github.com",
+			userHandle: "-_--",
+			key: keyB64Url,
+		};
+		const huge = bytesToBase64Url(new Uint8Array(2000));
+		for (const bad of [
+			{ rpId: "" },
+			{ rpId: "not a host" },
+			{ credentialId: huge },
+			{ userHandle: huge },
+		]) {
+			const { res, entry } = await first(basicAuth, { ...base, ...bad });
+			if (!entry || !isLogin(entry)) throw new Error("expected a login");
+			expect(entry.passkeys).toBeUndefined();
+			expect(res.warnings.join(" ")).toMatch(/passkey on "GitHub"/);
+		}
+	});
+
 	it("skips a passkey whose key we can't read, keeping the rest of the item", async () => {
 		const { res, entry } = await first(basicAuth, {
 			type: "passkey",
@@ -149,6 +206,86 @@ describe("parseCxf: passkeys", () => {
 		expect(entry.username).toBe("octocat");
 		expect(entry.passkeys).toBeUndefined();
 		expect(res.warnings[0]).toMatch(/passkey/);
+	});
+});
+
+describe("parseCxf: passkey extensions", () => {
+	const UV = new Uint8Array(32).fill(0xaa);
+	const NO_UV = new Uint8Array(32).fill(0xbb);
+	const passkeyWith = async (fido2Extensions: unknown) => {
+		const { res, entry } = await first({
+			type: "passkey",
+			credentialId: "-_--",
+			rpId: "github.com",
+			username: "octocat",
+			userHandle: "-_--",
+			key: keyB64Url,
+			fido2Extensions,
+		});
+		if (!entry || !isLogin(entry)) throw new Error("expected a login");
+		return { res, pk: entry.passkeys?.[0] };
+	};
+
+	it("keeps a passkey's PRF secrets from hmacCredentials", async () => {
+		const { res, pk } = await passkeyWith({
+			hmacCredentials: {
+				algorithm: "hmac-sha256",
+				credWithUV: bytesToBase64Url(UV),
+				credWithoutUV: bytesToBase64Url(NO_UV),
+			},
+		});
+		expect(pk?.prf).toEqual({ credWithUV: bytesToBase64(UV), credWithoutUV: bytesToBase64(NO_UV) });
+		expect(pk?.fido2Extensions).toBeUndefined();
+		expect(res.warnings).toEqual([]);
+	});
+
+	it("fills a missing credWithoutUV so the passkey can be exported again", async () => {
+		const { pk } = await passkeyWith({ hmacCredentials: { credWithUV: bytesToBase64Url(UV) } });
+		expect(pk?.prf?.credWithUV).toBe(bytesToBase64(UV));
+		expect(base64ToBytes(pk?.prf?.credWithoutUV ?? "")).toHaveLength(32);
+	});
+
+	it("leaves out a PRF secret with an unknown algorithm and says so", async () => {
+		const { res, pk } = await passkeyWith({
+			hmacCredentials: {
+				algorithm: "hmac-sha512",
+				credWithUV: bytesToBase64Url(UV),
+				credWithoutUV: bytesToBase64Url(NO_UV),
+			},
+		});
+		expect(pk).toBeDefined();
+		expect(pk?.prf).toBeUndefined();
+		expect(res.warnings).toEqual([expect.stringMatching(/had a PRF secret Bramble can't use/)]);
+	});
+
+	it("keeps other fido2Extensions members verbatim", async () => {
+		const { pk } = await passkeyWith({
+			largeBlob: { uncompressedSize: 3, data: "AAAA" },
+			credBlob: "AQ",
+		});
+		expect(pk?.fido2Extensions).toEqual({
+			largeBlob: { uncompressedSize: 3, data: "AAAA" },
+			credBlob: "AQ",
+		});
+		expect(pk?.prf).toBeUndefined();
+	});
+
+	// The vault refuses a malformed large blob (Apple's decoder fails a whole transfer on one), so
+	// it costs that member and nothing else.
+	it("leaves out a malformed largeBlob, keeping the passkey and other members, and says so", async () => {
+		const { res, pk } = await passkeyWith({
+			largeBlob: { uncompressedSize: "3", data: "AAAA" },
+			credBlob: "AQ",
+		});
+		expect(pk?.fido2Extensions).toEqual({ credBlob: "AQ" });
+		expect(res.warnings).toEqual([expect.stringMatching(/large blob Bramble can't use/)]);
+	});
+
+	it("imports the passkey when fido2Extensions is junk", async () => {
+		const { pk } = await passkeyWith("junk");
+		expect(pk).toBeDefined();
+		expect(pk?.prf).toBeUndefined();
+		expect(pk?.fido2Extensions).toBeUndefined();
 	});
 });
 

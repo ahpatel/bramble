@@ -61,7 +61,7 @@ portable consolation prize.
 | Import wizard + preview + warnings | `core/src/app/screens/Import/ImportShell.tsx` | Needs a non-file branch; the preview/commit half is unchanged. |
 | Lossy-mapping conventions | `core/src/export/kdbx.ts`, `core/src/import/types.ts` | `ImportResult.warnings`, unique-key collision handling. |
 | TOTP parse/serialize | `core/src/util/totp.ts` (`parseTotp`, otpauth) | CXF wants structured secret/period/digits/algorithm. |
-| Auto-lock grace for OS UI | `platform-mobile/src/adapters/shell.ts` (`armFilePickGrace`) | The exchange sheet backgrounds the app, same trap as the file picker. |
+| Auto-lock grace for OS UI | `clients/mobile/src/adapters/shell.ts` (`armFilePickGrace`) | The exchange sheet backgrounds the app, same trap as the file picker. |
 | Per-target capability gating | `core/src/flags.ts` | New `credentialExchange` key, iOS-only. |
 
 ## Phase 0 result: the wire format is CXF (RESOLVED 2026-07-29)
@@ -73,8 +73,8 @@ via `simctl spawn`) and encoding it:
 
 ```json
 { "accounts": [ { "id": "YWNjdC0wMDAx", "username": "ada", "email": "ada@example.com",
-    "items": [ { "id": "aXRlbS0wMDAx", "title": "GitHub", "creationAt": 721692800,
-      "modifiedAt": 771692800, "favorite": true,
+    "items": [ { "id": "aXRlbS0wMDAx", "title": "GitHub", "creationAt": 1700000000,
+      "modifiedAt": 1750000000, "favorite": true,
       "scope": { "urls": ["https://github.com"], "androidApps": [] },
       "credentials": [
         { "type": "basic-auth", "username": {"fieldType":"email","value":"ada@example.com"},
@@ -91,14 +91,15 @@ Round-trip decode returns an identical value. What this pins down:
 | Swift | JSON | Note |
 |---|---|---|
 | `userName` | `username` | Apple's property names are **not** the wire names. Do not infer keys from the Swift API. |
-| `created` / `lastModified` | `creationAt` / `modifiedAt` | UNIX **seconds**, not ms, not ISO. |
+| `created` / `lastModified` | `creationAt` / `modifiedAt` | UNIX **seconds**, not ms, not ISO. Apple's types use the coder's date strategy, whose default counts from 2001, so both coders in `CredentialExchange.swift` set `.secondsSince1970`. Without it every date moves 31 years (imports land in the 1990s, exports in the 2050s); this spike read the 2001-based numbers as UNIX, and releases before the 2026-10-31 fix did exactly that. The fix is probed on macOS 26, not yet run on a device. |
 | `credentialID` / `relyingPartyIdentifier` | `credentialId` / `rpId` | |
 | `exporterRelyingPartyIdentifier` | `exporterRpId` | |
 | `formatVersion: .v1` | `"version": {"major":1,"minor":0}` | An object, not the string `"1.0"`. |
 | any `Data` | base64url, **unpadded** | `0x01020304` -> `"AQIDBA"`. Our `PasskeyCredential` docs say base64url but `AutofillBridge.swift` is fed standard base64, so pin the encoding explicitly in the mapper. |
 | `TOTP.secret: Data` | base32 string | Apple base32-**encodes** the raw bytes. Our stored value is already base32 text, so emit it as-is in the JSON and let Apple decode it. Passing ASCII bytes of a base32 string through the Swift type double-encodes it and every imported code comes out wrong. |
+| `Passkey.fido2Extensions` (iOS / macOS **26.4+**) | `fido2Extensions: { hmacCredentials: { algorithm: "hmac-sha256", credWithUV, credWithoutUV }, largeBlob: { uncompressedSize, data } }` | The passkey's PRF secrets, which Bramble stores as `prf` (see [passkey-prf.md](passkey-prf.md)), plus a large blob kept verbatim in `fido2Extensions`. **Both** `credWithUV` and `credWithoutUV` are required: one missing makes Apple reject the whole payload, so export always writes both. Apple's decoder keeps only these two members (it drops `credBlob` and `payments`). Before 26.4 the field doesn't exist and the OS drops it silently, so `isAvailable` reports `passkeyExtensions` and the export and import flows warn. Probed on macOS 26.6 with the real framework. |
 
-Consequence for the design: **build CXF JSON in TS, `JSONDecoder().decode(ASExportedCredentialData.self, from:)` in Swift, and the reverse on import.** No Swift mapping layer.
+Consequence for the design: **build CXF JSON in TS, `JSONDecoder().decode(ASExportedCredentialData.self, from:)` in Swift, and the reverse on import.** No Swift mapping layer, only the date strategy above.
 
 Two caveats found while reading the interface:
 
@@ -141,7 +142,7 @@ Two decisions worth knowing before Phase 3 wires the UI:
 | Bramble | CXF | Notes |
 |---|---|---|
 | `login.username` / `.password` | `BasicAuth{username, password}` | Values wrap in `EditableField`, not bare strings. |
-| `login.urls` | `Item.scope.urls` | Absolute URLs only (the decoder drops what `Foundation.URL` rejects), so a bare host is promoted to https. |
+| `login.urls` | `Item.scope.urls` | Absolute URLs only (the decoder drops what `Foundation.URL` rejects), so a bare host is promoted to https. On import, a passkey item with no scope gets `https://<rpId>`, as a login we mint does. |
 | `login.totp` | `TOTP{secret, period, digits, algorithm, issuer}` | `parseTotp` out, `buildTotpUri` back. An unreadable key becomes a custom field plus a warning, never a drop. |
 | `login.passkeys[]` | `Passkey{credentialId, rpId, username, userDisplayName, userHandle, key}` | Ids convert from our standard base64 to unpadded base64url. **`key` is a format change, not just an encoding one**: we store the raw 32-byte P-256 scalar, CXF holds PKCS#8 DER. `username`/`userDisplayName` are required in CXF and optional for us, so they default to `""`. |
 | `card` | `CreditCard{number, fullName, cardType, verificationNumber, expiryDate}` | `expMonth`/`expYear` -> one `year-month` field. `brand` -> `cardType`. |
@@ -197,8 +198,8 @@ as the activity string, `ASCredentialExchangeActivityType` as the symbol).
 
 Verified in the built Release product: the plugin symbols are in `App.app/App`, the extension
 declares `SupportsCredentialExchange` + `SupportedCredentialExchangeVersions ["1.0"]`, and the app
-declares `NSUserActivityTypes ["ASCredentialExchangeActivity"]`. **A real transfer is still
-unverified**; see the simulator section.
+declares `NSUserActivityTypes ["ASCredentialExchangeActivity"]`. Real transfers are verified on
+device in both directions; see the phased route.
 
 `@objc(CredentialExchangePlugin)`, `jsName = "CredentialExchange"`, following `AutofillBridge.swift`.
 Everything is `@available(iOS 26.0, *)` guarded; the deployment target stays 15.0.
@@ -259,21 +260,29 @@ picker and it applies verbatim here.
 |---|---|---|
 | 0 | ~~Spike: is Apple's Codable CXF-shaped?~~ **DONE, passed.** | - |
 | 1 | ~~Shared `core/src/exchange/` module + tests~~ **DONE** (31 tests, both directions + round trip). | - |
-| 2 | ~~Swift plugin, Info.plist keys, AppDelegate hook, auto-lock grace~~ **BUILT, compile-verified; the transfer itself is unverified.** | - |
+| 2 | ~~Swift plugin, Info.plist keys, AppDelegate hook, auto-lock grace~~ **DONE**, transfers verified on device both ways. | - |
 | 3 | ~~Import card, Settings export row, flags, i18n~~ **DONE.** | - |
-| 4 | Device + interop testing. **Export -> Apple Passwords VERIFIED on device (2026-07-30), including a real webauthn.io sign-in from the transferred passkey. Import is untested.** | ~1d left |
+| 4 | Device + interop testing. **Apple Passwords VERIFIED both ways on device**: export (2026-07-30) including a real webauthn.io sign-in from the transferred passkey, and import. Third-party managers are untried as counterparties. | interop only |
 | 5 | *Optional*: CXF file import/export through the existing file path, all targets, Android included | +1d |
 
-**Remaining: phase 4 (device + interop testing, 1-2d), and optionally phase 5.**
+**Remaining: interop with third-party managers (phase 4), and optionally phase 5.**
 
 **Export is done.** Bramble -> Apple Passwords on an iPhone SE (iOS 26.5.2) carried a login and a
 passkey, and the transferred passkey then signed in on webauthn.io from Passwords. That is the
 strongest available check: an importer will accept a structurally valid key it can never use, so
 only a successful assertion proves the key material survived.
 
-**Import has never run on a device.** It has more moving parts than export: the token handoff at a
-cold launch, the claim against a locked vault, and unpacking the PKCS#8 back to a scalar, none of
-which unit tests can cover.
+**Import is done too.** Apple Passwords -> Bramble works on device, so both directions are verified
+against the same counterparty.
+
+**Apple drops a Passwords website that has a port** (user report, iOS 27.2, 2026-10-31). Captured
+on device (iOS 26.6.2): an entry with `https://example.com:1234` reaches `importCredentials` with
+`scope.urls` empty and the website nowhere else in the item, while a portless control arrives
+intact. Apple's macOS 26 decoder keeps port URLs, so Passwords' exporter is the likely culprit.
+Nothing in the payload lets us recover it.
+
+Passwords names the destination app by `CFBundleName`, not `CFBundleDisplayName`, so the app's
+Info.plist sets it to "Bramble" (it was `$(PRODUCT_NAME)`, which shows as "App").
 
 Two defects that only a device could have found, both now fixed and both silent by nature:
 a local Capacitor plugin that compiles and ships but is never registered (quirk 10), and a passkey
@@ -286,13 +295,13 @@ Verified 2026-07-29 on iPhone 17 Pro / iOS 26.4:
 - **The Phase 0 spike runs there today.** `swiftc -sdk iphonesimulator -target
   arm64-apple-ios26.0-simulator` produces a CLI binary that `simctl spawn` runs against the real
   framework. No app target, no test target, no device. Kept at
-  `packages/platform-mobile/scripts/cxf-wire-probe.swift`; re-run it whenever a wire-format question
+  `clients/mobile/scripts/cxf-wire-probe.swift`; re-run it whenever a wire-format question
   comes up:
 
   ```sh
   xcrun swiftc -sdk $(xcrun --sdk iphonesimulator --show-sdk-path) \
     -target arm64-apple-ios26.0-simulator \
-    packages/platform-mobile/scripts/cxf-wire-probe.swift -o /tmp/cxf-probe
+    clients/mobile/scripts/cxf-wire-probe.swift -o /tmp/cxf-probe
   xcrun simctl spawn booted /tmp/cxf-probe
   ```
 - **The credential provider extension registers.** `pluginkit -m -v -p
@@ -309,8 +318,11 @@ Verified 2026-07-29 on iPhone 17 Pro / iOS 26.4:
 - **Still device-only:** no App Store, so 1Password / Bitwarden / Chrome as counterparties. Phase 4
   interop does not move.
 - **Decoding one of OUR payloads** through Apple's types: `cxf-wire-probe.swift <file.json>` reports
-  what it accepted (titles, scope, credential kinds) or the decode error. This is the cheap way to
-  check what iOS will take before a device says "unsupported data" and names nothing.
+  what it accepted (titles, scope, credential kinds, and `passkey(prf=yes|no)`) or the decode error.
+  This is the cheap way to check what iOS will take before a device says "unsupported data" and
+  names nothing. The Mac's own framework works too, with no simulator, once macOS is 26.4 or later:
+  `xcrun swiftc -target arm64-apple-macos26.4 clients/mobile/scripts/cxf-wire-probe.swift -o
+  /tmp/cxf-probe && /tmp/cxf-probe /tmp/payload.json`.
 - **Untested:** whether a transfer actually completes in the sim. Settling it needs the Phase 2 build
   with the plist keys, plus UI taps that `simctl` cannot send. Budget for it being device-only and
   treat a working sim flow as a bonus.

@@ -1,7 +1,7 @@
 {
 	"manifest_version": 3,
 	"name": "Bramble",
-	"version": "1.30.0",
+	"version": "1.32.0",
 	"default_locale": "en",
 	"description": "__MSG_extDescription__",
 	"browser_specific_settings": {
@@ -16,14 +16,7 @@
 	"action": {
 		"default_popup": "popup.html",
 		"default_title": "Bramble",
-		"default_icon": {
-			"16": "icons/icon-16.png",
-			"32": "icons/icon-32.png"
-		},
-		"theme_icons": [
-			{ "light": "icons/icon-16-dark.png", "dark": "icons/icon-16.png", "size": 16 },
-			{ "light": "icons/icon-32-dark.png", "dark": "icons/icon-32.png", "size": 32 }
-		]
+		"default_icon": "icons/icon-themed.svg"
 	},
 	"icons": {
 		"16": "icons/icon-16.png",
@@ -37,6 +30,7 @@
 		"type": "module"
 	},
 	"permissions": ["storage", "unlimitedStorage", "alarms", "idle", "clipboardWrite", "identity"],
+	"optional_permissions": ["nativeMessaging"],
 	"host_permissions": ["<all_urls>"],
 	"content_scripts": [
 		{

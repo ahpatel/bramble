@@ -1,0 +1,810 @@
+/// <reference types="chrome" />
+
+import { api } from "./content-api";
+import { anchorIsLive } from "./detection";
+import { hostOffset } from "./host-offset";
+import { type AliasRowState, dropdownAlias } from "./html/dropdown-alias";
+import { dropdownItem } from "./html/dropdown-item";
+import { dropdownLocked } from "./html/dropdown-locked";
+import { dropdownStyles } from "./html/dropdown-styles";
+import { dropdownSuggest } from "./html/dropdown-suggest";
+import { EARLY_CLICK_MS, isLegible } from "./legibility";
+import { onTeardown } from "./lifecycle";
+import type { MatchSummary } from "./types";
+
+// The autofill picker: an extension-origin iframe (primary) with a closed-shadow
+// dropdown as the COEP fallback. This module hides the iframe-vs-shadow decision,
+// the postMessage bridge + origin checks, the clickjacking guard, positioning,
+// and keyboard nav behind the `picker` facade at the bottom.
+
+// User actions are reported via callbacks so this module never messages the
+// background or touches the page's display policy directly.
+let pickCb: ((entryId: string, otpOnly: boolean) => void) | null = null;
+// Reports the field the unlock was requested from: clicking the locked row dismisses the picker,
+// so the content policy needs the anchor to re-surface matches on it once the vault unlocks.
+let unlockCb: ((field: HTMLInputElement | null) => void) | null = null;
+let dismissCb: (() => void) | null = null;
+// The generated-password suggestion row reports through its own callbacks so the
+// content policy owns generation and the fill (this module never touches secrets).
+let onSuggestedCb: (() => void) | null = null;
+let regenerateCb: (() => void) | null = null;
+// The alias row reports the same way, so this module never learns what an alias is or who makes
+// one; the content policy owns the round trip and the fill.
+let aliasCb: (() => void) | null = null;
+
+// A suggest option threads a generated password to whichever renderer is active.
+type SuggestOpt = { password: string };
+
+/** Row options threaded to whichever renderer is active. */
+type RowOpts = {
+	otpOnly?: boolean;
+	suggest?: SuggestOpt;
+	alias?: AliasRowState;
+	carriedId?: string;
+};
+
+/**
+ * Cache key for a rendered match set plus its optional extra rows.
+ *
+ * The alias row's STATE is part of the key, and has to be: the cache exists so a re-query on
+ * every DOM mutation does not reflicker an identical dropdown, and it compares content. The
+ * suggested-password row is static content, so its password sufficed. An alias row changes from
+ * invitation to spinner to error without the matches moving, and keyed on content alone the
+ * dropdown would render once and then sit frozen on whichever state it was first drawn in.
+ */
+function renderKey(matches: MatchSummary[], opts?: RowOpts): string {
+	const alias = opts?.alias;
+	const a = alias
+		? `a:${alias.state}:${alias.state === "error" ? (alias.message ?? "") : ""}\0`
+		: "";
+	// The carried id is part of the content: the same rows with a different card marked is a
+	// different dropdown, and keyed on ids alone the badge would stay where it was first drawn.
+	const c = opts?.carriedId ? `c:${opts.carriedId}\0` : "";
+	return a + c + (opts?.suggest ? `s:${opts.suggest.password}\0` : "") + matchesKey(matches);
+}
+
+// Anchor field shared by both renderers (the page input the picker sits under).
+let anchorField: HTMLInputElement | null = null;
+
+// The field whose native autocomplete we overrode while taking it over, plus its original
+// value, so we can put it back when we let go.
+let suppressedField: HTMLInputElement | null = null;
+let suppressedAutocomplete: string | null = null;
+
+// Tokens we would blind ourselves by overwriting. `one-time-code` is the strongest rung of OTP
+// detection, and on a segmented widget it is often the ONLY thing marking the boxes; `cc-*` is
+// the first rung of card detection and on a hosted-fields frame the field's name is frequently
+// just "number" (see docs/field-detection.md). Writing over either takes the field out of the
+// model at the next re-parse, and the user's pick is then refused as landing on nothing: the
+// dropdown opens, clicking it does nothing, and the field is never offered again.
+//
+// A payment modal makes it worse than a no-op. Paymentus ships a Credit tab and a Debit tab,
+// each with a full set of cc-* fields and only one displayed; strip the token off the visible
+// card-number box and `ccByToken` resolves to the hidden tab's copy, so the model now points at
+// a field nobody can see. That was reported as "it proposed autofill, I clicked my card, it
+// didn't fill at all, and then it stopped offering".
+//
+// The cost is that a browser's own card / code dropdown may render over ours on these fields.
+// That is the right way round: an overlapping suggestion is a nuisance, a fill that silently
+// does nothing is a broken feature. Password tokens are still suppressed, because no rung of
+// login detection depends on them (the password's nearest preceding text input carries it).
+const LOAD_BEARING_TOKEN_RE = /\bone-time-code\b|\bcc-[a-z]+(-[a-z]+)*\b/i;
+
+// Route every anchorField change through here so the browser's native autofill is
+// suppressed on exactly the field Bramble is handling and restored the moment we release
+// it - otherwise the native dropdown renders on top of ours. The MutationObserver watches
+// childList/subtree only (not attributes), so this write never invalidates the field-model
+// cache directly; our own host insertion does, and the re-parse that follows reads whatever
+// is on the field then. Best-effort: autocomplete="off" reliably suppresses Firefox and
+// generic Chrome autofill; Chrome's own password UI on a recognized login field may persist.
+function setAnchorField(field: HTMLInputElement | null): void {
+	anchorField = field;
+	// A new anchor is reachable until its own hit test says otherwise.
+	lastHitTest = Number.NaN;
+	anchorUnreachable = false;
+	if (suppressedField && suppressedField !== field) {
+		if (suppressedAutocomplete === null) suppressedField.removeAttribute("autocomplete");
+		else suppressedField.setAttribute("autocomplete", suppressedAutocomplete);
+		suppressedField = null;
+		suppressedAutocomplete = null;
+	}
+	if (field && field !== suppressedField) {
+		const declared = field.getAttribute("autocomplete");
+		// Nothing to gain and everything to lose: a browser has no stored one-time code to
+		// offer on a desktop, so there is no native dropdown here to get out of the way of.
+		if (declared && LOAD_BEARING_TOKEN_RE.test(declared)) return;
+		suppressedField = field;
+		suppressedAutocomplete = declared;
+		field.setAttribute("autocomplete", "off");
+	}
+}
+
+// Clipping is the one way of hiding a field that leaves it attached, styled visible, and still
+// measuring a box: an ancestor collapsed to nothing with `overflow: hidden`, which is how a fair
+// number of modals close. No style answers that, and neither does an IntersectionObserver, which
+// looks like the tool for it and is not - a LIVE observer never fires when only an ancestor's
+// clip changes, while a fresh one on the identical page reports zero. A hit test at the field's
+// own centre does answer it, and catches an overlay dropped on top of the field for free.
+//
+// Rate-limited rather than run per frame: it forces a hit test, and a dismissal does not need
+// 60Hz. `getRootNode()` keeps it correct for a field inside a shadow root, where the document's
+// own elementFromPoint would answer with the host and never with the field.
+const HIT_TEST_MS = 150;
+let lastHitTest = Number.NaN;
+let anchorUnreachable = false;
+
+function anchorIsReachable(field: HTMLInputElement, rect: DOMRect): boolean {
+	const x = rect.left + rect.width / 2;
+	const y = rect.top + rect.height / 2;
+	// Nothing to hit outside the viewport. A field merely scrolled out of sight keeps its
+	// picker, which rides along with it, as it always has.
+	if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return true;
+	const root = field.getRootNode() as Node & Partial<DocumentOrShadowRoot>;
+	// No hit testing to be had (jsdom, and any engine without CSSOM View): fail open, the way
+	// isVisibleCss does without checkVisibility. Never dismiss on a question we cannot ask.
+	if (typeof root.elementFromPoint !== "function") return true;
+	const top = root.elementFromPoint(x, y);
+	if (!top) return false;
+	// elementFromPoint answers with the DEEPEST element at the point, so a field that is
+	// really there answers with itself, or with an icon painted inside it. An ANCESTOR coming
+	// back means the point fell through to whatever is behind: `<body>` contains the field
+	// too, so accepting ancestors here would accept every clipped-away field there is.
+	return top === field || field.contains(top);
+}
+
+function matchesKey(matches: MatchSummary[]): string {
+	let out = "";
+	for (const m of matches) out += `${m.id}\0`;
+	return out;
+}
+
+/** True when a click landed on the anchor field or a `<label>` that routes to it. */
+function clickIsOnAnchor(target: Node): boolean {
+	if (!anchorField) return false;
+	if (target === anchorField || anchorField.contains(target)) return true;
+	if (target instanceof Element) {
+		const label = target.closest("label");
+		if (label) {
+			if (anchorField.id && label.htmlFor === anchorField.id) return true;
+			if (label.contains(anchorField)) return true;
+		}
+	}
+	return false;
+}
+
+/** Match the field width for a bold, integrated look; floored so it stays substantial
+ *  on narrow fields and capped so very wide fields don't sprawl. */
+function pickerWidth(fieldWidth: number): number {
+	return Math.min(Math.max(fieldWidth, 300), 440);
+}
+
+/** Anchor a host below `field` via a compositor-friendly transform (no layout). */
+function positionHostElement(el: HTMLElement, field: HTMLInputElement): void {
+	const rect = field.getBoundingClientRect();
+	const offset = hostOffset(el);
+	const x = rect.left + offset.x;
+	const y = rect.bottom + offset.y + 2;
+	const width = `${pickerWidth(rect.width)}px`;
+	// translate (compositor-only) instead of top/left (layout) so the per-frame
+	// tracker doesn't thrash layout; write only on change.
+	const transform = `translate3d(${x}px, ${y}px, 0)`;
+	if (el.style.transform === transform && el.style.width === width) return;
+	el.style.transform = transform;
+	el.style.width = width;
+	markPickerMoved();
+}
+
+// A page that can open or move the picker can put it under a click the user is already making
+// (a double-click lure). Clicks before it has sat still this long are dropped; keys are not timed.
+let pickerSettledAt = Number.NEGATIVE_INFINITY;
+
+function markPickerMoved(): void {
+	pickerSettledAt = performance.now();
+}
+
+function clickIsEarly(): boolean {
+	return performance.now() - pickerSettledAt < EARLY_CLICK_MS;
+}
+
+// Per-frame position tracking while a picker is visible. window 'scroll' is
+// composed:false and doesn't bubble, so it never fires for scrolls inside a
+// shadow root or a nested modal scroller (e.g. Reddit's login modal). The rAF
+// loop keeps the picker pinned; transform writes keep the common case smooth.
+let trackingRaf: number | null = null;
+let lastX = Number.NaN;
+let lastY = Number.NaN;
+let lastWidth = Number.NaN;
+let lastAnchor: HTMLInputElement | null = null;
+// Hidden mid-scroll: JS tracking trails the compositor inside a modal/shadow
+// scroller, so we hide while the field moves and snap back once it settles.
+let scrollHidden = false;
+let lastMoveTs = 0;
+const SCROLL_SETTLE_MS = 120;
+
+function startPositionTracking(): void {
+	if (trackingRaf !== null) return;
+	// Fresh loop: clear the baseline so the first frame doesn't read as a scroll.
+	lastX = Number.NaN;
+	lastAnchor = null;
+	scrollHidden = false;
+	const tick = (ts: number): void => {
+		const host = activeHost();
+		if (!host || !anchorField) {
+			trackingRaf = null;
+			return;
+		}
+		const rect = anchorField.getBoundingClientRect();
+		if (Number.isNaN(lastHitTest) || ts - lastHitTest >= HIT_TEST_MS) {
+			lastHitTest = ts;
+			anchorUnreachable = !anchorIsReachable(anchorField, rect);
+		}
+		// The anchor can go at any time: an SPA route change unmounts the form, a
+		// second step replaces the first, a modal closes. Following a field that is
+		// no longer there parks the picker in the page's top-left corner instead of
+		// taking it down, so a lost anchor dismisses rather than repositions.
+		if (!anchorIsLive(anchorField, rect) || anchorUnreachable) {
+			stopPositionTracking();
+			removeActiveUi();
+			return;
+		}
+		const offset = hostOffset(host);
+		const x = rect.left + offset.x;
+		const y = rect.bottom + offset.y + 2;
+		const width = pickerWidth(rect.width);
+		// New field or first frame: re-baseline without treating it as a scroll.
+		const rebaseline = Number.isNaN(lastX) || anchorField !== lastAnchor;
+		const moved = !rebaseline && (x !== lastX || y !== lastY || width !== lastWidth);
+
+		if (rebaseline || moved) {
+			host.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+			host.style.width = `${width}px`;
+			markPickerMoved();
+		}
+		lastX = x;
+		lastY = y;
+		lastWidth = width;
+		lastAnchor = anchorField;
+
+		// A change in the field's *document* position is an internal/modal scroll
+		// (a window scroll leaves document coords constant, so the picker rides
+		// along natively). Hide while it moves; snap back once settled.
+		if (moved) {
+			lastMoveTs = ts;
+			if (!scrollHidden) {
+				host.style.visibility = "hidden";
+				scrollHidden = true;
+			}
+		} else if (scrollHidden && (rebaseline || ts - lastMoveTs >= SCROLL_SETTLE_MS)) {
+			host.style.visibility = "";
+			scrollHidden = false;
+			markPickerMoved();
+		}
+		trackingRaf = requestAnimationFrame(tick);
+	};
+	trackingRaf = requestAnimationFrame(tick);
+}
+
+function stopPositionTracking(): void {
+	if (trackingRaf !== null) {
+		cancelAnimationFrame(trackingRaf);
+		trackingRaf = null;
+	}
+	scrollHidden = false;
+}
+
+// --- Shadow dropdown (COEP fallback renderer) ---
+
+const DROPDOWN_ID = "bramble-autofill-dropdown";
+
+let dropdownEl: HTMLElement | null = null;
+// Joined ids of the rendered matches; lets re-queries with the same set skip
+// the remove-and-re-add cycle that caused flicker on dynamic pages.
+let openMatchesKey = "";
+let openDropdownKind: "matches" | "locked" | null = null;
+
+function removeDropdown(): void {
+	if (dropdownEl) {
+		dropdownEl.remove();
+		dropdownEl = null;
+	}
+	setAnchorField(null);
+	openMatchesKey = "";
+	openDropdownKind = null;
+}
+
+function positionDropdown(field: HTMLInputElement): void {
+	if (!dropdownEl) return;
+	positionHostElement(dropdownEl, field);
+}
+
+function mountDropdown(field: HTMLInputElement, bodyHtml: string): ShadowRoot {
+	removeDropdown();
+	setAnchorField(field);
+
+	const root = document.createElement("div");
+	root.id = DROPDOWN_ID;
+	// Inline so positioning doesn't depend on the inner stylesheet parsing first.
+	root.style.cssText = "position: absolute; top: 0; left: 0; z-index: 2147483647;";
+	// Closed: page gets `root.shadowRoot === null`. Listener attaches to the returned shadow.
+	const shadow = root.attachShadow({ mode: "closed" });
+	// Box styling lives on the inner .tp-dropdown (not :host) so the host page's
+	// CSS reset can't reach it across the shadow boundary.
+	shadow.innerHTML = `${dropdownStyles}<div class="tp-dropdown">${bodyHtml}</div>`;
+
+	dropdownEl = root;
+	document.body.appendChild(dropdownEl);
+	positionDropdown(field);
+	startPositionTracking();
+	return shadow;
+}
+
+/** Renders the match picker anchored to `field`; no-op when content is unchanged to avoid flicker. */
+function buildDropdown(matches: MatchSummary[], field: HTMLInputElement, opts?: RowOpts): void {
+	if (matches.length === 0 && !opts?.suggest && !opts?.alias) return;
+
+	const key = renderKey(matches, opts);
+	// Same content/field already showing: keep the existing dropdown to avoid
+	// flicker from re-queries on every DOM mutation.
+	if (
+		dropdownEl &&
+		anchorField === field &&
+		openDropdownKind === "matches" &&
+		openMatchesKey === key
+	) {
+		positionDropdown(field);
+		return;
+	}
+
+	// Suggest row (if any) leads, then the matches. Join verbatim (each piece is
+	// already escaped html) rather than interpolating strings, which would re-escape.
+	const parts: string[] = [];
+	if (opts?.alias) parts.push(dropdownAlias(opts.alias));
+	if (opts?.suggest) parts.push(dropdownSuggest(opts.suggest.password));
+	for (const m of matches) parts.push(dropdownItem({ ...m, carried: m.id === opts?.carriedId }));
+	const root = mountDropdown(field, parts.join(""));
+	openMatchesKey = key;
+	openDropdownKind = "matches";
+
+	// mousedown (not click) beats the field's blur; otherwise focus leaves first
+	// and the click never reaches us.
+	root.addEventListener("mousedown", (e) => {
+		// Only a real user mousedown may act (no synthetic events).
+		if (!e.isTrusted) return;
+		const target = e.target as HTMLElement | null;
+		// Regenerate sits inside the suggest row, so match it before data-tp-suggest.
+		if (target?.closest("[data-tp-regenerate]")) {
+			e.preventDefault();
+			regenerateCb?.();
+			return;
+		}
+		const item = target?.closest<HTMLElement>("[data-entry-id]");
+		if (item?.dataset.entryId) {
+			e.preventDefault();
+			if (pickAllowed(dropdownEl, true)) pickCb?.(item.dataset.entryId, opts?.otpOnly === true);
+			return;
+		}
+		if (target?.closest("[data-tp-suggest]")) {
+			e.preventDefault();
+			if (pickAllowed(dropdownEl, true)) onSuggestedCb?.();
+			return;
+		}
+		if (target?.closest("[data-tp-alias]")) {
+			e.preventDefault();
+			if (pickAllowed(dropdownEl, true)) aliasCb?.();
+		}
+	});
+}
+
+function buildLockedDropdown(field: HTMLInputElement): void {
+	if (dropdownEl && anchorField === field && openDropdownKind === "locked") {
+		positionDropdown(field);
+		return;
+	}
+	const root = mountDropdown(field, dropdownLocked());
+	openDropdownKind = "locked";
+
+	// mousedown beats the field's blur; otherwise the row never gets the click.
+	root.addEventListener("mousedown", (e) => {
+		// Only a genuine user click opens the pop-out.
+		if (!e.isTrusted) return;
+		const item = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-tp-popout]");
+		if (!item) return;
+		e.preventDefault();
+		// Capture the anchor before removeDropdown() clears it, so the caller can re-surface here.
+		const field = anchorField;
+		removeDropdown();
+		unlockCb?.(field);
+	});
+}
+
+// --- Iframe renderer (primary); the shadow path above is the COEP fallback. ---
+
+const AUTOFILL_UI_URL = api.runtime.getURL("autofill-ui.html");
+// The extension url scheme (chrome-extension: / moz-extension:), the one thing about the iframe's
+// origin we can know up front.
+const EXT_SCHEME = new URL(AUTOFILL_UI_URL).protocol;
+// Our end of the private channel handed to the iframe at its READY. The page shares the window
+// both of us would otherwise talk on, so everything after READY rides this port. READY's origin
+// pins the hand-over, and it is NOT always the origin of the url we set as src: under Chromium's
+// manifest `use_dynamic_url`, getURL hands a content script a per-session GUID origin while the
+// document it loads reports the extension's static one. Pinning to the src origin silently
+// dropped the hand-over, and the picker fell back to its shadow renderer on every page.
+let uiPort: MessagePort | null = null;
+
+type IframeRender =
+	| {
+			kind: "matches";
+			matches: MatchSummary[];
+			otpOnly: boolean;
+			suggest?: SuggestOpt;
+			alias?: AliasRowState;
+			carriedId?: string;
+	  }
+	| { kind: "locked" };
+
+// "probe" until the first mount resolves to iframe (READY) or shadow (timeout).
+let uiMode: "probe" | "iframe" | "shadow" = "probe";
+let iframeHostEl: HTMLElement | null = null;
+let iframeEl: HTMLIFrameElement | null = null;
+let iframeReady = false;
+let pendingRender: IframeRender | null = null;
+let readinessTimer: number | null = null;
+let iframeMatchesKey = "";
+// Whether the iframe has a keyboard-highlighted row (drives Enter-to-pick). Tracked from the
+// renders and arrows we send, which the iframe applies in order, not from its UI_HIGHLIGHT: that
+// arrives a round trip late and lost the race to a quick Enter.
+let iframeHasHighlight = false;
+let iframeNavRows = 0;
+// Ids last sent to the iframe. A pick naming anything else is dropped, as in relay-client.ts.
+let iframeRenderedIds = new Set<string>();
+
+/** Hide the iframe host (kept alive for reuse). */
+function hideIframe(): void {
+	if (iframeHostEl) {
+		iframeHostEl.style.display = "none";
+		// Drop a mid-scroll hide with it: the next show starts a fresh tracking loop,
+		// whose baseline is "not hidden", so nothing would ever clear it again.
+		iframeHostEl.style.visibility = "";
+	}
+	iframeMatchesKey = "";
+	iframeHasHighlight = false;
+	setAnchorField(null);
+}
+
+/** Tear the iframe host down entirely (extension teardown / COEP fallback). */
+function destroyIframeHost(): void {
+	if (readinessTimer !== null) {
+		clearTimeout(readinessTimer);
+		readinessTimer = null;
+	}
+	if (iframeHostEl) {
+		iframeHostEl.remove();
+		iframeHostEl = null;
+	}
+	iframeEl = null;
+	iframeReady = false;
+	closeUiPort();
+	iframeRenderedIds = new Set();
+	pendingRender = null;
+	iframeMatchesKey = "";
+	iframeHasHighlight = false;
+	setAnchorField(null);
+}
+
+/** Create the iframe host (closed-shadow wrapper around the extension-origin iframe), or un-hide it if it exists. */
+function ensureIframeHost(): void {
+	if (iframeHostEl) {
+		if (iframeHostEl.style.display === "none") markPickerMoved();
+		iframeHostEl.style.display = "block";
+		return;
+	}
+	const host = document.createElement("div");
+	// Random id: no stable selector for the page to target the host by.
+	host.id = `tp-${Math.random().toString(36).slice(2, 10)}`;
+	host.style.cssText =
+		"position: absolute; top: 0; left: 0; z-index: 2147483647; margin: 0; padding: 0; border: 0;";
+	const shadow = host.attachShadow({ mode: "closed" });
+	const frame = document.createElement("iframe");
+	frame.src = `${AUTOFILL_UI_URL}?parentOrigin=${encodeURIComponent(location.origin)}`;
+	frame.setAttribute("scrolling", "no");
+	// color-scheme: light dark so the iframe isn't given an opaque Canvas backdrop
+	// on dark pages (that bled a halo around the card).
+	frame.style.cssText =
+		"display: block; width: 100%; height: 0; border: 0; margin: 0; background: transparent; color-scheme: light dark;";
+	shadow.appendChild(frame);
+	document.body.appendChild(host);
+	iframeHostEl = host;
+	iframeEl = frame;
+	iframeReady = false;
+}
+
+function closeUiPort(): void {
+	uiPort?.close();
+	uiPort = null;
+}
+
+/** Post to the iframe over its port. No-op before the handshake. */
+function postToUi(message: unknown): void {
+	uiPort?.postMessage(message);
+}
+
+function flushPendingRender(): void {
+	if (!iframeEl?.contentWindow || !pendingRender) return;
+	const render = pendingRender;
+	pendingRender = null;
+	iframeRenderedIds = new Set(render.kind === "matches" ? render.matches.map((m) => m.id) : []);
+	// Mirrors autofill-ui.ts: a render clears the highlight, and a busy alias row takes no keys.
+	iframeHasHighlight = false;
+	iframeNavRows =
+		render.kind === "locked"
+			? 1
+			: render.matches.length +
+				(render.suggest ? 1 : 0) +
+				(render.alias && render.alias.state !== "busy" ? 1 : 0);
+	if (render.kind === "matches") {
+		postToUi({
+			type: "RENDER_MATCHES",
+			matches: render.matches,
+			otpOnly: render.otpOnly,
+			suggest: render.suggest,
+			alias: render.alias,
+			carriedId: render.carriedId,
+		});
+	} else {
+		postToUi({ type: "RENDER_LOCKED" });
+	}
+}
+
+/** First-mount fallback: if the iframe never reports ready (e.g. COEP blocks it), switch to the shadow renderer. */
+function armReadinessTimeout(): void {
+	if (readinessTimer !== null || iframeReady) return;
+	readinessTimer = window.setTimeout(() => {
+		readinessTimer = null;
+		if (iframeReady) return;
+		uiMode = "shadow";
+		const field = anchorField;
+		const render = pendingRender;
+		destroyIframeHost();
+		if (field && render) {
+			if (render.kind === "matches")
+				buildDropdown(render.matches, field, {
+					otpOnly: render.otpOnly,
+					// Carried over, or falling back to the shadow renderer silently drops whichever
+					// extra row was on offer: the suggestion as well as the alias.
+					suggest: render.suggest,
+					alias: render.alias,
+				});
+			else buildLockedDropdown(field);
+		}
+	}, 700);
+}
+
+function iframeShow(field: HTMLInputElement, render: IframeRender): void {
+	ensureIframeHost();
+	if (!iframeHostEl) return;
+	setAnchorField(field);
+	positionHostElement(iframeHostEl, field);
+	startPositionTracking();
+	// Skip a redundant re-post when the same content is already showing here.
+	// The alias state belongs in this key exactly as it does in the shadow renderer's: without it
+	// idle and busy hash the same, the re-post is skipped as redundant, and the row never leaves
+	// the state it was first drawn in. This is the primary renderer, so that is the whole spinner.
+	const key =
+		render.kind === "matches"
+			? renderKey(render.matches, {
+					suggest: render.suggest,
+					alias: render.alias,
+					carriedId: render.carriedId,
+				})
+			: "\0locked";
+	if (iframeReady && key === iframeMatchesKey) return;
+	iframeMatchesKey = key;
+	pendingRender = render;
+	if (iframeReady) flushPendingRender();
+	else armReadinessTimeout();
+}
+
+/** Gate for anything that fills: a click must also have waited out EARLY_CLICK_MS. */
+function pickAllowed(host: HTMLElement | null, pointer: unknown): boolean {
+	if (pointer === true && clickIsEarly()) return false;
+	return pickIsTrustworthy(host);
+}
+
+/** Pick-time anti-clickjacking: reject a pick when the host is hidden, clipped, overlaid, or off-field. */
+function pickIsTrustworthy(host: HTMLElement | null): boolean {
+	return !!host && isLegible(host);
+}
+
+// --- The visible host (shadow or iframe), positioning, and dismissal ---
+
+/** The host element of whichever picker is currently *visible* (shadow or iframe). */
+function activeHost(): HTMLElement | null {
+	if (dropdownEl) return dropdownEl;
+	if (iframeHostEl && iframeHostEl.style.display !== "none") return iframeHostEl;
+	return null;
+}
+
+function repositionActive(): void {
+	const host = activeHost();
+	if (host && anchorField) positionHostElement(host, anchorField);
+}
+
+/** Dismiss whichever picker is showing (shadow dropdown or iframe). The iframe is hidden, not destroyed, so it can be reused without re-loading. */
+function removeActiveUi(): void {
+	removeDropdown();
+	hideIframe();
+}
+
+// --- Renderer routing: iframe is primary, shadow is the COEP fallback. ---
+
+function showMatchesUi(matches: MatchSummary[], field: HTMLInputElement, opts?: RowOpts): void {
+	if (matches.length === 0 && !opts?.suggest && !opts?.alias) return;
+	if (uiMode === "shadow") {
+		buildDropdown(matches, field, opts);
+		return;
+	}
+	iframeShow(field, {
+		kind: "matches",
+		matches,
+		otpOnly: opts?.otpOnly === true,
+		suggest: opts?.suggest,
+		alias: opts?.alias,
+		carriedId: opts?.carriedId,
+	});
+}
+
+function showLockedUi(field: HTMLInputElement): void {
+	if (uiMode === "shadow") {
+		buildLockedDropdown(field);
+		return;
+	}
+	iframeShow(field, { kind: "locked" });
+}
+
+// Handshake: READY from OUR iframe's window on an extension origin (a page-forged postMessage has a
+// different source, and a frame navigated off the extension a different scheme) gets a fresh port.
+// Nothing else is taken from the window. A reloaded frame says READY again and gets a new one.
+window.addEventListener("message", (e) => {
+	const win = iframeEl?.contentWindow;
+	if (!win || e.source !== win) return;
+	if ((e.data as { type?: string } | undefined)?.type !== "AUTOFILL_UI_READY") return;
+	if (!e.origin.startsWith(`${EXT_SCHEME}//`)) return;
+	closeUiPort();
+	const channel = new MessageChannel();
+	uiPort = channel.port1;
+	uiPort.onmessage = onUiMessage;
+	win.postMessage({ type: "UI_CONNECT" }, e.origin, [channel.port2]);
+});
+
+// Bridge from the iframe, over the port only. Ready is the iframe's ack, not its READY, so a frame
+// that never takes our port falls back to the shadow renderer like one that never loads.
+function onUiMessage(e: MessageEvent): void {
+	const msg = e.data as
+		| { type: "UI_CONNECTED" }
+		| { type: "UI_RESIZE"; height?: number }
+		| { type: "UI_PICK"; entryId?: string; otpOnly?: boolean; pointer?: boolean }
+		| { type: "UI_POPOUT" }
+		| { type: "UI_USE_SUGGESTED"; pointer?: boolean }
+		| { type: "UI_REGENERATE" }
+		| { type: "UI_USE_ALIAS"; pointer?: boolean }
+		| undefined;
+	switch (msg?.type) {
+		case "UI_CONNECTED":
+			iframeReady = true;
+			uiMode = "iframe";
+			if (readinessTimer !== null) {
+				clearTimeout(readinessTimer);
+				readinessTimer = null;
+			}
+			flushPendingRender();
+			break;
+		case "UI_RESIZE":
+			if (iframeEl) {
+				iframeEl.style.height = `${Math.max(0, Math.min(400, Number(msg.height) || 0))}px`;
+			}
+			break;
+		case "UI_PICK":
+			if (
+				typeof msg.entryId === "string" &&
+				iframeRenderedIds.has(msg.entryId) &&
+				pickAllowed(iframeHostEl, msg.pointer)
+			) {
+				pickCb?.(msg.entryId, !!msg.otpOnly);
+			}
+			break;
+		case "UI_POPOUT": {
+			// Capture the anchor before hideIframe() clears it, so the caller can re-surface here.
+			const field = anchorField;
+			hideIframe();
+			unlockCb?.(field);
+			break;
+		}
+		case "UI_USE_SUGGESTED":
+			// Using the suggestion fills the page field, so it needs the same
+			// anti-clickjacking gate as a secret pick.
+			if (pickAllowed(iframeHostEl, msg.pointer)) onSuggestedCb?.();
+			break;
+		case "UI_REGENERATE":
+			regenerateCb?.();
+			break;
+		case "UI_USE_ALIAS":
+			// Creating an alias spends the user's allowance and fills the page field, so it takes
+			// the same anti-clickjacking gate as a secret pick.
+			if (pickAllowed(iframeHostEl, msg.pointer)) aliasCb?.();
+			break;
+	}
+}
+
+/** Arrow/Enter/Escape navigation for the open iframe dropdown; returns true if the key was consumed. */
+function handleDropdownKey(e: KeyboardEvent): boolean {
+	if (uiMode !== "iframe" || !iframeReady || !iframeHostEl) return false;
+	if (iframeHostEl.style.display === "none") return false;
+	if (document.activeElement !== anchorField) return false;
+	if (!iframeEl?.contentWindow) return false;
+	if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+		e.preventDefault();
+		postToUi({ type: "UI_KEY", key: e.key });
+		if (iframeNavRows > 0) iframeHasHighlight = true;
+		return true;
+	}
+	if (e.key === "Escape") {
+		e.preventDefault();
+		dismissCb?.();
+		hideIframe();
+		return true;
+	}
+	// Enter only picks when a row is highlighted; otherwise the form submits normally.
+	if (e.key === "Enter" && iframeHasHighlight) {
+		e.preventDefault();
+		postToUi({ type: "UI_KEY", key: "Enter" });
+		return true;
+	}
+	return false;
+}
+
+// Tear both renderers down when the extension context is lost.
+onTeardown(() => {
+	stopPositionTracking();
+	removeDropdown();
+	destroyIframeHost();
+});
+
+/** The autofill picker facade. Hides the iframe-vs-shadow split, the bridge, positioning, and keyboard nav. */
+export const picker = {
+	showMatches: showMatchesUi,
+	showLocked: showLockedUi,
+	reposition: repositionActive,
+	remove: removeActiveUi,
+	// Dismiss only the shadow-dropdown renderer (no-op in iframe mode); preserves
+	// the original's removeDropdown-vs-removeActiveUi distinction at its call sites.
+	removeDropdown,
+	activeHost,
+	/** The page field the visible picker is anchored to (the field its row belongs to). */
+	anchorField: () => anchorField,
+	clickIsOnAnchor,
+	handleKey: handleDropdownKey,
+	/** Fired with (entryId, otpOnly) when the user picks a match. */
+	onPick(cb: (entryId: string, otpOnly: boolean) => void): void {
+		pickCb = cb;
+	},
+	/** Fired when the user requests the unlock pop-out (locked row / iframe pop-out). */
+	onUnlockRequest(cb: (field: HTMLInputElement | null) => void): void {
+		unlockCb = cb;
+	},
+	/** Fired when the user dismisses the picker via the keyboard (Escape). */
+	onDismiss(cb: () => void): void {
+		dismissCb = cb;
+	},
+	/** Fired when the user chooses the generated-password suggestion row. */
+	onUseSuggested(cb: () => void): void {
+		onSuggestedCb = cb;
+	},
+	/** Fired when the user clicks the regenerate button on the suggestion row. */
+	onRegenerate(cb: () => void): void {
+		regenerateCb = cb;
+	},
+	/** Fired when the user chooses the email-alias row, in any state it accepts a click in. */
+	onUseAlias(cb: () => void): void {
+		aliasCb = cb;
+	},
+};

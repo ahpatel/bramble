@@ -1,10 +1,11 @@
-Was ist neu in dieser Version:
+Neu in dieser Version:
 
-- Wenn derselbe Eintrag auf zwei Geräten bearbeitet wird, bevor diese synchronisiert werden, behält Bramble jetzt beide Versionen und zeigt den Konflikt an, sodass Sie sie vergleichen und eine oder beide behalten können. Zuvor ging eine Bearbeitung unbemerkt verloren.
-- Das Speichern einer Bearbeitung überschreibt keine Änderung mehr, die während der Bearbeitung synchronisiert wurde.
-- Beim Bearbeiten eines archivierten Eintrags bleibt dieser archiviert.
-- Import aus Enpass und AliasVault. Logins, die Sie bereits aus einem anderen Passwort-Manager haben, werden zurückgehalten statt dupliziert.
-- Kartennummern werden in Gruppen angezeigt und als reine Ziffern kopiert. Notizen können ausgewählt und kopiert werden, und das Notizfeld wächst beim Tippen mit.
-- Verständlichere Fehlermeldungen bei Dropbox-Backups und eine Korrektur für abgelehnte DuckDuckGo-Alias-Schlüssel.
+- Master-Passwort vergessen? Nach dem Entsperren mit Ihrem Wiederherstellungscode können Sie sofort ein neues Passwort festlegen, wobei der Code das alte Passwort ersetzt.
+- Importieren Sie Ihre Logins aus Dashlane und RoboForm.
+- Wenn die Synchronisierung auf diesem Gerät nicht mehr funktioniert, zeigt der Synchronisierungsbildschirm dies jetzt an und erklärt, wie Sie das Problem beheben, statt „Synchronisiert“ anzuzeigen.
+- Das Hinzufügen eines Geräts funktioniert wieder, nachdem eine frühere Einladung abgelaufen ist.
+- Angezeigte Passwörter werden wieder ausgeblendet, wenn Sie die App verlassen.
+- Nachdem Sie einen Tresor gelöscht haben, öffnet die App den verbleibenden.
+- Sicherheitsupdates für die Bibliotheken, auf denen die App basiert.
 
 Kein Konto, keine Cloud. Alles bleibt auf Ihren Geräten.

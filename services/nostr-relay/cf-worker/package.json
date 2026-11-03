@@ -1,0 +1,17 @@
+{
+	"name": "@vault/signaling-relay",
+	"version": "0.0.0",
+	"private": true,
+	"license": "GPL-3.0-only",
+	"author": "Webvana Inc.",
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"cf-typegen": "wrangler types",
+		"test": "node --test src/*.test.ts"
+	},
+	"devDependencies": {
+		"typescript": "^5.9.3",
+		"wrangler": "^4.152.0"
+	}
+}

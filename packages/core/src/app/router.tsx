@@ -11,6 +11,7 @@ import { Loader2 } from "lucide-react";
 import type { UseVault } from "../hooks/useVault";
 import { AppLayout } from "./layouts/AppLayout";
 import { AuthRoute } from "./routes/AuthRoute";
+import { passkeyVerifySearchSchema } from "./routes/passkey-verify-search";
 import { VaultHomeRoute } from "./routes/VaultHomeRoute";
 import { settingsSearchSchema } from "./screens/Settings/settings-search";
 import { vaultSearchSchema } from "./screens/VaultHome/vault-search";
@@ -37,6 +38,10 @@ const EntryEditRoute = lazyRouteComponent(
 	"EntryEditRoute",
 );
 const SettingsRoute = lazyRouteComponent(() => import("./routes/SettingsRoute"), "SettingsRoute");
+const PasskeyVerifyRoute = lazyRouteComponent(
+	() => import("./routes/PasskeyVerifyRoute"),
+	"PasskeyVerifyRoute",
+);
 const TotpSetupRoute = lazyRouteComponent(
 	() => import("./routes/TotpSetupRoute"),
 	"TotpSetupRoute",
@@ -45,7 +50,7 @@ const TotpSetupRoute = lazyRouteComponent(
 // Slice of vault state route guards read; injected via RouterProvider context.
 // Stays `undefined` until React fills it, so guards treat missing vault as
 // "not ready, don't decide".
-type VaultGuard = Pick<UseVault, "isLocked" | "ready" | "entries">;
+type VaultGuard = Pick<UseVault, "isLocked" | "ready" | "entries" | "unlockedWithRecoveryCode">;
 
 // Registry slice for the launch-time picker decision: how many vaults exist and whether
 // one is chosen. Undefined until React injects it, like the vault slice.
@@ -71,7 +76,16 @@ const authRoute = createRoute({
 	// WARNING: intentionally NOT gated on `ready`. Adding a ready gate here
 	// "for symmetry" with _app reintroduces a redirect loop.
 	beforeLoad: ({ context }) => {
-		if (context.vault && !context.vault.isLocked) throw redirect({ to: "/vault" });
+		if (context.vault && !context.vault.isLocked) {
+			// A recovery-code unlock usually means a forgotten password: land on changing it.
+			if (context.vault.unlockedWithRecoveryCode) {
+				throw redirect({
+					to: "/settings",
+					search: { tab: "security", highlight: "master-password" },
+				});
+			}
+			throw redirect({ to: "/vault" });
+		}
 		// Several vaults and none chosen yet: pick one first.
 		if (context.registry?.ready && context.registry.count > 1 && !context.registry.hasActive) {
 			throw redirect({ to: "/select" });
@@ -165,6 +179,14 @@ const settingsRoute = createRoute({
 	component: SettingsRoute,
 });
 
+// The extension's passkey provider opens this in a detached window to confirm it's you.
+const passkeyVerifyRoute = createRoute({
+	getParentRoute: () => appLayoutRoute,
+	path: "/passkey-verify",
+	validateSearch: passkeyVerifySearchSchema,
+	component: PasskeyVerifyRoute,
+});
+
 const routeTree = rootRoute.addChildren([
 	authRoute,
 	selectVaultRoute,
@@ -175,6 +197,7 @@ const routeTree = rootRoute.addChildren([
 		entryDetailRoute,
 		entryEditRoute,
 		settingsRoute,
+		passkeyVerifyRoute,
 	]),
 ]);
 

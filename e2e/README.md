@@ -47,6 +47,10 @@ pnpm test:transport-race                        # both; needs FIREFOX_BINARY
 - Chromium is driven by Playwright directly. **Firefox is driven by `web-ext`**, because Playwright
   cannot install a Firefox add-on (extensions are Chromium-only, persistent-context-only). For that
   project Playwright is just the runner.
+- The Firefox spec's `open()` returns only once web-ext reports the fixture installed, within its
+  own 45 s startup budget, so the harness's 15 s per step times the race rather than the browser
+  booting, as on Chromium. A cold first launch on a CI runner has run past 15 s by itself, which
+  failed the first case with no events at all.
 - Firefox must run headed (`FIREFOX_HEADLESS=0`) under Xvfb for the BFCache case to be meaningful;
   CI does this with `xvfb-run -a`, across both current Firefox and the 128 compatibility floor.
 - A missing `FIREFOX_BINARY` **fails** rather than skipping. A silently skipped security gate is a
@@ -125,7 +129,7 @@ production ones.
 pnpm test:e2e:sync
 ```
 
-The config starts the relay (`nostr-relay/node/relay.mjs`, port 7400) and the mobile dev server
+The config starts the relay (`services/nostr-relay/node/relay.mjs`, port 7400) and the mobile dev server
 (port 5199) itself. Nothing external is contacted.
 
 **Rebuild the extension first.** The mobile peer is served by vite and picks up `@core` changes
@@ -145,6 +149,21 @@ the signatures out of both stored rosters to recreate the pre-2026-07-09 world, 
 and asserts the extension re-signs itself through the real host and that the peer converges on that
 signature. The unit tests mock the shell, so this is the only place a silently no-op backfill (a
 mis-wired host declines, and the code returns rather than throwing) is caught.
+
+The attachments upgrade test (a browser that paired on a build without attachments, then updated)
+needs that old build, and skips without it:
+
+```sh
+git worktree add --detach /tmp/bramble-old 1.32.0-chromium
+(cd /tmp/bramble-old && pnpm install --frozen-lockfile && pnpm wasm:build && pnpm build)
+BRAMBLE_OLD_EXTENSION=/tmp/bramble-old/clients/extension/dist-chromium pnpm test:e2e:sync
+```
+
+Relaunching a profile on another build's `dist-chromium` keeps the **old** background: Chrome
+reuses the stored service worker even when the manifest version changes, so the new pages talk to
+the old worker. The test deletes the profile's `Default/Service Worker` between the two launches,
+as a store update re-registers it. Without that, an old background quietly stripping new fields
+looks exactly like a sync bug.
 
 **Two traps, both of which fail silently rather than loudly:**
 

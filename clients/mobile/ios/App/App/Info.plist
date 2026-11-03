@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CAPACITOR_DEBUG</key>
+	<string>$(CAPACITOR_DEBUG)</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+        <string>Bramble</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Bramble</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>armv7</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<true/>
+	<!-- Credential exchange (iOS 26+): the OS hands an inbound transfer to the app as an
+	     NSUserActivity of this type, and it is only delivered if the type is declared here.
+	     The token is picked up in AppDelegate. See docs/credential-exchange.md. -->
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>ASCredentialExchangeActivity</string>
+	</array>
+	<!-- Setting up a 2FA code elsewhere hands the otpauth:// URI to whichever app the user
+	     picked under Settings > Apps > Passwords > "Set Up Codes In". Registering the scheme
+	     is the WHOLE mechanism for appearing in that list; there is no API for it. An arriving
+	     URI only ever prefills a form, never writes to the vault. See docs/totp-uri-handler.md. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>app.bramble.mobile.otpauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>otpauth</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Bramble uses the camera to scan device pairing codes and 2FA QR codes.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Bramble uses Face ID to unlock your vault on this device.</string>
+	<!-- Device sync connects your devices peer-to-peer over WebRTC. On iOS, LAN/mDNS ICE
+	     candidates (used when your devices are on the same network) are gated by the Local
+	     Network privacy permission; without this key iOS silently blocks them and the
+	     connection stalls. See docs/p2p-sync.md. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Bramble connects your devices directly over your local network to sync your vault.</string>
+	<!-- Bramble uses only standard, export-exempt encryption (AES-256-GCM, Argon2id) for the
+	     user's own vault data. Declaring this skips the App Store Connect export-compliance
+	     prompt on every upload. Revisit if non-standard crypto is ever added. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

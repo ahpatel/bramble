@@ -1,4 +1,7 @@
+import type { FileRecord } from "../sync";
+import type { FileSource } from "../vault/file-mutations";
 import type { PortableVaultBlob } from "../wasm";
+import type { HttpBodySource } from "./http";
 
 /** An entry encrypted under a per-entry DEK that is itself wrapped by the VEK. */
 export interface EncryptedPayload {
@@ -34,6 +37,23 @@ export interface PasskeyRegistration {
 	authenticatorData: string;
 	/** SPKI DER of the public key (base64); Chrome's proxy requires response.publicKey. */
 	publicKey: string;
+	/** Minted for every passkey; stored with the private key. */
+	prf: PasskeyPrfSecrets;
+}
+
+/**
+ * A passkey's PRF (CTAP hmac-secret) secrets, base64, 32 bytes each. Only `credWithUV` is
+ * evaluated; CXF requires both. See docs/passkey-prf.md.
+ */
+export interface PasskeyPrfSecrets {
+	credWithUV: string;
+	credWithoutUV: string;
+}
+
+/** WebAuthn PRF results for one ceremony, base64, 32 bytes each. */
+export interface PasskeyPrfOutput {
+	first: string;
+	second?: string;
 }
 
 /** PKCS#8 key material converted to Bramble's stored representation. All base64. */
@@ -89,12 +109,25 @@ export interface VerifyWebauthnSlotInput extends WrapWebauthnSlotInput {
 /** One entry from a foreign KeePass database: raw String key/value pairs, protected values already decrypted in WASM. */
 export interface KdbxRawEntry {
 	strings: { key: string; value: string; protected: boolean }[];
+	/** The entry's attachments: each its name, and which of the database's `attachments`. */
+	binaries?: { name: string; index: number }[];
 }
 
 export interface OpenKdbxInput {
-	fileB64: string;
+	file: Uint8Array;
 	password: string;
-	keyfileB64?: string;
+	keyfile?: Uint8Array;
+}
+
+/** A KeePass database opened for import. */
+export interface KdbxOpened {
+	entries: KdbxRawEntry[];
+	/** Its attachments, in the form this platform's sealer reads: unpacked files on desktop and
+	 * mobile, staged copies on the extension. Entries refer to them by index. */
+	attachments: { source: FileSource; size: number }[];
+	/** Drop whatever holds the attachments, once they are sealed or the import is abandoned.
+	 * They are the database's files in the clear, so this is not left to the lock alone. */
+	release(): Promise<void>;
 }
 
 /** One entry to write into a .kdbx: the same String pairs the read side returns. */
@@ -102,11 +135,29 @@ export interface KdbxSaveEntry {
 	strings: { key: string; value: string; protected: boolean }[];
 }
 
+/** One attachment to carry into a KDBX export: on the entry at `entry` in its `entries`, under
+ * `name`, which is unique on that entry (KeePass keys an entry's attachments by name). */
+export interface KdbxSaveFile {
+	entry: number;
+	record: FileRecord;
+	name: string;
+}
+
 export interface SaveKdbxInput {
+	/** The vault whose attachments these are. */
+	vaultId: string;
+	/** The exported file's name, for a platform that writes it to disk itself. */
+	name: string;
 	entries: KdbxSaveEntry[];
 	/** The password that will unlock the exported file. Chosen for the export, not the vault's. */
 	password: string;
+	/** Every live attachment, written as a KeePass attachment on its entry. */
+	files: KdbxSaveFile[];
 }
+
+/** A written KeePass file, read on demand, and `release` to delete whatever it left on disk once
+ * the file has been saved where the user wants it. */
+export type SavedKdbx = HttpBodySource & { release?: () => Promise<void> };
 
 /**
  * Stable codes a platform adapter puts at the START of a rejection message, so the UI can show
@@ -165,6 +216,12 @@ export interface CryptoAdapter {
 	encryptWithVek(plaintext: string): Promise<VekEncrypted>;
 	decryptWithVek(iv: string, ciphertext: string): Promise<string>;
 
+	// Mailbox crypto (docs/mailbox-service.md, "Keys and identity"): the VEK stays in the core.
+	// Optional so test doubles need not carry it; every real host implements all three.
+	mailboxId?(groupKeyB64: string): Promise<string>;
+	mailboxSeal?(groupKeyB64: string, aad: string, plaintext: string): Promise<string>;
+	mailboxOpen?(groupKeyB64: string, aad: string, sealedB64: string): Promise<string>;
+
 	// Passkey provider (authenticator role). Pure crypto: mint generates the key,
 	// assert signs with the stored private key. Neither needs the VEK loaded; the
 	// private key is decrypted from its entry separately (decryptEntry) first.
@@ -178,17 +235,24 @@ export interface CryptoAdapter {
 		clientDataHashB64: string,
 		userVerified: boolean,
 	): Promise<PasskeyAssertion>;
+	/** WebAuthn PRF over a stored secret; inputs are the site's raw values, base64. */
+	passkeyPrfEval(
+		secretB64: string,
+		firstB64: string,
+		secondB64?: string,
+	): Promise<PasskeyPrfOutput>;
 
 	// Rejects with an Error whose message is a stable KDBX_* code (e.g.
 	// KDBX_WRONG_CREDENTIAL) so the UI can branch on it.
-	openKdbx(input: OpenKdbxInput): Promise<KdbxRawEntry[]>;
+	openKdbx(input: OpenKdbxInput): Promise<KdbxOpened>;
 	/**
-	 * Write a KDBX4 database (AES-256-CBC + Argon2id) holding `entries`, unlocked by
-	 * `password` alone. Returns the file as base64, since the extension routes this
-	 * through the offscreen message channel. Optional: absent on platforms with no
-	 * export path, which is every one but the extension today.
+	 * Write a KDBX4 database (AES-256-CBC + Argon2id) holding `entries` and their attachments,
+	 * unlocked by `password` alone. Resolves to the file as a source read on demand: with
+	 * attachments it has no size limit, so it is written a piece at a time and never held.
+	 * Optional: absent where there is no writer (the mobile dev browser). Where the file is on
+	 * disk the source names its `path`, and `release` deletes it once the shell has saved it.
 	 */
-	saveKdbx?(input: SaveKdbxInput): Promise<string>;
+	saveKdbx?(input: SaveKdbxInput): Promise<SavedKdbx>;
 
 	/**
 	 * Seal `entriesJson` into a portable vault under a key generated for that file alone,

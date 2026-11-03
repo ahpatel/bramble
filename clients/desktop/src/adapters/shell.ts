@@ -1,0 +1,182 @@
+// ShellAdapter for the Tauri window. Much of this interface is extension-shaped (a popup
+// that dismisses, a current tab, a pop-out); a desktop window has none of that, so those
+// members are absent or inert exactly as they are on mobile. See docs/desktop-port.md.
+
+import type { OptionsScreen, ShellAdapter } from "@core/adapters/shell";
+import { desktopDeviceLabel } from "@core/util/device-label";
+import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
+import { onSyncEvent, onSyncStatus } from "../sync/bus";
+import {
+	signRoster,
+	syncAdmissionPublicKey,
+	syncAdmissionSign,
+	syncDevicePublicKey,
+	syncSigningPublicKey,
+} from "../sync/keys";
+import { ACTIVE_VAULT_KEY, retargetActiveVault } from "../sync/roster";
+import {
+	approveEnrollment,
+	getPendingEnrollApproval,
+	resetSyncState,
+	startEnrollInvite,
+	startEnrollJoin,
+	stopEnrollInvite,
+	stopSync,
+} from "../sync/transport";
+import { desktopStorage } from "./storage";
+import { streamInto } from "./stream";
+import { canSelfUpdate, desktopUpdates, resolveUpdatability } from "./updates";
+
+/** Filled once at boot; the Settings "About" row reads it synchronously. */
+let appVersion = "0.0.0";
+
+export async function resolveAppVersion(): Promise<void> {
+	appVersion = await getVersion();
+	// Same boot step, because both are read synchronously by the UI afterwards. See ./updates.
+	await resolveUpdatability();
+}
+
+/** Proves the shared Rust crypto core is linked into this binary. */
+export function coreVersion(): Promise<string> {
+	return invoke<string>("core_version");
+}
+
+/** Set by main.tsx so the shell can drive the full-screen setup/import flows in-window. */
+let openSetupScreen: ((screen?: OptionsScreen) => void) | null = null;
+
+export function registerOpenSetup(fn: (screen?: OptionsScreen) => void): void {
+	openSetupScreen = fn;
+}
+
+export const desktopShell: ShellAdapter = {
+	appName: "Bramble",
+
+	// The webview's user agent describes WKWebView, so sniffing it named this app "Browser on
+	// Mac": wrong, and indistinguishable from a real browser in the device list.
+	deviceLabel: desktopDeviceLabel,
+	get version() {
+		return appVersion;
+	},
+
+	// One window, so "the full-tab UI" is just a route change rather than a new context.
+	openSetup: async (screen) => {
+		openSetupScreen?.(screen);
+	},
+
+	// The dialog plugin picks the path; the bytes go through our own command rather than
+	// the fs plugin, so there is no filesystem scope to configure and widen over time.
+	exportBytes: async (suggestedName, bytes, _mimeType) => {
+		const path = await save({ defaultPath: suggestedName });
+		if (!path) return;
+		if (bytes instanceof Uint8Array) {
+			await invoke<void>("shell_export_bytes", { path, bytes: Array.from(bytes) });
+			return;
+		}
+		// A KeePass export the shell already wrote: copied there, not read back through here.
+		if (bytes.path) {
+			await invoke<void>("files_export_kdbx", { src: bytes.path, path });
+			return;
+		}
+		// A backup of any size, written a chunk at a time to a file beside the chosen one and
+		// renamed into place only once whole: a cut-off export never takes the chosen name.
+		await streamInto(await invoke<number>("shell_export_open", { path, size: bytes.size }), bytes);
+	},
+
+	// No browser tab to read. Same as mobile.
+	getCurrentTabOrigin: async () => null,
+	matchCurrentTab: async () => [],
+	scanQrFromActiveTab: async () => null,
+
+	// A desktop window doesn't dismiss on focus loss, so there is nothing to pop out of
+	// and no route to persist across a teardown.
+	popOut: async () => {},
+	consumeHandoff: async () => null,
+	isDetached: () => false,
+
+	// Updating the app itself. Only the desktop has this: a store-distributed extension is
+	// updated by the store. See ./updates.
+	//
+	// A getter, and absent rather than disabled, when a package manager owns this install (a .deb
+	// or .rpm from apt.bramble.sh). The updater cannot replace a dpkg-managed binary, so offering
+	// the check would tell someone they are out of date and hand them no way to act on it. Every
+	// consumer already treats this as optional: the Settings section renders itself away.
+	get updates() {
+		return canSelfUpdate() ? desktopUpdates : undefined;
+	},
+
+	// A .deb or .rpm install: apt owns the files, and the Updates section says so.
+	updatesManagedExternally: () => !canSelfUpdate(),
+
+	// Start with the session, so the backup tick belongs to a process that is running. The
+	// registered entry passes --hidden, which src-tauri/src/autostart.rs reads to go straight to
+	// the tray. Enabling writes a launch agent, a Run key, or an XDG entry depending on the OS; all
+	// three are user-visible and removable outside the app, so isEnabled is read rather than
+	// cached, and reflects a change made from the OS.
+	autostart: {
+		isEnabled: () => invoke<boolean>("autostart_is_enabled"),
+		setEnabled: (on: boolean) => invoke<void>("autostart_set_enabled", { on }),
+	},
+
+	// The panel asking this window to open an entry. One window, so this is a route change
+	// rather than a new context; the router's guards still apply.
+	onNavigateRequest: (callback) => {
+		const pending = listen<{ href: string }>("navigate", (e) => callback(e.payload.href));
+		let stop: (() => void) | null = null;
+		void pending.then((un) => {
+			stop = un;
+		});
+		return () => {
+			stop?.();
+			// Subscribed and unsubscribed before the listener resolved: drop it when it lands.
+			void pending.then((un) => un());
+		};
+	},
+
+	// Closing only hides the window (src-tauri/src/lifetime.rs), so the page keeps its state.
+	onHide: (callback) => {
+		const stop = listen("main-hidden", () => callback());
+		return () => {
+			void stop.then((off) => off());
+		};
+	},
+
+	// No corner prompt without the extension bridge (phase 4), so nothing is ever parked.
+	flushPendingCornerCapture: async () => false,
+
+	// Which vault the app is in. Sync reads it to target that vault's namespaced keys, and
+	// the registry restores it on reopen. Written on unlock, left in place on lock.
+	//
+	// Retarget sync BEFORE recording the new id: the live session is pinned to the old vault,
+	// and a merge landing after the id moves but before the session stops writes into the
+	// wrong vault's file (issue #27). retargetActiveVault stops it and drains any merge.
+	setActiveVault: async (vaultId) => {
+		await retargetActiveVault(vaultId ?? null);
+		await (vaultId == null
+			? desktopStorage.removeMeta(ACTIVE_VAULT_KEY)
+			: desktopStorage.setMeta(ACTIVE_VAULT_KEY, vaultId));
+	},
+	getActiveVault: async () => (await desktopStorage.getMeta<string>(ACTIVE_VAULT_KEY)) ?? null,
+
+	// This device's sync identity. Real: the keypairs live in the OS credential store and
+	// only their public halves ever leave here. See ../sync/keys.
+	syncDevicePublicKey,
+	syncSigningPublicKey,
+	signRoster,
+	syncAdmissionPublicKey,
+	syncAdmissionSign,
+	resetSyncState,
+
+	// Enrollment, running in this webview: WKWebView has WebRTC, so @core's transport and
+	// relay client work unchanged. See ../sync/transport.
+	stopSyncSpike: stopSync,
+	stopEnrollInvite,
+	onSyncStatus,
+	onSyncEvent,
+	startEnrollInvite,
+	startEnrollJoin,
+	approveEnrollment,
+	getPendingEnrollApproval,
+};

@@ -19,6 +19,7 @@ import { formatDate } from "../../../../util/format-date";
 import { SasDisplay } from "../../../components/SasDisplay";
 import { AdvancedDisclosure } from "../../../components/ui/advanced-disclosure";
 import { Button } from "../../../components/ui/button";
+import { InlineConfirm } from "../../../components/ui/inline-confirm";
 import { Modal } from "../../../components/ui/modal";
 import { PasswordField } from "../../../components/ui/password-field";
 import { TextField } from "../../../components/ui/text-field";
@@ -101,16 +102,19 @@ export function SyncConnectSection() {
 	// while loading so we don't flash the onboarding UI over an existing group.
 	const [group, setGroup] = useState<SyncGroup | null | undefined>(undefined);
 	const [myPub, setMyPub] = useState<string | null>(null);
+	// The device's sync key failed to load, as opposed to not having loaded yet.
+	const [keyUnreadable, setKeyUnreadable] = useState(false);
 	// Epoch ms of the last successful reconcile with a peer (null = never / not loaded).
 	const [lastSynced, setLastSynced] = useState<number | null>(null);
 
 	const refreshGroup = useCallback(async () => {
 		const [g, pub] = await Promise.all([
 			storage.getMeta<SyncGroup>(syncKey("sync.group")),
-			shell.syncDevicePublicKey().catch(() => null),
+			shell.syncDevicePublicKey().catch(() => undefined),
 		]);
 		setGroup(g ?? null);
-		setMyPub(pub);
+		setMyPub(pub ?? null);
+		setKeyUnreadable(pub === undefined);
 	}, [storage, syncKey, shell]);
 
 	useEffect(() => {
@@ -231,13 +235,14 @@ export function SyncConnectSection() {
 	// Either signal: the countdown is the smooth one, the host event is the reliable one.
 	const inviteExpired = secondsLeft === 0 || hostExpired;
 
-	// Withdraw a prompt left over past expiry: the session is gone, so approving it would do
-	// nothing. Refusing also settles the host's parked promise.
+	// Withdraw a prompt our own code's countdown has outrun. Not on `hostExpired`: the host refuses
+	// its own parked prompt on expiry and usePendingEnrollApproval drops it, while the flag outlives
+	// that invite and would refuse the next one's prompt on sight, such as the browser link's.
 	useEffect(() => {
-		if (!inviteExpired || !approval) return;
+		if (secondsLeft !== 0 || !approval) return;
 		setApproval(null);
 		void shell.approveEnrollment?.(false);
-	}, [inviteExpired, approval, shell, setApproval]);
+	}, [secondsLeft, approval, shell, setApproval]);
 
 	// Dismissing the UI must stop the host listening too. Not stopSyncSpike, which would also drop
 	// this device's ongoing sync.
@@ -263,6 +268,10 @@ export function SyncConnectSection() {
 	const others = myPub ? devices.filter((d) => d.publicKey !== myPub) : devices;
 	const inGroup = group != null;
 	const paired = others.length > 0;
+	// Peers check this device's key against rosters copied from ours, so missing here means missing
+	// everywhere: it can neither sync nor pair anyone until it joins again.
+	const unrecognized = inGroup && myPub !== null && !devices.some((d) => d.publicKey === myPub);
+	const notSyncing = inGroup && (keyUnreadable || unrecognized);
 	// Roster entries carry an Ed25519 signature since 2026-07-09, but only devices that have
 	// created, joined or invited since then have one: nothing re-signs on its own, so a device that
 	// predates it stays unsigned until Bramble is opened on it (the backfill in useSyncEnrollment).
@@ -349,11 +358,22 @@ export function SyncConnectSection() {
 				<>
 					<div className="flex items-center gap-2">
 						<span
-							className={`inline-block w-2 h-2 rounded-full ${paired ? "bg-emerald-500" : "bg-amber-500"}`}
+							className={`inline-block w-2 h-2 rounded-full ${paired && !notSyncing ? "bg-emerald-500" : "bg-amber-500"}`}
 							aria-hidden
 						/>
 						<span className="text-sm font-medium">
-							{paired ? (
+							{keyUnreadable ? (
+								<Trans>
+									Not syncing: this device can't read its sync key right now. Lock and unlock to try
+									again. If it keeps happening, disconnect and join again with a code from another
+									device.
+								</Trans>
+							) : unrecognized ? (
+								<Trans>
+									Not syncing: your other devices no longer recognize this one. Disconnect, then
+									join again with a code from another device.
+								</Trans>
+							) : paired ? (
 								<Trans>Synced · {devices.length} devices</Trans>
 							) : (
 								<Trans>Waiting for a device to join…</Trans>
@@ -400,35 +420,26 @@ export function SyncConnectSection() {
 										</Trans>
 									</div>
 								</div>
-								{d.publicKey !== myPub &&
-									(removingId === d.id ? (
-										<span className="flex shrink-0 items-center gap-2">
-											<button
-												type="button"
-												onClick={() => void remove(d)}
-												className="text-xs text-red-500 hover:underline"
+								{d.publicKey !== myPub && (
+									<InlineConfirm
+										className="shrink-0"
+										armed={removingId === d.id}
+										onArmedChange={(armed) => setRemovingId(armed ? d.id : null)}
+										confirmLabel={<Trans>Remove</Trans>}
+										onConfirm={() => remove(d)}
+										trigger={(arm) => (
+											<Button
+												variant="link"
+												size="none"
+												onClick={arm}
+												aria-label={t`Remove ${d.label || "device"}`}
+												className="shrink-0 p-1 hover:text-red-500 transition-colors"
 											>
-												<Trans>Remove</Trans>
-											</button>
-											<button
-												type="button"
-												onClick={() => setRemovingId(null)}
-												className="text-xs text-muted-foreground hover:underline"
-											>
-												<Trans>Cancel</Trans>
-											</button>
-										</span>
-									) : (
-										<Button
-											variant="link"
-											size="none"
-											onClick={() => setRemovingId(d.id)}
-											aria-label={t`Remove ${d.label || "device"}`}
-											className="shrink-0 p-1 hover:text-red-500 transition-colors"
-										>
-											<Trash2 className="w-4 h-4" />
-										</Button>
-									))}
+												<Trash2 className="w-4 h-4" />
+											</Button>
+										)}
+									/>
+								)}
 							</div>
 						))}
 					</div>
@@ -440,28 +451,32 @@ export function SyncConnectSection() {
 					)}
 
 					<div className="flex flex-wrap items-center gap-2">
-						<Button variant="secondary" size="sm" onClick={beginAddDevice} className="gap-1.5">
+						<Button
+							variant="secondary"
+							size="sm"
+							onClick={beginAddDevice}
+							disabled={notSyncing}
+							className="gap-1.5"
+						>
 							<Plus className="w-3.5 h-3.5" /> <Trans>Add another device</Trans>
 						</Button>
-						{confirmDisconnect ? (
-							<span className="inline-flex items-center gap-2">
-								<Button variant="destructiveOutline" size="sm" onClick={() => void disconnect()}>
-									<Trans>Confirm disconnect</Trans>
+						<InlineConfirm
+							variant="destructiveOutline"
+							armed={confirmDisconnect}
+							onArmedChange={setConfirmDisconnect}
+							confirmLabel={<Trans>Confirm disconnect</Trans>}
+							onConfirm={disconnect}
+							trigger={(arm) => (
+								<Button
+									variant="secondary"
+									size="sm"
+									onClick={arm}
+									className="gap-1.5 text-muted-foreground"
+								>
+									<Unplug className="w-3.5 h-3.5" /> <Trans>Disconnect</Trans>
 								</Button>
-								<Button variant="secondary" size="sm" onClick={() => setConfirmDisconnect(false)}>
-									<Trans>Cancel</Trans>
-								</Button>
-							</span>
-						) : (
-							<Button
-								variant="secondary"
-								size="sm"
-								onClick={() => setConfirmDisconnect(true)}
-								className="gap-1.5 text-muted-foreground"
-							>
-								<Unplug className="w-3.5 h-3.5" /> <Trans>Disconnect</Trans>
-							</Button>
-						)}
+							)}
+						/>
 					</div>
 					{confirmDisconnect && (
 						<p className="text-xs text-muted-foreground">

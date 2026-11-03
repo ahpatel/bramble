@@ -47,8 +47,8 @@ this document only describes the deltas.
 The choke points, so the deltas below have context:
 
 - **One blob at a fixed key.** Extension `VAULT_BLOB_KEY = "vault-blob-b64"`
-  (`packages/platform-extension/src/storage.ts`), mobile `VAULT_FILE = "vault.vlt1"`
-  (`packages/platform-mobile/src/adapters/storage.ts`). The shared `StorageAdapter`
+  (`clients/extension/src/storage.ts`), mobile `VAULT_FILE = "vault.vlt1"`
+  (`clients/mobile/src/adapters/storage.ts`). The shared `StorageAdapter`
   (`packages/core/src/adapters/storage.ts`) is id-less by design: `readVaultBlob()`
   / `writeVaultBlob(blob)` take no identifier.
 - **No vault identity anywhere.** The VLT1 header is `MAGIC + VERSION + slotCount`
@@ -159,7 +159,7 @@ today, so single-vault users see no change.
 - **1 vault** -> that vault's unlock screen directly, no picker.
 - **N vaults** -> a picker: one row per vault (label + created date), styled on the
   existing passkey picker (`choiceRow` in
-  `packages/platform-extension/src/content/html/save-passkey-body.ts`, styles
+  `clients/extension/src/content/html/save-passkey-body.ts`, styles
   `.tp-choice` / `.tp-avatar` in `content/html/corner-styles.ts`), plus a "Create
   new vault" row (the passkey picker already has a "create new" row variant to copy)
   and a "Restore from backup" row. The primary vault is pre-highlighted / first.
@@ -171,6 +171,14 @@ Selecting a vault sets the active id and shows that vault's unlock screen, whose
 method chips (password / security key / biometric / recovery) then reflect that
 vault's slots. After unlock, `/vault` as today. A "Switch vault" action locks and
 returns to the picker.
+
+Exception (extension): a view the background opens for a page to unlock in (the autofill
+"Vault locked" row, the corner prompt's "Unlock & Save", a passkey request) skips the picker
+and boots on the unlock screen of the vault the UI last opened. That id is
+`vault.lastOpenedId` in `chrome.storage.local`, written on `VAULT_OPENED` so it survives lock.
+Before opening the view the background writes it as `vault.activeId` (only when no vault is
+selected), which the UI already restores on boot. "Choose a different vault" still reaches the
+picker. A deleted vault falls back to the picker.
 
 ### Router and context
 
@@ -699,7 +707,9 @@ Each phase is independently shippable.
   landed earlier (existing vault -> add a new one, never overwrite). Scheduled backups
   cover **every** vault, not just the primary: `runScheduledBackups` walks all registered
   vaults (the sealed blob needs no VEK) and uploads each as its own file. Each backup file
-  is a standalone VLT1 blob, so restore opens one file -> one vault.
+  is one vault: a standalone VLT1 blob, or for a vault with attachments one ZIP holding
+  that blob and its attachments (see cloud-storage-backups.md, "Backups with attachments").
+  Either way restore opens one file -> one vault.
 
   Phase 4 first shipped with backup *targets* still device-global (one config backing up
   every vault), which turned out to be wrong in use: configuring Nextcloud in a personal
@@ -1155,7 +1165,7 @@ the single-VEK assumption.
   (`vaultId ?? primaryId` in `storage.ts`, `sync-config.ts`, `useVaultRegistry.syncKey`)
   plus a UI warning banner. No autofill or biometric code reads it. It can be removed as a
   follow-up once those fallbacks resolve the active vault instead.
-- **Mobile** (`platform-mobile/src/native-crypto.ts`): the native uniffi plugin holds one
+- **Mobile** (`clients/mobile/src/native-crypto.ts`): the native uniffi plugin holds one
   VEK and every method is a parameterless singleton. The vek never crosses the shared
   interface (the extension injects and strips inside its background), and `withVault` is
   optional, so the native adapter is untouched. (A required vault id would force a

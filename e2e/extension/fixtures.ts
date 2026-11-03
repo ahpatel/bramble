@@ -9,7 +9,7 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
  * EXTENSION_DIR picks another build (the combining e2e's). */
 const EXTENSION_PATH = path.resolve(
 	dir,
-	"../../packages/platform-extension",
+	"../../clients/extension",
 	process.env.EXTENSION_DIR ?? "dist-chromium",
 );
 
@@ -19,13 +19,17 @@ const EXTENSION_PATH = path.resolve(
  * independent "devices" (used by the sync test). Headless by default (Chromium's new headless
  * loads MV3 extensions); set HEADED=1 to watch it.
  */
-export async function launchExtensionContext(reuseProfileDir?: string): Promise<{
+export async function launchExtensionContext(
+	reuseProfileDir?: string,
+	extensionPath = EXTENSION_PATH,
+): Promise<{
 	context: BrowserContext;
 	extensionId: string;
 	profileDir: string;
 }> {
 	// Pass an existing dir to relaunch the SAME profile - a real browser restart (persisted
-	// chrome.storage.local carries over). Omit it for a fresh throwaway "device".
+	// chrome.storage.local carries over). Omit it for a fresh throwaway "device". The manifest
+	// pins the id, so relaunching with another build's path is an update in place.
 	const profileDir = reuseProfileDir ?? mkdtempSync(path.join(tmpdir(), "bramble-e2e-"));
 	const context = await chromium.launchPersistentContext(profileDir, {
 		// `channel: "chromium"` runs Chromium's NEW headless, which (unlike the default/old headless)
@@ -35,8 +39,8 @@ export async function launchExtensionContext(reuseProfileDir?: string): Promise<
 		locale: "en-US",
 		...(process.env.HEADED ? { headless: false } : {}),
 		args: [
-			`--disable-extensions-except=${EXTENSION_PATH}`,
-			`--load-extension=${EXTENSION_PATH}`,
+			`--disable-extensions-except=${extensionPath}`,
+			`--load-extension=${extensionPath}`,
 			"--no-sandbox",
 		],
 	});
@@ -47,7 +51,7 @@ export async function launchExtensionContext(reuseProfileDir?: string): Promise<
 	// `vault.registry`, which migrateNamespacing publishes BEFORE the ghost-record reap it was
 	// meant to wait out, and which already exists on a reused profile — so it never held anything
 	// back. The reap now spares records too young to distinguish from a create in progress and
-	// re-reads before writing, so racing it is safe (see platform-extension/src/storage.ts).
+	// re-reads before writing, so racing it is safe (see clients/extension/src/storage.ts).
 	return { context, extensionId, profileDir };
 }
 

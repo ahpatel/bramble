@@ -1,0 +1,188 @@
+// The desktop's scheduled backups: the platform half of @core/backup/run.
+//
+// This is the one target where a backup schedule can actually be kept. The app is tray-resident
+// (closing the window hides it), a vault's sealed blob is readable with no key, and its target
+// credentials sit in the OS credential store rather than under the vault key, so every input a
+// run needs is available whether or not anything is unlocked. Each vault's timer is therefore
+// evaluated on its own, locked or not.
+//
+// A target that predates a usable credential store (or a machine that has none, e.g. a Linux
+// session with no Secret Service) keeps VEK-wrapped credentials and the old rule: it runs while
+// its vault is unlocked, and is skipped, not failed, while it is not.
+//
+// The tick comes from Rust (`backup::start_ticker`), not from a timer here: this window is
+// usually hidden and a hidden webview's timers are throttled by the platform.
+
+import { createTarget, runBackup } from "@core/backup";
+import { planBackup } from "@core/backup/archive";
+import {
+	type BackupSecrets,
+	type BackupTargetConfig,
+	backupTargetsKeyFor,
+	keyVaultIdFor,
+	metaListCache,
+	migrateBackupTargetsToVaults,
+	targetPrefixFor,
+	toProviderConfig,
+} from "@core/backup/config";
+import {
+	backupPlanner,
+	runScheduledBackups,
+	type ScheduledBackupResult,
+	type VaultBackup,
+} from "@core/backup/run";
+import { onBlobArrived } from "@core/sync/blob-arrivals";
+import { parseRegistry, VAULT_REGISTRY_KEY } from "@core/vault/vault-registry";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { desktopBackupCreds } from "./adapters/backup-creds";
+import { desktopCrypto } from "./adapters/crypto";
+import { desktopFiles } from "./adapters/files";
+import { desktopStorage } from "./adapters/storage";
+
+const TICK_EVENT = "backup://tick";
+
+const newId = () => globalThis.crypto.randomUUID();
+
+/** Every registered vault, default (first) flag included. */
+async function registeredVaults(): Promise<{ id: string; isDefault: boolean }[]> {
+	const reg = parseRegistry(await desktopStorage.getMeta(VAULT_REGISTRY_KEY));
+	return reg.vaults.map((v) => ({ id: v.id, isDefault: v.id === reg.vaults[0]?.id }));
+}
+
+async function loadTargets(vaultId: string): Promise<BackupTargetConfig[]> {
+	return (await desktopStorage.getMeta<BackupTargetConfig[]>(backupTargetsKeyFor(vaultId))) ?? [];
+}
+
+/** Every vault's sealed blob. Reading one needs no key, so a locked vault still has bytes. */
+async function listVaults(): Promise<VaultBackup[]> {
+	const vaults = await registeredVaults();
+	await migrateBackupTargetsToVaults(
+		desktopStorage,
+		vaults.map((v) => v.id),
+		newId,
+	);
+	const out: VaultBackup[] = [];
+	for (const v of vaults) {
+		try {
+			out.push({
+				id: v.id,
+				blob: await desktopStorage.readVaultBlob(v.id),
+				isDefault: v.isDefault,
+			});
+		} catch {}
+	}
+	return out;
+}
+
+let running = false;
+
+/** Run whatever is due. Safe to call at any time; it no-ops unless a target is due and changed. */
+export async function runDueBackups(): Promise<void> {
+	if (running) return;
+	running = true;
+	const planner = backupPlanner((vault) =>
+		planBackup({
+			vault: vault.blob,
+			blobs: desktopFiles.forVault(vault.id).blobs,
+			// One VEK in the shell, the active vault's; any other vault's list cannot be read, and
+			// is the one cached at its last unlock, valid only while its bytes are unchanged.
+			decryptWithVek: (iv, ct) => desktopCrypto.decryptWithVek(iv, ct),
+			listCache: metaListCache(desktopStorage, vault.id),
+		}),
+	);
+	try {
+		const result = await runScheduledBackups(
+			{
+				listVaults,
+				loadTargets,
+				saveTargets: (vaultId, targets) =>
+					desktopStorage.setMeta(backupTargetsKeyFor(vaultId), targets),
+				// Per vault, so editing one vault does not re-upload the others. The runner plans only
+				// a vault with a target due, so a tick with nothing due decrypts nothing.
+				hashVault: planner.fingerprint,
+				// This is the one platform that backs up while locked. A locked vault is planned from
+				// the attachment list cached at its last unlock; with none for its current bytes it
+				// waits, rather than going up without attachments its sealed list may name.
+				blocked: planner.blocked,
+				// Only reached for a VEK-wrapped target (the OS-held ones never come through here).
+				// The Rust side holds one VEK for the active vault, so a locked vault yields null,
+				// which the runner treats as "not yet" rather than as a failure.
+				decryptSecrets: async (_vaultId, creds) => {
+					try {
+						return JSON.parse(
+							await desktopCrypto.decryptWithVek(creds.iv, creds.ciphertext),
+						) as BackupSecrets;
+					} catch {
+						return null;
+					}
+				},
+				upload: async (vaultId, t, secrets, vault) => {
+					// Both paths go through the shell, because this window cannot reach a provider
+					// either way. Stored credentials stay in the shell; a vault-wrapped one (no
+					// credential store on this machine) is passed in with the request.
+					const target = createTarget(
+						toProviderConfig(t, secrets ?? { username: "", password: "" }),
+						secrets === null
+							? desktopBackupCreds.transport(vaultId, t)
+							: desktopBackupCreds.transportWithSecrets(t, secrets),
+					);
+					await runBackup(target, await planner.body(vault), {
+						fingerprint: await planner.fingerprint(vault),
+						prefix: targetPrefixFor(t, vault.id, vault.isDefault),
+						keep: t.keep,
+						vaultId: keyVaultIdFor(t, vault.id),
+					});
+				},
+			},
+			Date.now(),
+		);
+		await report(result);
+	} catch (e) {
+		// A throw here is the runner itself failing rather than one target, which the per-target
+		// error list never sees. Silent before; it was the case with the least evidence and the
+		// most consequence.
+		await invoke("backup_run_report", {
+			summary: `run failed: ${(e as Error).message}`,
+			failed: true,
+		}).catch(() => {});
+		throw e;
+	} finally {
+		running = false;
+	}
+}
+
+/**
+ * One line into the app log per tick.
+ *
+ * Including the ticks that did nothing: with the window hidden and the vault locked, "nothing was
+ * due" and "the scheduler never ran" look identical from outside and mean completely different
+ * things. Counts, vault ids and the provider's own error text only — the same material that used
+ * to go to a console nobody could read.
+ */
+async function report(result: ScheduledBackupResult): Promise<void> {
+	const parts = [`${result.succeeded.length} uploaded`];
+	if (result.failed.length > 0) parts.push(`${result.failed.length} failed`);
+	if (result.skipped > 0) parts.push(`${result.skipped} skipped (locked)`);
+	if (result.attempted === 0 && result.skipped === 0) parts.push("nothing due");
+	const errors = result.failed.map((f) => `${f.vaultId.slice(0, 8)}/${f.id}: ${f.error}`);
+	const summary = [parts.join(", "), ...errors].join(" | ");
+	await invoke("backup_run_report", {
+		summary,
+		failed: result.failed.length > 0,
+	}).catch(() => {});
+}
+
+/** Listen for the shell's tick. Returns an unsubscribe; call once, from the main window. */
+export function startBackupSchedule(): () => void {
+	const run = () => {
+		void runDueBackups().catch((e) => console.warn("[bramble] backup tick failed:", e));
+	};
+	const stop = listen(TICK_EVENT, run);
+	// A file a waiting backup needed may just have arrived; the run is a no-op if not.
+	const offArrival = onBlobArrived(run);
+	return () => {
+		offArrival();
+		void stop.then((off) => off());
+	};
+}
