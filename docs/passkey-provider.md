@@ -452,36 +452,64 @@ transports have different powers:
   authenticator" action on create cards (the escape hatch for a user who came to enroll Touch ID
   or a hardware key, e.g. Cloudflare Access's "Add an MFA device").
 - **Chrome (`webauthn-proxy-init.ts`):** the proxy API has NO passthrough, so the handoff is the
-  user's explicit choice, and since the maintainer's UX call **every refusal from a card is that
-  choice**: "Not now", the x, and even the ceremony timeout all count. The site's request
-  completes with the handoff message, the provider turns itself off (persisted pref + detach,
-  exactly the Settings toggle's write), and the site's retry reaches the platform authenticator.
-  The no-match card's primary action is still "Use another authenticator", labelled for clarity;
-  there is nothing else on the card to press. The order inside the delivery
-  layer is load-bearing and unit-tested: complete the request with the handoff message FIRST,
-  then detach, because detaching mid-flight aborts the page's promise with a bare `AbortError`, which
-  would eat the message the user just clicked for. No timed auto re-attach: a timer re-attaching
-  over a live native ceremony is exactly the desync class this feature spent its bug budget on.
+  user's explicit choice, and the choice opens a **bypass window** rather than flipping
+  Settings: the request completes with the handoff message, then the provider detaches, so the
+  site's retry reaches the platform authenticator. The window closes on the next committed
+  navigation in the initiating tab (any destination — login flows redirect, often same-origin),
+  on the tab closing, or on a 10-minute safety alarm; any tab event also closes an expired
+  window, because a forgotten window must not hold the proxy detached for a whole browser
+  session. The toolbar badge reads "⏸" the whole time, so the pause is visible, and the
+  **Settings pref is never written from a card** — the toggle stays the single writer of the
+  durable state. The window state lives in `storage.session` and is rehydrated on worker wake,
+  so a nap mid-window neither re-attaches on boot nor forgets the deadline.
+  Refusals are NOT the handoff on cards Bramble can serve: "Not now", the x, and the ceremony
+  timeout are plain declines ("user declined", provider stays attached). The handoff is the
+  card's explicit "Use another authenticator" action. The no-match card is the exception — its
+  primary action IS the handoff, so any exit hands off: Bramble cannot serve that request at
+  all, and an ignored card must not dead-end the browser (the step-up user who walks away
+  expects their other authenticators on retry). The order inside the delivery layer is
+  load-bearing and unit-tested: complete the request with the handoff message FIRST — detaching
+  mid-flight aborts the page's promise with a bare `AbortError`, which would eat the message the
+  user just clicked for — and fail any other in-flight request with the handoff reason before
+  detaching (the detach is about to abort them bare). A timed close could in principle land
+  over a native dialog the user left open; the expiry is lazy (it acts on the next wake: any tab
+  event, or the alarm's own) and the pause machinery defers the re-attach behind any in-flight
+  Bramble ceremony, and one abandoned native prompt is accepted as the price of never leaving
+  passkeys silently off for a session.
 
-The one refusal that does NOT hand off is the early fail for a locked, WebAuthn-only vault:
-there Bramble may well hold the matching passkey and the user merely cannot unlock from inside
-the ceremony, so that path stays a hard error with the "unlock from the toolbar, then retry"
-guidance rather than turning the provider off.
+The early fail for a locked, WebAuthn-only vault also does not hand off: Bramble may well hold
+the matching passkey and the user merely cannot unlock from inside the ceremony, so that path
+stays a hard error with the "unlock from the toolbar, then retry" guidance.
 
 The decision travels as `CeremonyDecision {approved: false, nativeFallback: true}` from the pure
 ceremony (`webauthn-proxy.ts`) up through `handleGet`/`handleCreate`, which return the usual
 error completion **plus the `nativeFallback` marker**; the Chrome listener strips the marker
-before calling Chrome (it validates the W3C shape) and then disables; the Firefox transport maps
-it to `{fallback: true}`. The ceremonies also carry a `detail` on declines, so a site's DOMException
-says what actually happened ("no matching passkey", the unlock-conflict guidance, plain "user
-declined") instead of everything being "user declined".
+before calling Chrome (it validates the W3C shape) and then opens the bypass window; the
+Firefox transport maps it to `{fallback: true}`. The ceremonies also carry a `detail` on
+declines, so a site's DOMException says what actually happened ("no matching passkey", the
+unlock-conflict guidance, plain "user declined") instead of everything being "user declined".
+When the card's "Always use another authenticator for this site" checkbox is checked, the
+decision also carries `rememberSite`; the completion carries the rpId and the delivery stores it.
 
-Regression coverage: `webauthn-proxy.test.ts` (the decision paths),
-`webauthn-content-transport.test.ts` (the mapping), `webauthn-proxy-init.test.ts` (the
-complete-before-disable order), and `e2e/extension/passkey-provider.spec.ts`, a synthetic
-fixture page in the Cloudflare Access shape (step-up get with unknown `allowCredentials` →
-create) driven through the real proxy, including proof that native WebAuthn is reachable again
-after the handoff (via a CDP virtual authenticator).
+### Remembered sites: "Always use another authenticator"
+
+The checkbox stores the request's rpId in `pref.passkeyPausedSites`. On Chrome, when the active
+tab lands on a remembered site, the proxy detaches before the page's first WebAuthn call, so the
+site goes native with no card at all; the badge shows the pause, and leaving or closing the tab,
+or the 10-minute alarm, re-attaches. Because `webAuthenticationProxy` attaches to the whole
+browser, this is a site-scoped pause, not a per-origin attach: other tabs also reach native
+WebAuthn while it lasts. On Firefox the content transport checks the remembered list per request
+and returns `passthrough`, so the exclusion is truly per-site. Settings lists the remembered
+sites and removes them; removing one lets Bramble intercept it again.
+
+Regression coverage: `webauthn-proxy.test.ts` (the decision paths, incl. plain-refusal vs the
+explicit bypass and the remembered site), `webauthn-content-transport.test.ts` (the mapping and
+the per-site passthrough), `webauthn-proxy-init.test.ts` (the complete-before-window order, the
+re-attach triggers, the worker-death rehydration, the automatic pause and retarget), and
+`e2e/extension/passkey-provider.spec.ts`, a synthetic fixture page in the Cloudflare Access shape
+(step-up get with unknown `allowCredentials` → create) driven through the real proxy, including
+proof that native WebAuthn is reachable again after the handoff (via a CDP virtual authenticator)
+and that a remembered site pauses on its next visit.
 
 ## Cross-cutting decisions
 

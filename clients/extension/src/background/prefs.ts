@@ -10,6 +10,7 @@ const PREF_OFFER_TO_SAVE = "pref.offerToSave";
 const PREF_AUTOFILL_ENABLED = "pref.autofillEnabled";
 const PREF_NEVER_SAVE_SITES = "pref.neverSaveSites";
 export const PREF_PASSKEY_PROVIDER = "pref.passkeyProviderEnabled";
+export const PREF_PASSKEY_PAUSED_SITES = "pref.passkeyPausedSites";
 export const PREF_LOCK_ON_SCREEN_LOCK = "pref.lockOnScreenLock";
 const PREF_GENERATOR = "pref.generator";
 
@@ -82,13 +83,34 @@ export async function getPasskeyProviderEnabled(): Promise<boolean> {
 	return DEFAULT_PASSKEY_PROVIDER;
 }
 
-/** Persist the provider opt-in. The background's own fallback path ("use another
- * authenticator" on Chrome, where the all-or-nothing proxy has no passthrough) turns the
- * provider off through here, so it stays off exactly like a Settings toggle the user
- * flipped (same key, same shape), picked up on the next UI read. */
+/** Persist the provider opt-in. This is the Settings toggle's write only; the card's
+ * "use another authenticator" handoff opens a bypass window and never flips the pref. */
 export async function setPasskeyProviderEnabled(enabled: boolean): Promise<void> {
 	try {
 		await api.storage.local.set({ [PREF_PASSKEY_PROVIDER]: enabled });
+	} catch {}
+}
+
+/** Sites the user chose "always use another authenticator" for. Stored as an array in
+ * local storage so the Settings list can render and remove entries; read as a Set here. */
+export async function getPasskeyPausedSites(): Promise<Set<string>> {
+	try {
+		const r = await api.storage.local.get(PREF_PASSKEY_PAUSED_SITES);
+		const v = r[PREF_PASSKEY_PAUSED_SITES];
+		if (Array.isArray(v)) return new Set(v.filter((s): s is string => typeof s === "string"));
+	} catch {}
+	return new Set();
+}
+
+/** Remember a site for the automatic bypass. Idempotent; the list is small. */
+export async function rememberPasskeyPausedSite(site: string): Promise<void> {
+	const normalized = site.trim().toLowerCase();
+	if (!normalized) return;
+	const current = await getPasskeyPausedSites();
+	if (current.has(normalized)) return;
+	current.add(normalized);
+	try {
+		await api.storage.local.set({ [PREF_PASSKEY_PAUSED_SITES]: Array.from(current) });
 	} catch {}
 }
 

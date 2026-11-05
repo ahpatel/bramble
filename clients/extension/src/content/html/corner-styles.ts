@@ -282,6 +282,44 @@ export const cornerStyles = html`
 				line-height: 1.5;
 				padding: 0 2px;
 			}
+			/* The "use another authenticator" bypass on cards that CAN serve: quiet and
+			   centered, clearly secondary to the primary action it sits under. */
+			button.tp-bypass {
+				display: block;
+				width: 100%;
+				margin-top: 10px;
+				background: transparent;
+				border: 0;
+				color: rgba(235, 235, 245, 0.6);
+				font: inherit;
+				font-size: 12px;
+				text-align: center;
+				cursor: pointer;
+				padding: 4px 0;
+				border-radius: 6px;
+			}
+			button.tp-bypass:hover {
+				color: #fff;
+				background: rgba(255, 255, 255, 0.05);
+			}
+			/* "Always use another authenticator for this site": opt-in to the automatic
+			   pause, so the next visit needs no card at all. */
+			label.tp-remember {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin-top: 8px;
+				color: rgba(235, 235, 245, 0.55);
+				font: inherit;
+				font-size: 11px;
+				line-height: 1.4;
+				cursor: pointer;
+			}
+			label.tp-remember input {
+				accent-color: #fafafa;
+				margin: 0;
+				flex: none;
+			}
 			button.tp-btn-primary {
 				background: #fafafa;
 				color: #18181b;

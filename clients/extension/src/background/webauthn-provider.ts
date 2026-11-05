@@ -23,7 +23,7 @@ import {
 	savePlacement,
 } from "./passkey-store";
 import { openPopoutAt, openUnlockView } from "./popout";
-import { getPasskeyProviderEnabled, setPasskeyProviderEnabled } from "./prefs";
+import { getPasskeyProviderEnabled } from "./prefs";
 import { extensionOnly, on } from "./router";
 import { getActiveVaultId, vaultLocked } from "./session";
 import { readAndDecodeVault } from "./vault-io";
@@ -40,7 +40,7 @@ import {
 // backstop: the page must never give up while a ceremony could still save a passkey.
 const CEREMONY_DEADLINE_MS = 150_000;
 
-type PromptReply = { approved: boolean; choice?: string };
+type PromptReply = { approved: boolean; choice?: string; rememberSite?: boolean };
 // In-flight passkey cards keyed by promptId; resolved by PASSKEY_PROMPT_RESPONSE.
 const pendingPrompts = new Map<string, (reply: PromptReply) => void>();
 
@@ -276,29 +276,10 @@ export async function loadProviderEnabled(): Promise<void> {
 	if (!flagSetExplicitly) providerEnabled = stored;
 }
 
-/**
- * Turn the provider off as the result of a user's "use another authenticator" click on a
- * card: persist the pref off (exactly the Settings toggle's write, so the next UI read
- * agrees) and detach the proxy so the site's retry reaches the platform authenticator.
- * Called by the Chrome delivery layer AFTER completing the request with the handoff
- * message; the order is load-bearing: detaching mid-flight aborts the page's promise
- * with a bare AbortError (measured, docs/passkey-provider.md), which would eat the very
- * message the user just clicked for.
- */
-export async function disableProviderForNativeFallback(): Promise<void> {
-	providerEnabled = false;
-	flagSetExplicitly = true;
-	await setPasskeyProviderEnabled(false);
-	try {
-		await applyHook(false);
-	} catch (e) {
-		// The pref is the durable state; a failed detach self-heals on the next toggle
-		// (detach is idempotent), and the flag already reads off so requests pass through.
-		console.error("[passkey] native-fallback detach failed", e);
-	}
-}
-
 // The delivery-specific side effect of toggling (Chrome: attach/detach; Firefox: none).
+// This is the Settings toggle's live effect ONLY: the card's "use another authenticator"
+// handoff never flips the pref. On Chrome it opens a bypass window instead (see
+// ./webauthn-proxy-init), so the Settings flag stays the single writer of durable state.
 type ApplyHook = (enabled: boolean) => Promise<void>;
 let applyHook: ApplyHook = async () => {};
 export function setProviderApplyHook(fn: ApplyHook): void {
@@ -306,11 +287,12 @@ export function setProviderApplyHook(fn: ApplyHook): void {
 }
 
 on("PASSKEY_PROMPT_RESPONSE", async (message) => {
-	const { promptId, approved, choice } = (message.payload ?? {}) as PasskeyPromptResponse;
+	const { promptId, approved, choice, rememberSite } = (message.payload ??
+		{}) as PasskeyPromptResponse;
 	const resolve = pendingPrompts.get(promptId);
 	if (resolve) {
 		pendingPrompts.delete(promptId);
-		resolve({ approved: !!approved, choice });
+		resolve({ approved: !!approved, choice, rememberSite });
 	}
 	return { ok: true, data: null };
 });

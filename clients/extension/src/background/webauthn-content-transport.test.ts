@@ -17,6 +17,9 @@ const h = vi.hoisted(() => ({
 	depsCalls: [] as Array<[number | undefined, string | undefined]>,
 	/** What the mocked handlers return for the current request. */
 	handlerResult: {} as Record<string, unknown>,
+	/** Scripted remembered sites and the sites the transport remembered. */
+	pausedSites: [] as string[],
+	remembered: [] as string[],
 }));
 
 vi.mock("../platform-api", () => ({
@@ -27,6 +30,13 @@ vi.mock("../platform-api", () => ({
 vi.mock("./router", () => ({
 	on: (type: string, handler: (m: unknown, sender: unknown) => Promise<unknown>) =>
 		h.handlers.set(type, handler),
+}));
+
+vi.mock("./prefs", () => ({
+	getPasskeyPausedSites: async () => new Set(h.pausedSites),
+	rememberPasskeyPausedSite: async (site: string) => {
+		h.remembered.push(site);
+	},
 }));
 
 vi.mock("./webauthn-provider", () => ({
@@ -53,6 +63,8 @@ beforeEach(() => {
 	h.enabled = true;
 	h.depsCalls = [];
 	h.handlerResult = {};
+	h.pausedSites = [];
+	h.remembered = [];
 	vi.resetModules();
 });
 
@@ -117,6 +129,27 @@ describe("the Firefox content transport", () => {
 			[5, "silent"],
 			[5, "silent"],
 		]);
+	});
+
+	it("passes a remembered site straight through, before the handler", async () => {
+		await load();
+		h.pausedSites = ["github.com"];
+		h.handlerResult = { responseJson: "{}" };
+		const res = (await h.handlers.get("WEBAUTHN_GET")?.({ payload: {} }, sender)) as {
+			data: unknown;
+		};
+		expect(res.data).toEqual({ passthrough: true });
+		expect(h.depsCalls).toEqual([]); // the handler never ran
+	});
+
+	it("remembers the site when the handler asks to", async () => {
+		await load();
+		h.handlerResult = { nativeFallback: true, rememberSite: "github.com" };
+		const res = (await h.handlers.get("WEBAUTHN_GET")?.({ payload: {} }, sender)) as {
+			data: unknown;
+		};
+		expect(res.data).toEqual({ fallback: true });
+		expect(h.remembered).toEqual(["github.com"]);
 	});
 });
 

@@ -682,6 +682,10 @@ msgstr "Bramble deve solo caricare ed elencare. Limitando la chiave a questo uni
 msgid "Bramble restarts by itself once this finishes."
 msgstr "Bramble si riavvia automaticamente una volta terminato."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Bramble steps aside here so your browser's own authenticator can handle passkeys. Remove a site to let Bramble intercept it again."
+msgstr "Bramble si fa da parte qui così l'autenticatore del browser può gestire le passkey. Rimuovi un sito per lasciare che Bramble lo intercetti di nuovo."
+
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Bramble will never delete anything here, so this can use a credential that isn't allowed to. One that's stolen then can't destroy your backup history."
 msgstr "Bramble non eliminerà mai nulla qui, quindi è possibile usare una credenziale che non è autorizzata a farlo. Una credenziale rubata non potrà così distruggere la cronologia dei backup."
@@ -2790,6 +2794,10 @@ msgstr "Rimuovere {0}"
 msgid "Remove {host} from never-save list"
 msgstr "Rimuovere {host} dalla lista di non salvare mai"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Remove {site} from paused passkey sites"
+msgstr "Rimuovi {site} dai siti in pausa per le passkey"
+
 #: packages/core/src/app/bulk-actions/tags.tsx
 msgid "Remove a tag"
 msgstr "Rimuovere un tag"
@@ -3230,6 +3238,10 @@ msgstr "Mostra valore"
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Sign in and Bramble stores encrypted backups in its own {name} app folder. Only ciphertext is uploaded, so {name} can't read anything in your vault."
 msgstr "Accedi e Bramble memorizza i backup crittografati nella propria cartella dell'app {name}. Viene caricato solo il testo cifrato, quindi {name} non può leggere nulla nel tuo vault."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Sites paused for passkeys"
+msgstr "Siti in pausa per le passkey"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Sites you've muted"

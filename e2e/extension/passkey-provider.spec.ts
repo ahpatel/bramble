@@ -4,6 +4,8 @@ import {
 	actOnPasskeyCard,
 	addVirtualAuthenticator,
 	backgroundWorker,
+	clickCornerAction,
+	clickCornerSelector,
 	createVault,
 	openPopup,
 	STRONG_PW,
@@ -91,19 +93,6 @@ async function enableProvider(context: BrowserContext, extensionId: string) {
 	await popup.close();
 }
 
-/** Click the primary (left) action button of the corner card by its bounding box. The
- *  buttons live in a closed shadow root, so selectors cannot reach them; the y offset is
- *  measured from the card's bottom. 40 = the actions row is the last element (the
- *  no-match card). Cards that also render the tertiary "use another authenticator" link
- *  (all save variants) have ~54px of link below the actions, so pass ~70. */
-async function clickCardPrimary(page: Page, yOffsetFromBottom = 40): Promise<void> {
-	const card = page.locator("#bramble-corner-prompt");
-	await expect(card).toBeAttached({ timeout: 10_000 });
-	const box = await card.boundingBox();
-	expect(box).not.toBeNull();
-	await page.mouse.click(box!.x + 100, box!.y + box!.height - yOffsetFromBottom);
-}
-
 test("a step-up get() with no matching passkey hands off instead of dead-ending", async ({
 	context,
 	extensionId,
@@ -121,10 +110,10 @@ test("a step-up get() with no matching passkey hands off instead of dead-ending"
 			const r = await chrome.storage.local.get("pref.passkeyProviderEnabled");
 			return r["pref.passkeyProviderEnabled"];
 		});
+	const badge = async () => sw.evaluate(() => chrome.action.getBadgeText({}));
 
-	// Refusal #1: the card's x ("Not now" on every other variant; on the no-match card
-	// the primary is the handoff and the x is the refusal). The user's expectation:
-	// declining makes Bramble step aside, not fail the request cold.
+	// The no-match card's x: any exit is the handoff (Bramble cannot serve this request
+	// at all), and the handoff opens the bypass window.
 	await page.locator("#step-up").click();
 	const card = page.locator("#bramble-corner-prompt");
 	await expect(card).toBeAttached({ timeout: 10_000 });
@@ -137,23 +126,34 @@ test("a step-up get() with no matching passkey hands off instead of dead-ending"
 			timeout: 10_000,
 		},
 	);
-	await expect.poll(prefIsOn, { timeout: 10_000 }).toBe(false);
+	// The pause is visible (badge) and the Settings pref, the durable state, is exactly
+	// as the user left it. The window is a pause, not a configuration change.
+	await expect.poll(badge, { timeout: 10_000 }).toBe("⏸");
+	expect(await prefIsOn()).toBe(true);
 
-	// Refusal #2 via the primary button, after re-enabling: same outcome.
-	await enableProvider(context, extensionId);
+	// The window closes when the tab navigates (login flows redirect), and the provider
+	// re-attaches with no Settings round-trip: the next no-match request gets the card.
+	await page.goto("http://localhost/?after");
+	await expect.poll(badge, { timeout: 10_000 }).toBe("");
 	await page.locator("#step-up").click();
-	await clickCardPrimary(page);
+	await expect(card).toBeAttached({ timeout: 10_000 });
+	expect(await prefIsOn()).toBe(true);
+
+	// The primary button is the same handoff: the message lands, the pause shows, and
+	// Settings still stay untouched.
+	await clickCornerAction(page, "passkey-native");
 	await expect(page.locator("#out")).toHaveText(
 		/step-up :: NotAllowedError \| .*another authenticator/i,
 		{
 			timeout: 10_000,
 		},
 	);
-	await expect.poll(prefIsOn, { timeout: 10_000 }).toBe(false);
+	await expect.poll(badge, { timeout: 10_000 }).toBe("⏸");
+	expect(await prefIsOn()).toBe(true);
 
-	// And native WebAuthn is genuinely reachable again: a virtual platform authenticator
-	// (the CDP kind, standing in for Touch ID) now serves the enrollment the proxy
-	// would have intercepted before the handoff.
+	// Last (CDP's WebAuthn domain shadows the extension proxy for every request after
+	// it): while the window is open, the site's WebAuthn genuinely reaches the platform
+	// authenticator, a virtual platform authenticator standing in for Touch ID.
 	const virtual = await addVirtualAuthenticator(page, { transport: "internal" });
 	try {
 		await page.locator("#native-after").click();
@@ -199,4 +199,51 @@ test("an enrollment create() still mints and stores a passkey through the provid
 	const goToVault = popup.getByRole("button", { name: "Go to vault" });
 	if (await goToVault.isVisible().catch(() => false)) await goToVault.click();
 	await expect(popup.getByText(/localhost/).first()).toBeVisible({ timeout: 10_000 });
+});
+
+test("'always for this site' auto-pauses on the next visit", async ({ context, extensionId }) => {
+	const setup = await context.newPage();
+	await createVault(setup, extensionId);
+	await enableProvider(context, extensionId);
+
+	const page = await context.newPage();
+	await serve(page);
+	await page.goto("http://localhost/");
+	const sw = await backgroundWorker(context);
+	const prefIsOn = async () =>
+		sw.evaluate(async () => {
+			const r = await chrome.storage.local.get("pref.passkeyProviderEnabled");
+			return r["pref.passkeyProviderEnabled"];
+		});
+	const badge = async () => sw.evaluate(() => chrome.action.getBadgeText({}));
+
+	// First visit: no matching passkey, so the card offers the handoff. Checking "always
+	// for this site" remembers the site as well as opening the window.
+	await page.locator("#step-up").click();
+	const card = page.locator("#bramble-corner-prompt");
+	await expect(card).toBeAttached({ timeout: 10_000 });
+	await clickCornerSelector(page, "#tp-remember-site");
+	await clickCornerAction(page, "passkey-native");
+	await expect(page.locator("#out")).toHaveText(
+		/step-up :: NotAllowedError \| .*another authenticator/i,
+		{ timeout: 10_000 },
+	);
+	await expect.poll(badge, { timeout: 10_000 }).toBe("⏸");
+	expect(await prefIsOn()).toBe(true);
+
+	// Next visit: the remembered site pauses before the first WebAuthn call, so no card
+	// appears at all and the browser's own authenticator serves the page.
+	await page.goto("http://localhost/?again");
+	await expect.poll(badge, { timeout: 10_000 }).toBe("⏸");
+	await expect(card).not.toBeAttached();
+
+	const virtual = await addVirtualAuthenticator(page, { transport: "internal" });
+	try {
+		await page.locator("#native-after").click();
+		await expect(page.locator("#out")).toHaveText(/native-after :: resolved public-key/i, {
+			timeout: 10_000,
+		});
+	} finally {
+		await virtual.remove();
+	}
 });

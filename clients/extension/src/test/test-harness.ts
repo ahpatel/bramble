@@ -123,6 +123,7 @@ interface HarnessState {
 	 * tab while the card carry watches for the page leaving under it. */
 	tabListeners: {
 		updated: Array<(...args: any[]) => any>;
+		activated: Array<(...args: any[]) => any>;
 		removed: Array<(...args: any[]) => any>;
 	};
 	/** All runtime.onMessage listeners, in registration order. Chrome dispatches a message to
@@ -235,7 +236,7 @@ function makeChrome(opts: ChromeMockOptions): { chrome: any; state: HarnessState
 		windowsRemoved: [],
 		listeners: {},
 		storageChangedListeners: [],
-		tabListeners: { updated: [], removed: [] },
+		tabListeners: { updated: [], activated: [], removed: [] },
 		messageListeners: [],
 		pendingSessionStorageChanges: [],
 	};
@@ -354,6 +355,9 @@ function makeChrome(opts: ChromeMockOptions): { chrome: any; state: HarnessState
 		},
 		tabs: {
 			query: vi.fn(async () => opts.openTabs ?? []),
+			get: vi.fn(async (tabId: number) =>
+				(opts.openTabs ?? []).find((tab: { id?: number }) => tab.id === tabId),
+			),
 			sendMessage: vi.fn(async (tabId: number, message: AnyMsg, options?: AnyMsg) => {
 				state.tabMessages.push({ tabId, message, options });
 			}),
@@ -361,6 +365,11 @@ function makeChrome(opts: ChromeMockOptions): { chrome: any; state: HarnessState
 			onUpdated: {
 				addListener: (fn: any) => {
 					state.tabListeners.updated.push(fn);
+				},
+			},
+			onActivated: {
+				addListener: (fn: any) => {
+					state.tabListeners.activated.push(fn);
 				},
 			},
 			onRemoved: {

@@ -682,6 +682,10 @@ msgstr "Bramble n'a besoin que de téléverser et de lister. Limiter la clé à 
 msgid "Bramble restarts by itself once this finishes."
 msgstr "Bramble redémarre automatiquement une fois cette opération terminée."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Bramble steps aside here so your browser's own authenticator can handle passkeys. Remove a site to let Bramble intercept it again."
+msgstr "Bramble s'efface ici pour que l'authentificateur de votre navigateur gère les clés d'accès. Retirez un site pour que Bramble l'intercepte à nouveau."
+
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Bramble will never delete anything here, so this can use a credential that isn't allowed to. One that's stolen then can't destroy your backup history."
 msgstr "Bramble ne supprimera jamais rien ici, il est donc possible d'utiliser un identifiant qui n'est pas autorisé à le faire. Un identifiant volé ne pourrait alors pas détruire l'historique de vos sauvegardes."
@@ -2790,6 +2794,10 @@ msgstr "Supprimer {0}"
 msgid "Remove {host} from never-save list"
 msgstr "Retirer {host} de la liste des URL à ne jamais enregistrer"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Remove {site} from paused passkey sites"
+msgstr "Retirer {site} des sites en pause pour les clés d'accès"
+
 #: packages/core/src/app/bulk-actions/tags.tsx
 msgid "Remove a tag"
 msgstr "Retirer une étiquette"
@@ -3230,6 +3238,10 @@ msgstr "Afficher la valeur"
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Sign in and Bramble stores encrypted backups in its own {name} app folder. Only ciphertext is uploaded, so {name} can't read anything in your vault."
 msgstr "Connectez-vous et Bramble stocke les sauvegardes chiffrées dans son propre dossier d'application {name}. Seul le texte chiffré est téléchargé, {name} ne peut donc rien lire dans votre coffre."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Sites paused for passkeys"
+msgstr "Sites en pause pour les clés d'accès"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Sites you've muted"

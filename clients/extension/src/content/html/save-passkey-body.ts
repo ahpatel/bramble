@@ -60,7 +60,7 @@ export function savePasskeyBody({
 	primaryLabel: string;
 	locked?: boolean;
 	noMatch?: boolean;
-	nativeFallback?: "passthrough" | "disable";
+	nativeFallback?: "passthrough" | "pause";
 	/** Host of the page that made the request, and of the page this card is shown on. */
 	requester?: string;
 	pageHost?: string;
@@ -87,10 +87,10 @@ export function savePasskeyBody({
 	// Nested html escapes interpolated values; array interpolations join markup verbatim.
 	let middle: string[] = [];
 	if (noMatch) {
-		// Say what the primary action does: relays natively (Firefox) or turns the provider
-		// off so the retry reaches the platform authenticator (Chrome has no passthrough).
+		// Say what the handoff does: relays natively (Firefox) or opens the bypass window
+		// so the retry reaches the platform authenticator (Chrome has no passthrough).
 		const note = t(
-			nativeFallback === "passthrough" ? "passkeyNoneNotePassthrough" : "passkeyNoneNoteDisable",
+			nativeFallback === "passthrough" ? "passkeyNoneNotePassthrough" : "passkeyNoneNotePause",
 		);
 		middle = [html`<div class="tp-note">${note}</div>`];
 	} else if (locked) {
@@ -131,8 +131,8 @@ export function savePasskeyBody({
 	// A pickable list acts on row click, so it needs no confirm buttons (dismiss via the ×).
 	// A single confirm (locked prompt, or a save with no ambiguity) keeps the button row.
 	// The no-match card inverts the row: Bramble has nothing for this site, so the primary
-	// action IS the handoff to the user's other authenticators. Any refusal ("Not now",
-	// the ×, the ceremony timeout) hands off too, so no second button is needed.
+	// action IS the handoff to the user's other authenticators; any exit hands off (there
+	// is nothing Bramble could serve instead).
 	const actions = noMatch
 		? [
 				html`<div class="tp-actions">
@@ -148,17 +148,40 @@ export function savePasskeyBody({
 		</div>`,
 				];
 
-	// Every refusal from a passkey card hands off, so the note says what "Not now" does
-	// (the no-match card already says it in its body): Firefox relays natively; Chrome
-	// has no passthrough, so the request fails with the handoff message, the provider
-	// turns off, and the site's retry goes native.
-	const declineNote = !noMatch
-		? nativeFallback === "disable"
-			? t("passkeyDeclineNoteDisable")
-			: nativeFallback === "passthrough"
-				? t("passkeyDeclineNotePassthrough")
-				: ""
-		: "";
+	// Cards that CAN serve a request offer the bypass as its own action: "Not now" is a
+	// plain decline now, so the handoff needs an explicit affordance (the no-match card's
+	// primary already is it).
+	const bypassAction =
+		nativeFallback && !noMatch
+			? [
+					html`<button type="button" class="tp-bypass" data-tp-action="passkey-native">${t(
+						"passkeyUseOther",
+					)}</button>`,
+				]
+			: [];
+
+	// The no-match card's primary and every explicit bypass action can remember the site,
+	// so the next visit pauses before the first WebAuthn call instead of showing a card.
+	const rememberSite = nativeFallback
+		? [
+				html`<label class="tp-remember">
+					<input type="checkbox" id="tp-remember-site" />
+					<span>${t("passkeyRememberSite")}</span>
+				</label>`,
+			]
+		: [];
+
+	// What the bypass action does, per delivery: Firefox relays this one request natively
+	// (provider untouched); Chrome has no passthrough, so it opens the bypass window, a
+	// pause until the page is left, never a Settings change.
+	const declineNote =
+		!noMatch && nativeFallback
+			? t(
+					nativeFallback === "passthrough"
+						? "passkeyDeclineNotePassthrough"
+						: "passkeyDeclineNotePause",
+				)
+			: "";
 	const nativeAlt = declineNote ? [html`<div class="tp-subnote">${declineNote}</div>`] : [];
 
 	return html`
@@ -175,6 +198,8 @@ export function savePasskeyBody({
 		${requesterRow}
 		${middle}
 		${actions}
+		${bypassAction}
+		${rememberSite}
 		${nativeAlt}
 	`;
 }

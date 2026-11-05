@@ -24,14 +24,16 @@ describe("savePasskeyBody", () => {
 		const out = savePasskeyBody({
 			...base,
 			noMatch: true,
-			nativeFallback: "disable",
+			nativeFallback: "pause",
 		});
 		expect(out).toContain("passkeyNoneTitle");
-		expect(out).toContain("passkeyNoneNoteDisable"); // Chrome: says the provider turns off
+		expect(out).toContain("passkeyNoneNotePause"); // Chrome: says the page pauses
 		expect(out).toContain('data-tp-action="passkey-native"');
 		expect(out).toContain('class="tp-btn tp-btn-primary" data-tp-action="passkey-native"'); // the primary, not an escape hatch
 		expect(out).not.toContain('data-tp-action="passkey-approve"'); // nothing to confirm: no Bramble passkey exists
 		expect(out).toContain('data-tp-action="passkey-dismiss"'); // "Not now" stays
+		expect(out).toContain('id="tp-remember-site"'); // opt into the automatic pause
+		expect(out).toContain("passkeyRememberSite");
 	});
 
 	it("labels the no-match note for passthrough where the delivery can relay", async () => {
@@ -42,23 +44,24 @@ describe("savePasskeyBody", () => {
 			nativeFallback: "passthrough",
 		});
 		expect(out).toContain("passkeyNoneNotePassthrough");
-		expect(out).not.toContain("passkeyNoneNoteDisable");
+		expect(out).not.toContain("passkeyNoneNotePause");
 	});
 
-	it("keeps the ordinary confirm card, plus the note saying what a refusal does", async () => {
+	it("keeps the ordinary confirm card and offers the explicit bypass action", async () => {
 		const savePasskeyBody = await loadSavePasskeyBody();
 		const out = savePasskeyBody({
 			...base,
 			intent: "create",
-			nativeFallback: "disable",
+			nativeFallback: "pause",
 		});
 		expect(out).toContain('data-tp-action="passkey-approve"'); // the primary stays Bramble
-		expect(out).toContain('data-tp-action="passkey-dismiss"'); // "Not now", which now hands off
-		expect(out).toContain("passkeyDeclineNoteDisable"); // the note says what declining does
-		expect(out).not.toContain("passkey-native"); // no separate native button anymore
+		expect(out).toContain('data-tp-action="passkey-dismiss"'); // "Not now" is a plain decline
+		expect(out).toContain("passkeyDeclineNotePause"); // the bypass note
+		expect(out).toContain('class="tp-bypass" data-tp-action="passkey-native"'); // the explicit handoff
+		expect(out).toContain('id="tp-remember-site"'); // opt into the automatic pause
 	});
 
-	it("labels the refusal note for passthrough where the delivery can relay", async () => {
+	it("labels the bypass note for passthrough where the delivery can relay", async () => {
 		const savePasskeyBody = await loadSavePasskeyBody();
 		const out = savePasskeyBody({
 			...base,
@@ -66,14 +69,16 @@ describe("savePasskeyBody", () => {
 			nativeFallback: "passthrough",
 		});
 		expect(out).toContain("passkeyDeclineNotePassthrough");
-		expect(out).not.toContain("passkeyDeclineNoteDisable");
+		expect(out).not.toContain("passkeyDeclineNotePause");
 	});
 
-	it("omits the refusal note when the delivery cannot offer a handoff", async () => {
+	it("omits the bypass note and action when the delivery cannot offer a handoff", async () => {
 		const savePasskeyBody = await loadSavePasskeyBody();
 		const out = savePasskeyBody({ ...base, intent: "create" });
-		expect(out).not.toContain("passkeyDeclineNoteDisable");
+		expect(out).not.toContain("passkeyDeclineNotePause");
 		expect(out).not.toContain("passkeyDeclineNotePassthrough");
+		expect(out).not.toContain("passkey-native");
+		expect(out).not.toContain('id="tp-remember-site"');
 	});
 
 	it("renders account rows as real markup in the picker", async () => {

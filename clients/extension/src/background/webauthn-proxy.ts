@@ -89,8 +89,12 @@ export type CeremonyDecision =
 			approved: false;
 			/** Give the request to the user's other authenticators: the Firefox shim relays
 			 * to the native navigator.credentials; Chrome has no passthrough, so the delivery
-			 * layer turns the provider off and the site's retry goes native. */
+			 * layer opens a bypass window (detach until the page is left), and the site's
+			 * retry goes native. Settings are never touched. */
 			nativeFallback?: boolean;
+			/** The user asked to always bypass Bramble for this site. The delivery layer
+			 * remembers the rpId and auto-pauses on later visits. */
+			rememberSite?: boolean;
 			/** Context for the DOMException message the site sees (defaults to "user declined"). */
 			detail?: string;
 	  };
@@ -110,6 +114,8 @@ export const WEBAUTHN_UNLOCK_CONFLICT_MESSAGE =
 export interface CardReply {
 	approved: boolean;
 	choice?: string;
+	/** The "always use another authenticator for this site" checkbox was checked. */
+	rememberSite?: boolean;
 }
 
 /**
@@ -125,10 +131,10 @@ export interface CeremonyHost {
 		passkeyChoices?: { credentialId: string; label: string }[];
 		/** get only: the vault holds no passkey that could serve this request. */
 		noMatch?: boolean;
-		/** Render the handoff affordances (the no-match card's primary action, and the
-		 * note saying what a refusal does): "passthrough" relays natively, "disable"
-		 * turns the provider off. The note is informational; any refusal hands off. */
-		nativeFallback?: "passthrough" | "disable";
+		/** Render the handoff affordances (the bypass action, and the note saying what it
+		 * does): "passthrough" relays natively per request; "pause" opens Chrome's bypass
+		 * window (detach until the page is left, no passthrough exists there). */
+		nativeFallback?: "passthrough" | "pause";
 	}) => Promise<CardReply>;
 	isLocked: () => boolean;
 	ensureUnlocked: () => Promise<boolean>;
@@ -138,7 +144,7 @@ export interface CeremonyHost {
 	/** How a request the vault cannot serve hands off: "silent" relays to the native
 	 * authenticator with no card (Firefox, where the shim holds the page's own options);
 	 * "card" shows one (Chrome's all-or-nothing proxy has no passthrough, so the handoff
-	 * turns the provider off and the card must say so). */
+	 * opens a bypass window and the card must say so). */
 	nativeFallback?: "silent" | "card";
 	/** While locked: whether unlocking needs a WebAuthn tap (security-key or platform
 	 * slot), which would pause the proxy and kill this very request. The locked branches
@@ -159,30 +165,41 @@ function declined(detail: string): CeremonyDecision {
 	return { approved: false, detail };
 }
 
-/** A user refusal from a card: the "Bramble, step aside" answer, not a dead end. The
- *  request is handed to the user's other authenticators: Firefox relays it with the page's
- *  own options, and Chrome, whose proxy has no passthrough, completes this attempt with
- *  the handoff message and turns the provider off, so the site's retry goes native.
- *  This is what the user expects "Not now" (and the ×, and the ceremony timeout) to do. */
+/** The no-match handoff: Bramble has NOTHING to serve this request, so any way the
+ *  card ends (primary, "Not now", ×, the ceremony timeout) is the handoff. An ignored
+ *  card must not dead-end the browser: the step-up case is exactly a user who walks
+ *  away expecting their other authenticators to take over on retry. */
 function refused(): CeremonyDecision {
 	return { approved: false, nativeFallback: true };
 }
 
+/** A refusal from a card Bramble CAN serve: honored as a plain decline ("Not now",
+ *  the ×, the timeout: the site gets "user declined" and the provider stays attached),
+ *  unless the card's explicit "use another authenticator" action was the reply, which
+ *  hands the request off (Firefox relays; Chrome opens the bypass window). */
+function cardRefusal(reply: CardReply): CeremonyDecision {
+	return reply.choice === "native"
+		? { approved: false, nativeFallback: true, rememberSite: reply.rememberSite }
+		: { approved: false };
+}
+
 /** The card opts for the native handoff action, as the host's delivery can afford it. */
-function nativeFallbackOpts(host: CeremonyHost): { nativeFallback?: "passthrough" | "disable" } {
+function nativeFallbackOpts(host: CeremonyHost): { nativeFallback?: "passthrough" | "pause" } {
 	if (!host.nativeFallback) return {};
-	return { nativeFallback: host.nativeFallback === "card" ? "disable" : "passthrough" };
+	return { nativeFallback: host.nativeFallback === "card" ? "pause" : "passthrough" };
 }
 
 /** No stored passkey can serve this request. Never a confirm-then-error dead end: "silent"
- * relays to the native authenticator immediately; "card" asks, because the handoff turns
- * the provider off (Chrome has no passthrough) and that must be the user's click. */
+ * relays to the native authenticator immediately; "card" asks, because the handoff opens
+ * the bypass window (Chrome has no passthrough) and that must be the user's click. */
 async function noMatchDecision(host: CeremonyHost): Promise<CeremonyDecision> {
 	if (host.nativeFallback === "silent") return refused();
 	// Any way the card ends (primary, "Not now", x, timeout) hands off: there is nothing
 	// Bramble can do for this request, so a refusal is the handoff.
-	await host.showCard({ noMatch: true, ...nativeFallbackOpts(host) });
-	return refused();
+	const reply = await host.showCard({ noMatch: true, ...nativeFallbackOpts(host) });
+	return reply.rememberSite
+		? { approved: false, nativeFallback: true, rememberSite: true }
+		: refused();
 }
 
 /** The locked prologue both ceremonies share: fail early when unlocking from here would
@@ -192,8 +209,8 @@ async function noMatchDecision(host: CeremonyHost): Promise<CeremonyDecision> {
 async function lockedGate(host: CeremonyHost): Promise<CeremonyDecision | undefined> {
 	if (await unlockWouldConflict(host)) return declined(WEBAUTHN_UNLOCK_CONFLICT_MESSAGE);
 	const reply = await host.showCard(nativeFallbackOpts(host));
-	if (!reply.approved) return refused();
-	if (!(await host.ensureUnlocked())) return refused();
+	if (!reply.approved) return cardRefusal(reply);
+	if (!(await host.ensureUnlocked())) return { approved: false };
 	return undefined;
 }
 
@@ -266,7 +283,7 @@ export async function runGetCeremony(
 		})),
 		...nativeFallbackOpts(host),
 	});
-	if (!reply.approved) return refused();
+	if (!reply.approved) return cardRefusal(reply);
 	return approve(req, host, startedLocked, {
 		credentialId: reply.choice ?? matches[0]?.passkey.credentialId,
 	});
@@ -301,7 +318,7 @@ export async function runCreateCeremony(
 				existingLoginName: target.name,
 				...nativeFallbackOpts(host),
 			});
-			if (!reply.approved) return refused();
+			if (!reply.approved) return cardRefusal(reply);
 		}
 		return approve(req, host, startedLocked, { placement: { entryId: target.id } });
 	}
@@ -310,7 +327,7 @@ export async function runCreateCeremony(
 	if (candidates.length === 0) {
 		if (!startedLocked) {
 			const reply = await host.showCard(nativeFallbackOpts(host));
-			if (!reply.approved) return refused();
+			if (!reply.approved) return cardRefusal(reply);
 		}
 		return approve(req, host, startedLocked, { placement: "new" });
 	}
@@ -320,7 +337,7 @@ export async function runCreateCeremony(
 		candidates: candidates.map((c) => ({ id: c.id, name: c.name, username: c.username })),
 		...nativeFallbackOpts(host),
 	});
-	if (!reply.approved) return refused();
+	if (!reply.approved) return cardRefusal(reply);
 	return approve(req, host, startedLocked, {
 		placement: reply.choice && reply.choice !== "new" ? { entryId: reply.choice } : "new",
 	});
@@ -402,11 +419,14 @@ function resolveCreatePlan(
  *  transport reads it to relay to the native authenticator. */
 export type CreateCompletion = chrome.webAuthenticationProxy.CreateResponseDetails & {
 	nativeFallback?: boolean;
+	/** rpId the user chose to always bypass; stripped by the delivery layer. */
+	rememberSite?: string;
 };
 
 /** Get-response details plus the handoff marker, as CreateCompletion. */
 export type GetCompletion = chrome.webAuthenticationProxy.GetResponseDetails & {
 	nativeFallback?: boolean;
+	rememberSite?: string;
 };
 
 /**
@@ -435,7 +455,8 @@ export async function handleCreate(
 			needsVerification: needsVerification(opts),
 		});
 		if (!decision.approved) {
-			if (decision.nativeFallback) return nativeFallbackCompletion(requestId);
+			if (decision.nativeFallback)
+				return nativeFallbackCompletion(requestId, decision.rememberSite ? rpId : undefined);
 			throw new WebAuthnError("NotAllowedError", decision.detail ?? "user declined");
 		}
 
@@ -525,7 +546,8 @@ export async function handleGet(
 			allowCredentials: allowStd.length ? allowStd : undefined,
 		});
 		if (!decision.approved) {
-			if (decision.nativeFallback) return nativeFallbackCompletion(requestId);
+			if (decision.nativeFallback)
+				return nativeFallbackCompletion(requestId, decision.rememberSite ? rpId : undefined);
 			throw new WebAuthnError("NotAllowedError", decision.detail ?? "user declined");
 		}
 		const allow = decision.credentialId
@@ -575,11 +597,15 @@ export async function handleGet(
  *  promise still rejects (the delivery layer can't fulfil it; Chrome has no passthrough,
  *  Firefox relays natively from the shim, where this error is never delivered), but with
  *  a message that says why rather than a bare "no matching passkey". */
-function nativeFallbackCompletion(requestId: number): CreateCompletion & GetCompletion {
+function nativeFallbackCompletion(
+	requestId: number,
+	rememberSite?: string,
+): CreateCompletion & GetCompletion {
 	return {
 		requestId,
 		error: { name: "NotAllowedError", message: NATIVE_FALLBACK_MESSAGE },
 		nativeFallback: true,
+		rememberSite,
 	};
 }
 

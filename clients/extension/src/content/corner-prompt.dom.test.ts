@@ -64,7 +64,11 @@ function clickEvent(target: Element, trusted: boolean): Event {
 function mount(
 	action: string,
 	prompt: Record<string, unknown> = {},
-): { click: EventListener; button: HTMLElement } {
+): {
+	click: EventListener;
+	button: HTMLElement;
+	checkbox: HTMLInputElement | null | undefined;
+} {
 	handleCornerPromptShow({
 		kind: "save-passkey",
 		promptId: "p1",
@@ -78,8 +82,9 @@ function mount(
 	const shadow = host ? shadows.get(host) : undefined;
 	const click = shadow ? clickHandlers.get(shadow) : undefined;
 	const button = shadow?.querySelector<HTMLElement>(`[data-tp-action="${action}"]`);
+	const checkbox = shadow?.querySelector<HTMLInputElement>("#tp-remember-site");
 	if (!click || !button) throw new Error("the card never mounted");
-	return { click, button };
+	return { click, button, checkbox };
 }
 
 beforeEach(() => {
@@ -97,7 +102,7 @@ afterEach(() => {
 
 describe("corner card clicks", () => {
 	it("acts on a real click: the no-match handoff replies declined with the native sentinel", () => {
-		const { click, button } = mount("passkey-native", { noMatch: true, nativeFallback: "disable" });
+		const { click, button } = mount("passkey-native", { noMatch: true, nativeFallback: "pause" });
 		vi.advanceTimersByTime(600);
 		click(clickEvent(button, true));
 		expect(h.sent).toEqual([
@@ -109,10 +114,27 @@ describe("corner card clicks", () => {
 	});
 
 	it("ignores a synthetic click: a page script must not be able to act on the card", () => {
-		const { click, button } = mount("passkey-native", { noMatch: true, nativeFallback: "disable" });
+		const { click, button } = mount("passkey-native", { noMatch: true, nativeFallback: "pause" });
 		vi.advanceTimersByTime(600);
 		click(clickEvent(button, false));
 		expect(h.sent).toEqual([]);
+	});
+
+	it("carries the 'always for this site' checkbox into the handoff reply", () => {
+		const { click, button, checkbox } = mount("passkey-native", {
+			noMatch: true,
+			nativeFallback: "pause",
+		});
+		if (!checkbox) throw new Error("the remember checkbox is missing");
+		checkbox.checked = true;
+		vi.advanceTimersByTime(600);
+		click(clickEvent(button, true));
+		expect(h.sent).toEqual([
+			{
+				type: "PASSKEY_PROMPT_RESPONSE",
+				payload: { promptId: "p1", approved: false, choice: "native", rememberSite: true },
+			},
+		]);
 	});
 
 	it("ignores an approve on a card the page has hidden or covered", () => {

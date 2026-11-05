@@ -17,8 +17,6 @@ const h = vi.hoisted(() => ({
 	applied: [] as boolean[],
 	/** Whether the apply hook throws, as a failing attach() does. */
 	hookThrows: false,
-	/** Pref writes, as storage would see them. */
-	prefWrites: [] as boolean[],
 	/** Scripted active-vault id for the unlock-conflict read (null = none). */
 	activeVaultId: null as string | null,
 	/** Scripted slot blob: null password slot means unlock needs a WebAuthn tap. */
@@ -43,9 +41,6 @@ vi.mock("./prefs", () => ({
 		new Promise<boolean>((resolve) => {
 			h.settlePref = resolve;
 		}),
-	setPasskeyProviderEnabled: async (enabled: boolean) => {
-		h.prefWrites.push(enabled);
-	},
 }));
 
 vi.mock("./router", () => ({
@@ -123,7 +118,6 @@ async function load() {
 	h.settlePref = undefined;
 	h.applied = [];
 	h.hookThrows = false;
-	h.prefWrites = [];
 	h.activeVaultId = null;
 	h.vaultHasPasswordSlot = true;
 	h.ceremonyGate = undefined;
@@ -199,28 +193,6 @@ describe("the provider enabled flag", () => {
 		h.hookThrows = true;
 		await expect(setEnabled(false)).rejects.toThrow();
 		expect(m.isProviderEnabled()).toBe(true);
-	});
-});
-
-describe("the native-fallback disable (a card's 'use another authenticator' click)", () => {
-	it("turns the flag off, persists the pref off, and applies the hook off", async () => {
-		const m = await load();
-		await setEnabled(true);
-		await m.disableProviderForNativeFallback();
-		expect(m.isProviderEnabled()).toBe(false);
-		expect(h.prefWrites).toEqual([false]); // the Settings toggle's exact write
-		expect(h.applied).toEqual([true, false]); // detach, after the request completed
-	});
-
-	it("keeps the pref off even when the detach hook fails", async () => {
-		// The pref is the durable state; a failed detach self-heals on the next toggle and
-		// the off flag already passes requests through.
-		const m = await load();
-		await setEnabled(true);
-		h.hookThrows = true;
-		await m.disableProviderForNativeFallback();
-		expect(m.isProviderEnabled()).toBe(false);
-		expect(h.prefWrites).toEqual([false]);
 	});
 });
 

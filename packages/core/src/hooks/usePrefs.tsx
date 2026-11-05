@@ -46,6 +46,10 @@ export const PREF_AUTOFILL_QUICKTYPE = "pref.autofillQuickType";
 // Extension only: act as a WebAuthn passkey provider for other sites. Off by default
 // (attaching the proxy intercepts all browser WebAuthn). See docs/passkey-provider.md.
 export const PREF_PASSKEY_PROVIDER = "pref.passkeyProviderEnabled";
+// Extension only: sites the user chose "always use another authenticator" for. Chrome pauses
+// the proxy while the site is active (the API has no per-origin attach); Firefox passes the
+// request through per origin. See docs/passkey-provider.md.
+export const PREF_PASSKEY_PAUSED_SITES = "pref.passkeyPausedSites";
 // Extension only: also lock the vault when the OS screen locks, independent of the timeout.
 // On by default (a screen-lock is a reasonable security floor); turned off to stay unlocked
 // on a trusted device even under "Never". See issue #6.
@@ -80,6 +84,7 @@ const DEFAULT_BIOMETRIC_AUTO_PROMPT = false;
 const DEFAULT_BIOMETRIC_PASSCODE_FALLBACK = false;
 const DEFAULT_AUTOFILL_QUICKTYPE = false;
 export const DEFAULT_PASSKEY_PROVIDER = false;
+const DEFAULT_PASSKEY_PAUSED_SITES: string[] = [];
 export const DEFAULT_LOCK_ON_SCREEN_LOCK = true;
 const DEFAULT_STATS_COLLAPSED = false;
 const DEFAULT_AUTOSTART_PROMPT_DISMISSED = false;
@@ -101,6 +106,8 @@ export interface Prefs {
 	autofillQuickType: boolean;
 	// Extension: act as a WebAuthn passkey provider for other sites.
 	passkeyProviderEnabled: boolean;
+	// Extension: rpIds where Bramble always steps aside for the browser's own authenticator.
+	passkeyPausedSites: string[];
 	// Extension: also lock when the OS screen locks, regardless of the timeout.
 	lockOnScreenLock: boolean;
 	// Home: collapse the Total / At Risk / Strong stats row.
@@ -128,6 +135,7 @@ const META_KEYS: Record<keyof Prefs, string> = {
 	biometricPasscodeFallback: PREF_BIOMETRIC_PASSCODE_FALLBACK,
 	autofillQuickType: PREF_AUTOFILL_QUICKTYPE,
 	passkeyProviderEnabled: PREF_PASSKEY_PROVIDER,
+	passkeyPausedSites: PREF_PASSKEY_PAUSED_SITES,
 	lockOnScreenLock: PREF_LOCK_ON_SCREEN_LOCK,
 	statsCollapsed: PREF_STATS_COLLAPSED,
 	autostartPromptDismissed: PREF_AUTOSTART_PROMPT_DISMISSED,
@@ -169,6 +177,7 @@ const PREF_SCOPE: Record<keyof Prefs, PrefScope> = {
 	biometricAutoPrompt: "vault",
 	autofillQuickType: "device",
 	passkeyProviderEnabled: "device",
+	passkeyPausedSites: "device",
 	lockOnScreenLock: "device",
 	statsCollapsed: "device",
 	autostartPromptDismissed: "device",
@@ -230,6 +239,7 @@ const DEFAULT_PREFS: Prefs = {
 	biometricPasscodeFallback: DEFAULT_BIOMETRIC_PASSCODE_FALLBACK,
 	autofillQuickType: DEFAULT_AUTOFILL_QUICKTYPE,
 	passkeyProviderEnabled: DEFAULT_PASSKEY_PROVIDER,
+	passkeyPausedSites: DEFAULT_PASSKEY_PAUSED_SITES,
 	lockOnScreenLock: DEFAULT_LOCK_ON_SCREEN_LOCK,
 	statsCollapsed: DEFAULT_STATS_COLLAPSED,
 	autostartPromptDismissed: DEFAULT_AUTOSTART_PROMPT_DISMISSED,
@@ -337,7 +347,7 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
 		}));
 		void (async () => {
 			if (retireLegacy) await retireLegacyFlatPrefs(storage);
-			const [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o] = await Promise.all([
+			const [a, b, c, d, e, f, g, h, i, p, j, k, l, m, n, o] = await Promise.all([
 				storage.getMeta<number>(PREF_AUTOLOCK_MINUTES),
 				storage.getMeta<boolean>(PREF_BREACH_CHECK),
 				storage.getMeta<number>(PREF_CLIPBOARD_SECONDS),
@@ -352,6 +362,7 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
 				),
 				storage.getMeta<boolean>(PREF_AUTOFILL_QUICKTYPE),
 				storage.getMeta<boolean>(PREF_PASSKEY_PROVIDER),
+				storage.getMeta<string[]>(PREF_PASSKEY_PAUSED_SITES),
 				storage.getMeta<boolean>(PREF_LOCK_ON_SCREEN_LOCK),
 				storage.getMeta<boolean>(PREF_STATS_COLLAPSED),
 				storage.getMeta<boolean>(PREF_AUTOSTART_PROMPT_DISMISSED),
@@ -382,6 +393,7 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
 				biometricAutoPrompt: typeof g === "boolean" ? g : DEFAULT_BIOMETRIC_AUTO_PROMPT,
 				autofillQuickType: typeof h === "boolean" ? h : DEFAULT_AUTOFILL_QUICKTYPE,
 				passkeyProviderEnabled: typeof i === "boolean" ? i : DEFAULT_PASSKEY_PROVIDER,
+				passkeyPausedSites: Array.isArray(p) ? p : DEFAULT_PASSKEY_PAUSED_SITES,
 				lockOnScreenLock: typeof j === "boolean" ? j : DEFAULT_LOCK_ON_SCREEN_LOCK,
 				statsCollapsed: typeof k === "boolean" ? k : DEFAULT_STATS_COLLAPSED,
 				autostartPromptDismissed: typeof l === "boolean" ? l : DEFAULT_AUTOSTART_PROMPT_DISMISSED,

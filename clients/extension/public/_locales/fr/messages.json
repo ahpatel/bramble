@@ -181,13 +181,19 @@
 	"passkeyNoneNotePassthrough": {
 		"message": "Bramble n'a aucune clé d'accès enregistrée pour ce site. Continuez avec une autre méthode de connexion ; la demande sera transmise aux autres authentificateurs de votre appareil."
 	},
-	"passkeyNoneNoteDisable": {
-		"message": "Bramble n'a aucune clé d'accès enregistrée pour ce site. Continuez avec une autre méthode de connexion ; « Utiliser Bramble pour les clés d'accès » sera désactivé pour que vos autres authentificateurs puissent traiter la demande. Réessayez ensuite."
-	},
 	"passkeyUseOther": {
 		"message": "Utiliser un autre authentificateur"
 	},
-	"passkeyDeclineNoteDisable": {
-		"message": "Refuser transmet cette demande aux autres authentificateurs de votre appareil et désactive « Utiliser Bramble pour les clés d'accès », afin que la tentative suivante du site les utilise. Réactivez-la dans les Paramètres pour retrouver Bramble."
+	"passkeyNoneNotePause": {
+		"message": "Bramble n'a aucune clé d'accès enregistrée pour ce site. Continuez avec une autre de vos méthodes de connexion et cette seule demande sera transmise aux autres authentificateurs de votre appareil. Les clés d'accès Bramble reprennent lorsque vous quittez ou rechargez cette page.",
+		"description": "Shown on the no-match card (Chrome): the handoff opens the bypass window; Settings stay unchanged."
+	},
+	"passkeyDeclineNotePause": {
+		"message": "Transmet cette demande aux autres authentificateurs de votre appareil et met en pause les clés d'accès Bramble sur cette page — elles reprennent quand vous la quittez ou la rechargez. Vos réglages restent inchangés.",
+		"description": "Explains the 'use another authenticator' bypass under cards that can serve (Chrome): the bypass window pauses passkeys for the page."
+	},
+	"passkeyRememberSite": {
+		"message": "Toujours utiliser un autre authentificateur pour ce site",
+		"description": "Checkbox on the passkey card: remember this site and pause Bramble automatically on future visits."
 	}
 }

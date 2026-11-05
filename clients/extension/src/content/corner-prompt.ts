@@ -99,7 +99,11 @@ function sendCornerResponse(action: string, extra?: Record<string, unknown>): vo
 // Passkey cards reply on their own channel: the create()/get() call is blocking on
 // the background, which resolves the pending proxy request from this message. On approve,
 // include the picked login id (or "new") when the card is a create picker.
-function sendPasskeyResponse(approved: boolean, explicitChoice?: string): void {
+function sendPasskeyResponse(
+	approved: boolean,
+	explicitChoice?: string,
+	rememberSite?: boolean,
+): void {
 	if (!currentPrompt) return;
 	// The row-click flow passes the picked value directly; the button flow (no list) reads a
 	// checked radio if present (there is none when there's nothing to choose).
@@ -111,7 +115,12 @@ function sendPasskeyResponse(approved: boolean, explicitChoice?: string): void {
 	}
 	safeSendMessage({
 		type: "PASSKEY_PROMPT_RESPONSE",
-		payload: { promptId: currentPrompt.promptId, approved, ...(choice ? { choice } : {}) },
+		payload: {
+			promptId: currentPrompt.promptId,
+			approved,
+			...(choice ? { choice } : {}),
+			...(rememberSite ? { rememberSite: true } : {}),
+		},
 	});
 }
 
@@ -204,8 +213,12 @@ function handleCornerCardClick(e: Event): void {
 	}
 	if (action === "passkey-native") {
 		// "Use another authenticator": hands the request to the user's other authenticators
-		// (Firefox relays natively; Chrome turns the provider off so the retry goes native).
-		sendPasskeyResponse(false, "native");
+		// (Firefox relays natively; Chrome opens the passkey bypass window, a pause for
+		// this page, so Settings stay unchanged). The checkbox remembers the site for the
+		// automatic pause on later visits.
+		const remember =
+			cornerShadow?.querySelector<HTMLInputElement>("#tp-remember-site")?.checked === true;
+		sendPasskeyResponse(false, "native", remember);
 		removeCornerPrompt();
 		return;
 	}

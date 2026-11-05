@@ -166,13 +166,14 @@ export interface SavePasskeyPrompt extends CornerPromptCommon {
 	 * post-unlock). Drives the "no Bramble passkey here, use another authenticator"
 	 * card instead of a confirm-then-error dead end. See docs/passkey-provider.md. */
 	noMatch?: boolean;
-	/** Render the handoff affordances (the no-match card's primary action, and the note
-	 * saying what a refusal does). Every refusal from a passkey card hands the request to
-	 * the user's other authenticators: Firefox relays natively (origin binding preserved);
-	 * Chrome has no passthrough, so the delivery completes the attempt with the handoff
-	 * message and turns the provider off, making the site's retry native. Carries which,
-	 * so the card can say what will happen. */
-	nativeFallback?: "passthrough" | "disable";
+	/** Render the handoff affordances (the bypass action and the note saying what it
+	 * does). A plain refusal only declines; the explicit "use another authenticator"
+	 * hands the request to the user's other authenticators: Firefox relays natively
+	 * (origin binding preserved); Chrome has no passthrough, so the delivery completes
+	 * the attempt with the handoff message and opens the bypass window (detached until
+	 * the page is left, Settings never change), making the site's retry native. Carries
+	 * which, so the card can say what will happen. */
+	nativeFallback?: "passthrough" | "pause";
 	/** Host of the page that made the request (it may be an iframe, not the page the card is on). */
 	requester?: string;
 	/** create only: name of the existing login this passkey will attach to, when one
@@ -195,9 +196,11 @@ export interface PasskeyPromptResponse {
 	promptId: string;
 	approved: boolean;
 	/** create picker: the chosen login id, or "new" to create a fresh login. The
-	 * no-match card's primary replies with the sentinel "native"; since every refusal
-	 * hands off, the background treats it the same as any declined reply. */
+	 * no-match card's primary and the explicit bypass action reply with the sentinel
+	 * "native"; the background hands that request to the other authenticators. */
 	choice?: string;
+	/** The card's "always use another authenticator for this site" checkbox. */
+	rememberSite?: boolean;
 }
 
 type CornerPromptResponseAction =

@@ -682,6 +682,10 @@ msgstr "O Bramble só precisa fazer upload e listar. Restringir a chave a este �
 msgid "Bramble restarts by itself once this finishes."
 msgstr "Bramble reinicia automaticamente assim que isso terminar."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Bramble steps aside here so your browser's own authenticator can handle passkeys. Remove a site to let Bramble intercept it again."
+msgstr "O Bramble fica de fora aqui para que o autenticador do seu navegador cuide das passkeys. Remova um site para o Bramble voltar a interceptá-lo."
+
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Bramble will never delete anything here, so this can use a credential that isn't allowed to. One that's stolen then can't destroy your backup history."
 msgstr "O Bramble nunca excluirá nada aqui, então é possível usar uma credencial que não tenha permissão para isso. Uma credencial roubada, nesse caso, não pode destruir seu histórico de backup."
@@ -2790,6 +2794,10 @@ msgstr "Remover {0}"
 msgid "Remove {host} from never-save list"
 msgstr "Remover {host} da lista de nunca salvar"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Remove {site} from paused passkey sites"
+msgstr "Remover {site} dos sites pausados para passkeys"
+
 #: packages/core/src/app/bulk-actions/tags.tsx
 msgid "Remove a tag"
 msgstr "Remover uma tag"
@@ -3230,6 +3238,10 @@ msgstr "Mostrar valor"
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Sign in and Bramble stores encrypted backups in its own {name} app folder. Only ciphertext is uploaded, so {name} can't read anything in your vault."
 msgstr "Faça login e o Bramble armazena backups criptografados em sua própria pasta do aplicativo {name}. Apenas texto cifrado é enviado, portanto o {name} não pode ler nada em seu cofre."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Sites paused for passkeys"
+msgstr "Sites pausados para passkeys"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Sites you've muted"

@@ -181,13 +181,19 @@
 	"passkeyNoneNotePassthrough": {
 		"message": "Bramble hat keinen Passkey für diese Website gespeichert. Fahre mit einer anderen Anmeldemethode fort; die Anfrage wird an die anderen Authenticatoren deines Geräts übergeben."
 	},
-	"passkeyNoneNoteDisable": {
-		"message": "Bramble hat keinen Passkey für diese Website gespeichert. Fahre mit einer anderen Anmeldemethode fort; „Bramble für Passkeys verwenden“ wird deaktiviert, damit deine anderen Authenticatoren die Anfrage übernehmen können. Versuche es danach erneut."
-	},
 	"passkeyUseOther": {
 		"message": "Anderen Authenticator verwenden"
 	},
-	"passkeyDeclineNoteDisable": {
-		"message": "Wenn du ablehnst, wird diese Anfrage an die anderen Authenticatoren deines Geräts übergeben und „Bramble für Passkeys verwenden“ deaktiviert, damit der nächste Versuch der Website sie nutzt. Aktiviere die Funktion in den Einstellungen wieder, wenn du Bramble zurückhaben möchtest."
+	"passkeyNoneNotePause": {
+		"message": "Bramble hat keinen Passkey für diese Website gespeichert. Fahre mit einer deiner anderen Anmeldemethoden fort, und diese eine Anfrage wird an die anderen Authenticatoren deines Geräts übergeben. Bramble-Passkeys werden fortgesetzt, wenn du diese Seite verlässt oder neu lädst.",
+		"description": "Shown on the no-match card (Chrome): the handoff opens the bypass window; Settings stay unchanged."
+	},
+	"passkeyDeclineNotePause": {
+		"message": "Übergibt diese Anfrage an die anderen Authenticatoren deines Geräts und pausiert Bramble-Passkeys für diese Seite – sie werden fortgesetzt, wenn du sie verlässt oder neu lädst. Deine Einstellungen bleiben unverändert.",
+		"description": "Explains the 'use another authenticator' bypass under cards that can serve (Chrome): the bypass window pauses passkeys for the page."
+	},
+	"passkeyRememberSite": {
+		"message": "Für diese Website immer einen anderen Authenticator verwenden",
+		"description": "Checkbox on the passkey card: remember this site and pause Bramble automatically on future visits."
 	}
 }

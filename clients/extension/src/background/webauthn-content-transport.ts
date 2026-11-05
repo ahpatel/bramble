@@ -16,8 +16,9 @@
 //  - { responseJson }       -> rebuild a synthetic PublicKeyCredential for the page.
 
 import { api } from "../platform-api";
+import { getPasskeyPausedSites, rememberPasskeyPausedSite } from "./prefs";
 import { on } from "./router";
-import type { RequestCaller } from "./webauthn-json";
+import { isRegistrableSuffix, type RequestCaller } from "./webauthn-json";
 import { depsForTab, isProviderEnabled } from "./webauthn-provider";
 import { handleCreate, handleGet } from "./webauthn-proxy";
 
@@ -69,6 +70,18 @@ export function senderCaller(
 	return { caller: { origin, crossOrigin: false }, tabId };
 }
 
+/** A site the user chose "always use another authenticator" for: on Firefox the shim
+ *  can honour that per request, so the first WebAuthn call already goes native. */
+async function isPausedOrigin(origin: string): Promise<boolean> {
+	try {
+		const host = new URL(origin).hostname;
+		for (const site of await getPasskeyPausedSites()) {
+			if (isRegistrableSuffix(host, site)) return true;
+		}
+	} catch {}
+	return false;
+}
+
 // Register only on Firefox (no proxy API). On Chrome the MAIN-world script is never
 // injected, so these would be dead handlers; guarding keeps the Chrome path clean.
 if (typeof api.webAuthenticationProxy === "undefined") {
@@ -79,8 +92,12 @@ if (typeof api.webAuthenticationProxy === "undefined") {
 		on(type, async (message, sender): Promise<{ ok: true; data: TransportResult }> => {
 			const bound = isProviderEnabled() ? senderCaller(sender) : null;
 			if (!bound) return { ok: true, data: { passthrough: true } };
+			if (await isPausedOrigin(bound.caller.origin)) {
+				return { ok: true, data: { passthrough: true } };
+			}
 			const json = JSON.stringify(message.payload ?? {});
 			const details = await handle(depsForTab(bound.tabId, "silent"), 0, json, bound.caller);
+			if (details.rememberSite) await rememberPasskeyPausedSite(details.rememberSite);
 			return { ok: true, data: toTransportResult(details) };
 		});
 	}

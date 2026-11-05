@@ -260,6 +260,37 @@ export function GeneralSection() {
 				</Row>
 			)}
 
+			{/* Sites the user chose "always use another authenticator" for. Chrome pauses the
+			    proxy while the site is active; Firefox passes that site's requests through.
+			    Removing a site lets Bramble intercept it again. */}
+			{hasPasskeyProviderToggle && prefs.passkeyPausedSites.length > 0 && (
+				<Row
+					icon={<KeyRound className="w-4 h-4 text-primary" />}
+					title={t`Sites paused for passkeys`}
+					subtitle={t`Bramble steps aside here so your browser's own authenticator can handle passkeys. Remove a site to let Bramble intercept it again.`}
+				>
+					<div className="flex flex-wrap gap-1.5 justify-end max-w-[12rem]">
+						{prefs.passkeyPausedSites.map((site) => (
+							<Button
+								key={site}
+								variant="secondary"
+								size="none"
+								onClick={() =>
+									void update(
+										"passkeyPausedSites",
+										prefs.passkeyPausedSites.filter((s) => s !== site),
+									)
+								}
+								className="gap-1 px-2 py-0.5 text-[11px] rounded-md"
+								title={t`Remove ${site} from paused passkey sites`}
+							>
+								{site}
+							</Button>
+						))}
+					</div>
+				</Row>
+			)}
+
 			{/* Master switch for the in-page dropdown; extension only. The background reads the pref
 			    on every query, so persisting it is what enforces it; setAutofillEnabled only pushes
 			    the change to tabs that already have a dropdown open. */}

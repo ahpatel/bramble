@@ -176,6 +176,19 @@ describe("handleCreate", () => {
 		expect(d.savePlacement).not.toHaveBeenCalled();
 	});
 
+	it("carries the remembered site on the handoff completion", async () => {
+		const d = deps({
+			ceremony: vi.fn(async () => ({
+				approved: false,
+				nativeFallback: true,
+				rememberSite: true,
+			})) as unknown as CeremonyFn,
+		});
+		const res = await handleCreate(d, 1, createJson(), caller("https://github.com"));
+		expect(res.nativeFallback).toBe(true);
+		expect(res.rememberSite).toBe("github.com");
+	});
+
 	it("attaches to the login the ceremony picked", async () => {
 		const d = deps({
 			loadEntries: vi.fn(async () => githubEntries),
@@ -606,26 +619,25 @@ describe("runCreateCeremony", () => {
 		});
 	});
 
-	it("declining the first card aborts without unlocking", async () => {
+	it("declining the first card aborts without unlocking (a plain decline, provider intact)", async () => {
 		const unlock = vi.fn(async () => true);
 		const { h } = host({ locked: true, replies: [{ approved: false }] });
 		h.ensureUnlocked = unlock;
-		// A refusal is the handoff ("Bramble, step aside"), never a bare decline.
-		expect(await runCreateCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
+		// "Not now" is only a decline: the handoff is the card's explicit bypass action.
+		expect(await runCreateCeremony(req, h)).toEqual({ approved: false });
 		expect(unlock).not.toHaveBeenCalled();
 	});
 
-	it("failed unlock aborts", async () => {
+	it("failed unlock aborts (a plain decline; the user can retry from the site)", async () => {
 		const { h } = host({ locked: true, unlockOk: false });
-		expect(await runCreateCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
+		expect(await runCreateCeremony(req, h)).toEqual({ approved: false });
 	});
 
-	it("declining the picker aborts", async () => {
+	it("declining the picker aborts (a plain decline, provider intact)", async () => {
 		const five = ["a", "b", "c", "d", "e"].map((u, i) => ghLogin(`gh-${i}`, u));
 		const { h } = host({ entries: five, replies: [{ approved: false }] });
 		expect(await runCreateCeremony({ ...req, userName: "nomatch" }, h)).toEqual({
 			approved: false,
-			nativeFallback: true,
 		});
 	});
 
@@ -636,7 +648,7 @@ describe("runCreateCeremony", () => {
 			replies: [{ approved: false, choice: "native" }],
 		});
 		expect(await runCreateCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
-		expect(cards[0]?.nativeFallback).toBe("disable"); // Chrome: the card must say what happens
+		expect(cards[0]?.nativeFallback).toBe("pause"); // Chrome: the card must say what happens
 	});
 
 	it("the native handoff is offered on the picker too", async () => {
@@ -746,12 +758,25 @@ describe("runGetCeremony", () => {
 		});
 		expect(await runGetCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
 		expect(cards[0]?.noMatch).toBe(true);
-		expect(cards[0]?.nativeFallback).toBe("disable");
+		expect(cards[0]?.nativeFallback).toBe("pause");
 	});
 
 	it("no match, card dismissed ('Not now' / x) -> the handoff, exactly like the primary", async () => {
 		const { h } = host({ entries: [], nativeFallback: "card", replies: [{ approved: false }] });
 		expect(await runGetCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
+	});
+
+	it("no match, 'always for this site' checked -> the decision remembers the site", async () => {
+		const { h } = host({
+			entries: [],
+			nativeFallback: "card",
+			replies: [{ approved: false, choice: "native", rememberSite: true }],
+		});
+		expect(await runGetCeremony(req, h)).toEqual({
+			approved: false,
+			nativeFallback: true,
+			rememberSite: true,
+		});
 	});
 
 	it("multiple matches -> picker; chosen credentialId returned", async () => {
@@ -762,10 +787,24 @@ describe("runGetCeremony", () => {
 		expect(d).toMatchObject({ approved: true, credentialId: "BBB" });
 	});
 
-	it("declining the picker aborts", async () => {
+	it("declining the picker aborts (a plain decline, provider intact)", async () => {
 		const entries = [pk("AAA", "octocat"), pk("BBB", "octocat2")];
 		const { h } = host({ entries, replies: [{ approved: false }] });
-		expect(await runGetCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
+		expect(await runGetCeremony(req, h)).toEqual({ approved: false });
+	});
+
+	it("the picker's bypass action hands off and remembers the site when checked", async () => {
+		const entries = [pk("AAA", "octocat"), pk("BBB", "octocat2")];
+		const { h } = host({
+			entries,
+			nativeFallback: "card",
+			replies: [{ approved: false, choice: "native", rememberSite: true }],
+		});
+		expect(await runGetCeremony(req, h)).toEqual({
+			approved: false,
+			nativeFallback: true,
+			rememberSite: true,
+		});
 	});
 
 	it("locked -> confirm + unlock then picker for multiple", async () => {
@@ -812,16 +851,17 @@ describe("runGetCeremony", () => {
 		});
 	});
 
-	it("declining the no-match card / failing the unlock -> aborted with the reason", async () => {
-		// Unlocked, empty vault: the reply lands on the no-match card.
+	it("declining the no-match card still hands off; failing the unlock is a plain decline", async () => {
+		// Unlocked, empty vault: the reply lands on the no-match card, where any exit is
+		// the handoff (there is nothing Bramble could serve instead).
 		expect(await runGetCeremony(req, host({ replies: [{ approved: false }] }).h)).toEqual({
 			approved: false,
 			nativeFallback: true,
 		});
-		// Locked: the reply is the unlock-confirm; the unlock itself then fails.
+		// Locked: the reply is the unlock-confirm; the unlock itself then fails. The user
+		// tried Bramble and it didn't happen; the site can show its own error and retry.
 		expect(await runGetCeremony(req, host({ locked: true, unlockOk: false }).h)).toEqual({
 			approved: false,
-			nativeFallback: true,
 		});
 	});
 
@@ -839,6 +879,6 @@ describe("runGetCeremony", () => {
 			replies: [{ approved: false, choice: "native" }],
 		});
 		expect(await runGetCeremony(req, h)).toEqual({ approved: false, nativeFallback: true });
-		expect(cards[0]?.nativeFallback).toBe("disable");
+		expect(cards[0]?.nativeFallback).toBe("pause");
 	});
 });

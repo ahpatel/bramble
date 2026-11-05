@@ -53,9 +53,28 @@ const h = vi.hoisted(() => ({
 	handlerExtras: {} as Record<string, unknown>,
 	/** runtime.onConnect listeners (the SW side of the pause port). */
 	portListeners: [] as Array<(port: unknown) => void>,
-	/** Call order across completions and the handoff disable, to pin complete-before-disable. */
+	/** Call order across completions and detaches, to pin complete-before-detach. */
 	order: [] as string[],
-	disableCalls: 0,
+	/** The browser's storage.session: SURVIVES a worker death (only tests clear it). */
+	sessionStore: new Map<string, unknown>(),
+	/** tabs.onUpdated / onActivated / onRemoved listeners, so a test can fire tab events. */
+	tabUpdated: [] as Array<
+		(
+			tabId: number,
+			changeInfo: { status?: string },
+			tab?: { url?: string; active?: boolean },
+		) => void
+	>,
+	tabActivated: [] as Array<(info: { tabId: number }) => void>,
+	tabRemoved: [] as Array<(tabId: number) => void>,
+	/** Scripted paused-site list and remembered sites for the per-site auto-pause. */
+	pausedSites: [] as string[],
+	remembered: [] as string[],
+	/** alarms.onAlarm listeners + the alarms the module created (name + fire time). */
+	alarmListeners: [] as Array<(alarm: { name: string }) => void>,
+	alarmsCreated: [] as { name: string; info: unknown }[],
+	/** Last badge text set on the toolbar action. */
+	badge: "",
 }));
 
 const proxy = {
@@ -65,6 +84,7 @@ const proxy = {
 	},
 	detach: async () => {
 		h.detachCalls++;
+		h.order.push("detach");
 		return undefined;
 	},
 	completeCreateRequest: async (d: { requestId: number; error?: { message: string } }) => {
@@ -140,12 +160,58 @@ vi.mock("../platform-api", () => ({
 		get webAuthenticationProxy() {
 			return h.hasProxy ? proxy : undefined;
 		},
-		tabs: { query: async () => (h.activeTab ? [h.activeTab] : []) },
+		tabs: {
+			query: async () => (h.activeTab ? [h.activeTab] : []),
+			get: async (tabId: number) => (h.activeTab?.id === tabId ? h.activeTab : undefined),
+			onUpdated: {
+				addListener: (
+					cb: (
+						tabId: number,
+						c: { status?: string },
+						tab?: { url?: string; active?: boolean },
+					) => void,
+				) => h.tabUpdated.push(cb),
+			},
+			onActivated: {
+				addListener: (cb: (info: { tabId: number }) => void) => h.tabActivated.push(cb),
+			},
+			onRemoved: { addListener: (cb: (tabId: number) => void) => h.tabRemoved.push(cb) },
+		},
 		runtime: {
 			// Must match EXTENSION_ORIGIN above; the pause port accepts only this origin.
 			getURL: (p: string) => `https://ext.test/${p}`,
 			onConnect: {
 				addListener: (cb: (port: unknown) => void) => h.portListeners.push(cb),
+			},
+		},
+		storage: {
+			session: {
+				get: async (key: string) =>
+					h.sessionStore.has(key) ? { [key]: h.sessionStore.get(key) } : {},
+				set: async (kv: Record<string, unknown>) => {
+					for (const [k, v] of Object.entries(kv)) h.sessionStore.set(k, v);
+				},
+				remove: async (key: string) => {
+					h.sessionStore.delete(key);
+				},
+			},
+		},
+		alarms: {
+			create: (name: string, info: unknown) => {
+				h.alarmsCreated.push({ name, info });
+			},
+			clear: async (name: string) => {
+				const before = h.alarmsCreated.length;
+				h.alarmsCreated = h.alarmsCreated.filter((a) => a.name !== name);
+				return h.alarmsCreated.length < before;
+			},
+			onAlarm: {
+				addListener: (cb: (alarm: { name: string }) => void) => h.alarmListeners.push(cb),
+			},
+		},
+		action: {
+			setBadgeText: async ({ text }: { text: string }) => {
+				h.badge = text;
 			},
 		},
 	},
@@ -157,15 +223,18 @@ vi.mock("./router", () => ({
 	whenReady: async () => {},
 }));
 
+vi.mock("./prefs", () => ({
+	getPasskeyPausedSites: async () => new Set(h.pausedSites),
+	rememberPasskeyPausedSite: async (site: string) => {
+		h.remembered.push(site);
+	},
+}));
+
 vi.mock("./webauthn-provider", () => ({
 	depsForTab: (tabId: number) => ({ tabId }),
 	isProviderEnabled: () => h.enabled,
 	setProviderApplyHook: (fn: (enabled: boolean) => Promise<void>) => {
 		h.applyHook = fn;
-	},
-	disableProviderForNativeFallback: async () => {
-		h.disableCalls++;
-		h.order.push("disable");
 	},
 }));
 
@@ -182,6 +251,8 @@ const answer = (requestId: number) => {
 
 vi.mock("./webauthn-proxy", () => ({
 	NOT_ALLOWED: { name: "NotAllowedError", message: "not allowed" },
+	NATIVE_FALLBACK_MESSAGE:
+		"No Bramble passkey can serve this request. Continue with another authenticator.",
 	handleCreate: vi.fn((_deps: unknown, requestId: number) => answer(requestId)),
 	handleGet: vi.fn((_deps: unknown, requestId: number) => answer(requestId)),
 }));
@@ -204,14 +275,57 @@ async function load({ hasProxy = true } = {}) {
 	h.release = undefined;
 	h.handlerExtras = {};
 	h.portListeners = [];
+	h.tabUpdated = [];
+	h.tabActivated = [];
+	h.tabRemoved = [];
+	h.alarmListeners = [];
 	h.order = [];
-	h.disableCalls = 0;
+	h.badge = "";
+	h.pausedSites = [];
+	h.remembered = [];
 	h.activeTab = { id: 1, url: "https://example.com/page" };
 	return import("./webauthn-proxy-init");
 }
 
 /** Let the listener's async body run to the point where it would complete the request. */
 const settle = () => new Promise((r) => setTimeout(r, 0));
+
+/** Fire a tabs.onUpdated event as the browser would. */
+const tabNavigated = async (
+	tabId: number,
+	status = "loading",
+	url = "https://example.com/page",
+	active = true,
+) => {
+	for (const cb of [...h.tabUpdated]) cb(tabId, { status }, { url, active });
+	await settle();
+};
+
+/** Fire a tabs.onActivated event as the browser would. */
+const tabActivated = async (tabId: number) => {
+	for (const cb of [...h.tabActivated]) cb({ tabId });
+	await settle();
+};
+
+/** Fire a tabs.onRemoved event as the browser would. */
+const tabClosed = async (tabId: number) => {
+	for (const cb of [...h.tabRemoved]) cb(tabId);
+	await settle();
+};
+
+/** Open a handoff request that completes with the native-fallback marker, and settle. */
+async function fireHandoff(requestId: number) {
+	h.handlerExtras = { nativeFallback: true };
+	h.fire.get?.({ requestId, requestDetailsJson: stamped() });
+	await settle();
+}
+
+beforeEach(() => {
+	vi.clearAllMocks();
+	h.sessionStore.clear();
+	h.alarmsCreated = [];
+	vi.useRealTimers();
+});
 
 /** A proxied request as Chrome delivers it: stamped with the page that really asked. */
 const stamped = (origin = "https://example.com", sameOriginWithAncestors = true) =>
@@ -463,19 +577,21 @@ describe("in-flight requests during a pause", () => {
 	});
 });
 
-describe("the native-fallback handoff (use another authenticator)", () => {
-	const settle = () => new Promise((r) => setTimeout(r, 0));
+describe("the native-fallback bypass window (use another authenticator)", () => {
+	const BYPASS_KEY = "passkeyBypassWindow";
 
-	it("completes the request FIRST, then turns the provider off", async () => {
+	it("completes the request FIRST, then opens the window (detach, badge, session record)", async () => {
 		// Detaching an in-flight request aborts it with a bare AbortError, which would eat
 		// the handoff message the user just acted on. The order is the contract.
 		const m = await load();
 		await m.initWebauthnProxy();
-		h.handlerExtras = { nativeFallback: true };
-		h.fire.get?.({ requestId: 11, requestDetailsJson: stamped() });
-		await settle();
-		expect(h.order).toEqual(["complete", "disable"]);
-		expect(h.disableCalls).toBe(1);
+		await fireHandoff(11);
+		expect(h.order).toEqual(["complete", "detach"]);
+		expect(h.badge).toBe("⏸"); // the pause is visible, not silent
+		const record = h.sessionStore.get(BYPASS_KEY) as { tabId?: number; until: number };
+		expect(record.tabId).toBe(1); // the active tab: the window's triggers key off it
+		expect(record.until).toBeGreaterThan(Date.now());
+		expect(h.alarmsCreated[0]?.name).toBe("passkey-bypass-window"); // the timeout's durable half
 	});
 
 	it("strips the handoff marker before handing Chrome the completion", async () => {
@@ -488,12 +604,223 @@ describe("the native-fallback handoff (use another authenticator)", () => {
 		expect(raw.nativeFallback).toBeUndefined(); // ours, not Chrome's
 	});
 
-	it("a normal completion never touches the provider state", async () => {
+	it("a normal completion never opens a window", async () => {
 		const m = await load();
 		await m.initWebauthnProxy();
 		h.fire.get?.({ requestId: 13, requestDetailsJson: stamped() });
 		await settle();
-		expect(h.disableCalls).toBe(0);
+		expect(h.detachCalls).toBe(0);
+		expect(h.badge).toBe("");
+		expect(h.sessionStore.has(BYPASS_KEY)).toBe(false);
+	});
+
+	it("fails another in-flight request with the handoff reason before detaching", async () => {
+		// The detach is about to abort it bare anyway (measured: AbortError, no cancel
+		// event), so complete it with a reason first: the handoff's, not the pause's.
+		const m = await load();
+		await m.initWebauthnProxy();
+		h.holdHandler = true;
+		h.fire.get?.({ requestId: 21, requestDetailsJson: stamped() }); // tab A awaits its user
+		await settle();
+		h.handlerExtras = { nativeFallback: true };
+		h.fire.get?.({ requestId: 22, requestDetailsJson: stamped() }); // tab B hands off
+		await settle();
+		h.release?.(); // release the second holder: request 22 completes with the handoff
+		await settle();
+		expect(h.completed).toEqual([
+			{ requestId: 22, kind: "get", error: undefined, raw: expect.anything() },
+			{
+				requestId: 21,
+				kind: "get",
+				error: expect.stringContaining("another authenticator"),
+				raw: expect.anything(),
+			},
+		]);
+	});
+
+	it("stays detached while the window is open: a mid-window attach defers", async () => {
+		const m = await load();
+		await m.initWebauthnProxy();
+		await fireHandoff(14);
+		expect(h.detachCalls).toBe(1);
+		await m.initWebauthnProxy(); // e.g. a boot attach or a toggle-on mid-window
+		expect(h.attachCalls).toBe(1); // deferred: attaching would steal the native retry
+	});
+
+	it("re-attaches when the bypassed tab navigates (any destination)", async () => {
+		// Login flows redirect after the native ceremony, often same-origin, so the
+		// trigger is any committed navigation in the tab, not an origin change.
+		const m = await load();
+		await m.initWebauthnProxy();
+		await fireHandoff(15);
+		await tabNavigated(99); // another tab: ignored
+		expect(h.attachCalls).toBe(1);
+		await tabNavigated(1); // the bypassed tab
+		expect(h.attachCalls).toBe(2); // resumed
+		expect(h.badge).toBe("");
+		expect(h.sessionStore.has(BYPASS_KEY)).toBe(false);
+	});
+
+	it("re-attaches when the bypassed tab closes", async () => {
+		const m = await load();
+		await m.initWebauthnProxy();
+		await fireHandoff(16);
+		await tabClosed(1);
+		expect(h.attachCalls).toBe(2);
+	});
+
+	it("closes an expired window on any tab event (the timeout cannot linger)", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		const m = await load();
+		await m.initWebauthnProxy();
+		await fireHandoff(17);
+		vi.setSystemTime(Date.now() + 10 * 60_000 + 1); // the safety timeout lapses
+		await tabNavigated(99, "complete"); // any tab activity delivers the check
+		expect(h.attachCalls).toBe(2);
+		expect(h.badge).toBe("");
+		vi.useRealTimers();
+	});
+
+	it("does not re-attach when the user turned the provider off mid-window", async () => {
+		const m = await load();
+		await m.initWebauthnProxy();
+		await fireHandoff(18);
+		h.enabled = false; // the Settings toggle's flag
+		await tabNavigated(1);
+		expect(h.attachCalls).toBe(1); // still just the original attach
+	});
+
+	it("a pause inside an open window resumes without re-attaching (the window outlives it)", async () => {
+		const m = await load();
+		await m.initWebauthnProxy();
+		await fireHandoff(19);
+		const port = connectPausePort(); // Bramble's own unlock ceremony begins
+		await settle();
+		expect(h.detachCalls).toBe(1); // already detached by the window: no second detach
+		port.close(); // ceremony ends
+		await settle();
+		expect(h.attachCalls).toBe(1); // resume did NOT re-attach: window still open
+	});
+
+	it("an expired window defers its re-attach behind an in-flight pause", async () => {
+		// The popup's security-key unlock (a pause) is running when the window lapses;
+		// attaching now would hijack that very ceremony.
+		vi.useFakeTimers({ toFake: ["Date"] });
+		const m = await load();
+		await m.initWebauthnProxy();
+		await fireHandoff(20);
+		const port = connectPausePort();
+		await settle();
+		vi.setSystemTime(Date.now() + 10 * 60_000 + 1);
+		await tabNavigated(99, "complete"); // expiry lands inside the pause
+		expect(h.attachCalls).toBe(1); // deferred, not hijacking
+		port.close(); // the ceremony ends; the deferred attach lands
+		await settle();
+		expect(h.attachCalls).toBe(2);
+		vi.useRealTimers();
+	});
+
+	it("rehydrates an open window across a worker wake, and no boot attach steals it", async () => {
+		// The worker naps mid-window (often: it naps ~30s after the handoff). The
+		// revived worker must read the record BEFORE attaching, or the boot attach would
+		// intercept the native retry the window exists to serve.
+		const m = await load();
+		await m.initWebauthnProxy();
+		await fireHandoff(23);
+		expect(m.isBypassOpen()).toBe(true);
+
+		const revived = await load(); // worker death: module state resets, session persists
+		await revived.rehydrateBypassWindow();
+		expect(revived.isBypassOpen()).toBe(true); // the record survives, deadline intact
+		expect(h.badge).toBe("⏸"); // re-armed so the user still sees the pause
+		await revived.initWebauthnProxy(); // the boot attach
+		expect(h.attachCalls).toBe(0); // deferred by the open window
+		await tabNavigated(1); // the bypassed tab navigates
+		expect(h.attachCalls).toBe(1); // resumed, once
+	});
+
+	it("a window that outlived the worker nap ends at rehydration", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		const m = await load();
+		await m.initWebauthnProxy();
+		await fireHandoff(24);
+		vi.setSystemTime(Date.now() + 11 * 60_000); // the nap outlasts the window
+		const revived = await load();
+		await revived.rehydrateBypassWindow();
+		expect(revived.isBypassOpen()).toBe(false);
+		expect(h.sessionStore.has(BYPASS_KEY)).toBe(false); // the stale record is cleared
+		await revived.initWebauthnProxy(); // the boot attach proceeds
+		expect(h.attachCalls).toBe(1);
+		vi.useRealTimers();
+	});
+
+	it("opens no window on Firefox, where the shim relays per request", async () => {
+		const m = await load({ hasProxy: false });
+		await m.initWebauthnProxy(); // inert: no proxy namespace
+		h.handlerExtras = { nativeFallback: true };
+		h.fire.get?.({ requestId: 25, requestDetailsJson: stamped() }); // listeners never registered on Firefox
+		await settle();
+		expect(h.detachCalls).toBe(0);
+		expect(h.sessionStore.has(BYPASS_KEY)).toBe(false);
+	});
+
+	it("remembers the site when the card asked to", async () => {
+		const m = await load();
+		await m.initWebauthnProxy();
+		h.handlerExtras = { nativeFallback: true, rememberSite: "example.com" };
+		h.fire.get?.({ requestId: 26, requestDetailsJson: stamped() });
+		await settle();
+		expect(h.remembered).toEqual(["example.com"]);
+		expect(h.badge).toBe("⏸");
+	});
+
+	it("auto-pauses when the active tab lands on a remembered site", async () => {
+		const m = await load();
+		await m.initWebauthnProxy();
+		h.pausedSites = ["example.com"];
+		await tabNavigated(1, "loading", "https://example.com/login");
+		expect(h.detachCalls).toBe(1);
+		expect(h.badge).toBe("⏸");
+		const record = h.sessionStore.get(BYPASS_KEY) as { tabId?: number };
+		expect(record.tabId).toBe(1);
+	});
+
+	it("does not auto-pause a site that is not remembered", async () => {
+		const m = await load();
+		await m.initWebauthnProxy();
+		h.pausedSites = ["remembered.example"];
+		await tabNavigated(1, "loading", "https://other.example/");
+		expect(h.detachCalls).toBe(0);
+		expect(h.badge).toBe("");
+	});
+
+	it("retargets an open window to the active remembered tab", async () => {
+		const m = await load();
+		await m.initWebauthnProxy();
+		await fireHandoff(27); // window starts on tab 1
+		h.pausedSites = ["other.example"];
+		await tabNavigated(2, "loading", "https://other.example/");
+		expect(h.detachCalls).toBe(1); // already detached: retarget, no second detach
+		const record = h.sessionStore.get(BYPASS_KEY) as { tabId?: number };
+		expect(record.tabId).toBe(2);
+	});
+
+	it("auto-pauses when the user switches to an already-loaded remembered tab", async () => {
+		const m = await load();
+		await m.initWebauthnProxy();
+		h.activeTab = { id: 3, url: "https://paused.example/" };
+		h.pausedSites = ["paused.example"];
+		await tabActivated(3);
+		expect(h.detachCalls).toBe(1);
+		expect(h.badge).toBe("⏸");
+	});
+
+	it("does not auto-pause while the provider is off", async () => {
+		const m = await load();
+		await m.initWebauthnProxy();
+		h.enabled = false;
+		h.pausedSites = ["example.com"];
+		await tabNavigated(1, "loading", "https://example.com/");
 		expect(h.detachCalls).toBe(0);
 	});
 });

@@ -184,6 +184,11 @@ function findById(node: CdpNode, id: string): CdpNode | undefined {
  * real mouse click to its centre.
  */
 export async function clickCornerAction(page: Page, action: string) {
+	await clickCornerSelector(page, `[data-tp-action="${action}"]`);
+}
+
+/** Click any element inside the corner prompt's closed shadow root, over CDP. */
+export async function clickCornerSelector(page: Page, selector: string) {
 	const cdp = await page.context().newCDPSession(page);
 	try {
 		const { root } = await cdp.send("DOM.getDocument", { depth: -1, pierce: true });
@@ -191,12 +196,16 @@ export async function clickCornerAction(page: Page, action: string) {
 		if (!shadow) throw new Error("corner prompt is not mounted");
 		const { nodeId } = await cdp.send("DOM.querySelector", {
 			nodeId: shadow.nodeId,
-			selector: `[data-tp-action="${action}"]`,
+			selector,
 		});
-		if (!nodeId) throw new Error(`corner prompt has no "${action}" button`);
-		const { quads } = await cdp.send("DOM.getContentQuads", { nodeId });
-		const q = quads[0];
-		if (!q) throw new Error(`"${action}" button is not rendered`);
+		if (!nodeId) throw new Error(`corner prompt has no "${selector}"`);
+		let q: number[] | undefined;
+		for (let attempt = 0; attempt < 20 && !q; attempt++) {
+			const { quads } = await cdp.send("DOM.getContentQuads", { nodeId });
+			q = quads[0];
+			if (!q) await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		if (!q) throw new Error(`"${selector}" is not rendered`);
 		await page.mouse.click((q[0]! + q[4]!) / 2, (q[1]! + q[5]!) / 2);
 	} finally {
 		await cdp.detach();
