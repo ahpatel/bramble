@@ -28,6 +28,8 @@ export interface RelayHost {
 
 const ANCHOR = "tp-relay-anchor";
 const CLOSE = "tp-relay-close";
+// Down, not up: a click landed in an embedding page, so pickers in its frames should go.
+const DISMISS = "tp-relay-dismiss";
 
 // Less room than this under the anchor and the dropdown gets clipped; relay instead.
 export const MIN_PICKER_SPACE = 160;
@@ -109,6 +111,10 @@ export interface FrameRelay {
 	/** Top frame: a descendant wants a picker hosted here. */
 	onAnchor(cb: (anchor: RelayedAnchor) => void): void;
 	onClose(cb: (relayId: string, collapse?: boolean) => void): void;
+	/** Tell every child frame (and theirs) that the user clicked in this frame's page. */
+	dismissDescendants(): void;
+	/** A click landed in an ancestor's page. */
+	onDismiss(cb: () => void): void;
 	dispose(): void;
 }
 
@@ -117,6 +123,7 @@ export function installFrameRelay(host: RelayHost): FrameRelay {
 	const { window: view, document: doc } = host;
 	let anchorCb: ((anchor: RelayedAnchor) => void) | null = null;
 	let closeCb: ((relayId: string, collapse?: boolean) => void) | null = null;
+	let dismissCb: (() => void) | null = null;
 
 	const isTop = (): boolean => view.parent === view;
 
@@ -126,7 +133,24 @@ export function installFrameRelay(host: RelayHost): FrameRelay {
 		view.parent.postMessage(message, "*");
 	};
 
+	// Carries nothing, so "*" is fine; a forged one only ever closes a picker.
+	const dismissDescendants = (): void => {
+		for (let i = 0; i < view.frames.length; i++) {
+			try {
+				view.frames[i]?.postMessage({ __tp: DISMISS }, "*");
+			} catch {
+				// A frame can go mid-loop.
+			}
+		}
+	};
+
 	const onMessage = (e: MessageEvent): void => {
+		if ((e.data as { __tp?: unknown } | null)?.__tp === DISMISS) {
+			if (isTop() || e.source !== view.parent) return;
+			dismissCb?.();
+			dismissDescendants();
+			return;
+		}
 		const anchor = anchorMessage(e.data);
 		const close = anchor ? null : closeMessage(e.data);
 		if (!anchor && !close) return;
@@ -164,10 +188,15 @@ export function installFrameRelay(host: RelayHost): FrameRelay {
 		onClose(cb) {
 			closeCb = cb;
 		},
+		dismissDescendants,
+		onDismiss(cb) {
+			dismissCb = cb;
+		},
 		dispose() {
 			view.removeEventListener("message", onMessage);
 			anchorCb = null;
 			closeCb = null;
+			dismissCb = null;
 		},
 	};
 }

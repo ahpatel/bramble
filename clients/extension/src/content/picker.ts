@@ -980,6 +980,7 @@ function onUiMessage(e: MessageEvent): void {
 		| { type: "UI_USE_SUGGESTED"; pointer?: boolean }
 		| { type: "UI_REGENERATE" }
 		| { type: "UI_USE_ALIAS"; pointer?: boolean }
+		| { type: "UI_NEW_LOGIN" }
 		| { type: "UI_OPEN_ENTRY"; entryId?: string; pointer?: boolean }
 		| { type: "UI_HIGHLIGHT"; active?: boolean; entryId?: string; label?: string }
 		| { type: "UI_POINTER"; x?: number; y?: number }
@@ -1043,6 +1044,10 @@ function onUiMessage(e: MessageEvent): void {
 			// Creating an alias spends the user's allowance and fills the page field, so it takes
 			// the same anti-clickjacking gate as a secret pick.
 			if (pickAllowed(iframeHostEl, msg.pointer)) aliasCb?.();
+			break;
+		case "UI_NEW_LOGIN":
+			hideIframe();
+			newLoginCb?.();
 			break;
 		case "UI_OPEN_ENTRY":
 			// Opening the entry detail is not a fill, but it is still a user action on a row the page

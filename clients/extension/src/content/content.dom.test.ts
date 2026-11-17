@@ -899,7 +899,7 @@ describe("content: direct select response binding", () => {
 				sessionGeneration: 0,
 			},
 		});
-		expect(fillForm).toHaveBeenCalledWith("me", "secret", false);
+		expect(fillForm).toHaveBeenCalledWith("me", "secret", false, expect.anything());
 	});
 
 	it("makes a late direct response inert after the anchor is replaced", () => {

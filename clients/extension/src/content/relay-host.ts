@@ -148,6 +148,11 @@ export function showRelayHost(anchor: RelayedAnchor): void {
 	startWatchdog();
 }
 
+/** True when `node` is the hosted picker or inside it (its closed shadow retargets to the host). */
+export function relayHostContains(node: Node): boolean {
+	return !!hosted && hosted.host.contains(node);
+}
+
 /** Test seam: the hosted UI frame, which otherwise sits behind a closed shadow root. */
 export function hostedFrameForTest(): HTMLIFrameElement | null {
 	return hosted?.frame ?? null;

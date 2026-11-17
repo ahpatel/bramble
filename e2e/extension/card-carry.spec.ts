@@ -71,9 +71,23 @@ async function serve(context: BrowserContext): Promise<void> {
 	});
 }
 
-/** The extension-origin picker UI, wherever in the frame tree it was hosted. */
-function uiFrame(page: Page): Frame | undefined {
-	return page.frames().find((f) => f.url().includes("autofill-ui.html"));
+/** The live picker UI: a pick collapses the old relayed host into the mark for 240ms, so an old
+ *  and a new `autofill-ui.html` frame can coexist briefly. Pick the one with a visible row,
+ *  never just the first/last. */
+async function uiFrame(page: Page, exclude?: Frame): Promise<Frame | undefined> {
+	const frames = page.frames().filter((f) => f.url().includes("autofill-ui.html") && f !== exclude);
+	for (const frame of frames) {
+		if (
+			await frame
+				.locator("[data-entry-id]")
+				.first()
+				.isVisible()
+				.catch(() => false)
+		) {
+			return frame;
+		}
+	}
+	return undefined;
 }
 
 function boxFrame(page: Page, which: "number" | "cvv"): Frame {
@@ -85,14 +99,13 @@ function boxFrame(page: Page, which: "number" | "cvv"): Frame {
 const FIELD = { number: "#number", cvv: "#verification_value" } as const;
 
 /** Click the visible box of `which` frame and wait for the picker to come up with rows. */
-async function openPicker(page: Page, which: "number" | "cvv"): Promise<Frame> {
+async function openPicker(page: Page, which: "number" | "cvv", exclude?: Frame): Promise<Frame> {
 	await expect(async () => {
 		await boxFrame(page, which).locator(FIELD[which]).click();
-		expect(uiFrame(page)).toBeDefined();
+		expect(await uiFrame(page, exclude)).toBeDefined();
 	}).toPass({ timeout: 25_000 });
-	const ui = uiFrame(page);
+	const ui = await uiFrame(page, exclude);
 	expect(ui, "the picker UI never appeared").toBeDefined();
-	await expect(ui!.locator("[data-entry-id]").first()).toBeVisible({ timeout: 15_000 });
 	return ui!;
 }
 
@@ -133,7 +146,7 @@ test("the card picked in one hosted field leads the list in the next", async ({
 	// Nothing reached the CVV frame: it holds its own boxes and was never told.
 	await expect(boxFrame(page, "cvv").locator("#verification_value")).toHaveValue("");
 
-	const cvvUi = await openPicker(page, "cvv");
+	const cvvUi = await openPicker(page, "cvv", numberUi);
 	const rows = cvvUi.locator("[data-entry-id]");
 	await expect(rows).toHaveCount(2);
 	await expect(rows.first()).toContainText("Travel Mastercard");

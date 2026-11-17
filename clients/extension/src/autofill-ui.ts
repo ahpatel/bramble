@@ -770,6 +770,10 @@ if (TRACKS_VISIBILITY) {
 /** Whether a click may fill; when it may not, say how to fill from the keyboard instead. */
 function clickAllowed(): boolean {
 	if (RELAYED && performance.now() - settledAt < EARLY_CLICK_MS) return false;
+	// A relayed pick is checked by the relay host's watchdog in the page that hosts it; this
+	// document cannot see that page's compositing (a filtered section around the frame would
+	// otherwise refuse every click), so the browser-vouched check is for the local renderer.
+	if (RELAYED) return true;
 	if (!TRACKS_VISIBILITY || vouchedVisible) return true;
 	const list = document.body.querySelector(".tp-list");
 	if (list && !list.querySelector(".tp-hint")) {

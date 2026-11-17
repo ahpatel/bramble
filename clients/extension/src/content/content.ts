@@ -53,7 +53,7 @@ import {
 	repositionRelayed,
 	showRelayed,
 } from "./relay-client";
-import { closeRelayHost, showRelayHost } from "./relay-host";
+import { closeRelayHost, destroyRelayHost, relayHostContains, showRelayHost } from "./relay-host";
 import {
 	isAccountCreationForm,
 	isOnAccountCreationForm,
@@ -538,6 +538,7 @@ function applySelectResponse(
 		data.payload.username,
 		data.payload.password,
 		data.isAuto,
+		intent.target,
 	);
 	fillCustomFields(data.payload.customFields, data.isAuto);
 	fillOtp(data.payload.totp);
@@ -1575,6 +1576,13 @@ if (frameRelay.isTop()) {
 	frameRelay.onAnchor(showRelayHost);
 	frameRelay.onClose(closeRelayHost);
 } else {
+	// A click landed on a page around this frame: the user has moved on, as with a click
+	// elsewhere in this one.
+	frameRelay.onDismiss(() => {
+		if (!pickerIsOpen()) return;
+		silenceAutoOpen = true;
+		removePicker();
+	});
 	installRelayClient(frameRelay, {
 		onPick: (entryId, otpOnly) => {
 			const field = relayedField;
@@ -1713,7 +1721,7 @@ try {
 			cancelFill();
 			picker.remove();
 			dropRelayed();
-			fillForm(fill.username ?? "", fill.password, false);
+			fillForm(fill.username ?? "", fill.password, false, into);
 			if (fill.totp) fillOtp(fill.totp);
 			sendResponse({ ok: true });
 			return false;
@@ -1969,6 +1977,13 @@ function bootstrap(): void {
 			if (e.isTrusted && !isPickerInteractionTarget(target)) cancelSubmit();
 			if (e.isTrusted && activeFill && !isPickerInteractionTarget(target)) {
 				if (target !== activeFill.target) cancelOperations();
+			}
+			// A frame never hears a click on the page around it, and focus leaving it for this page
+			// looks the same as leaving the window, which keeps its picker up on purpose. So tell
+			// the frames, and drop any picker this frame hosts for one of them.
+			if (e.isTrusted && !(target instanceof Node && relayHostContains(target))) {
+				frameRelay.dismissDescendants();
+				destroyRelayHost();
 			}
 			const host = picker.activeHost();
 			if (host) {
