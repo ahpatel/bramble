@@ -62,6 +62,15 @@ export const test = base.extend<{ context: BrowserContext; extensionId: string }
 	// biome-ignore lint/correctness/noEmptyPattern: Playwright requires the fixtures destructuring param.
 	context: async ({}, use, testInfo) => {
 		const { context, profileDir } = await launchExtensionContext();
+		// Most specs drive the panel policy, which is what "focus" mode means. The quiet default
+		// is a product choice with its own spec (autofill-inline.spec.ts), and that spec sets the
+		// pref back to "icon" explicitly, so neither mode is tested by accident.
+		const [sw] = context.serviceWorkers();
+		if (sw) {
+			await sw
+				.evaluate(() => chrome.storage.local.set({ "pref.autofillTrigger": "focus" }))
+				.catch(() => {});
+		}
 		// A CI retry is traced here because `use.trace` never reaches a launchPersistentContext.
 		const trace = !!process.env.CI && testInfo.retry > 0;
 		if (trace) await context.tracing.start({ screenshots: true, snapshots: true });
