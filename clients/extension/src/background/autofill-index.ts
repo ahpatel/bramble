@@ -45,7 +45,7 @@ import {
 } from "./launch-fill";
 import { sendToOffscreen } from "./offscreen-client";
 import { generateSuggestion } from "./password-gen";
-import { getAutofillEnabled } from "./prefs";
+import { getAutofillEnabled, getAutofillTrigger } from "./prefs";
 import { extensionOnly, type MessageEnvelope, on } from "./router";
 import {
 	type AutofillSessionCapability,
@@ -264,7 +264,7 @@ function cardSecondary(entry: Extract<BrowserIndexEntry, { type: "card" }>): str
 
 /** What a page is told while the autofill switch is off: nothing to show, and don't ask again.
  * Deliberately not `locked`, which would put the "unlock to autofill" row back on screen. */
-function disabledResult(): QueryResult {
+function disabledResult(trigger: "auto" | "icon" | "shortcut"): QueryResult {
 	return {
 		logins: [],
 		cards: [],
@@ -272,6 +272,7 @@ function disabledResult(): QueryResult {
 		locked: false,
 		hasPotentialMatch: false,
 		disabled: true,
+		trigger,
 	};
 }
 
@@ -727,8 +728,9 @@ async function autofillQuery(
 		// Master switch (Settings -> General). Enforced here rather than only in the page: a content
 		// script is not a trusted context, so the answer a page gets must not depend on it asking.
 		// Or the fill shortcut, pressed in this tab: the browser alone delivers it (fill-shortcut.ts).
-		if (!(await getAutofillEnabled()) && !shortcutGrantLive(sender.tab?.id)) {
-			return { ok: true, data: disabledResult() };
+		const [enabled, trigger] = await Promise.all([getAutofillEnabled(), getAutofillTrigger()]);
+		if (!enabled && !shortcutGrantLive(sender.tab?.id)) {
+			return { ok: true, data: disabledResult(trigger) };
 		}
 		await hydrateAutofillIndexFromDisk();
 		const hasLogin = message.hasLogin !== false;
@@ -737,6 +739,9 @@ async function autofillQuery(
 		const result = queryResult(page.hostname, effectivePort(page), hasLogin, hasCard, hasOtp);
 		result.sameSiteAsTop = sameSiteAsTop(sender);
 		if (hasLogin && !result.locked && launchGrantFor(sender, page)) result.launch = true;
+		// How the list is asked for rides on the same answer, so the content script never has to
+		// make a second storage-shaped request to draw the right affordance.
+		result.trigger = trigger;
 		if (hasCard && !result.locked) {
 			// Only ever an id this very response already carries, so the page learns nothing it
 			// could not read off `cards` itself.
@@ -1117,6 +1122,20 @@ async function broadcastAutofillEnabled(enabled: boolean): Promise<void> {
 	} catch {}
 }
 
+/** Push a new trigger mode to every tab, so a page focused before the setting changed swaps
+ * its affordance without a reload. Best-effort, like the switch push above. */
+async function broadcastAutofillTrigger(trigger: string): Promise<void> {
+	try {
+		const tabs = await api.tabs.query({});
+		for (const tab of tabs) {
+			if (tab.id === undefined) continue;
+			void api.tabs
+				.sendMessage(tab.id, { type: "AUTOFILL_TRIGGER", payload: { trigger } })
+				.catch(() => {});
+		}
+	} catch {}
+}
+
 // Settings toggle: persisting it is usePrefs' job (and the pref is what every query reads);
 // this only applies it to tabs that are already open.
 on(
@@ -1127,6 +1146,34 @@ on(
 		return { ok: true, data: null };
 	}),
 );
+
+on(
+	"AUTOFILL_SET_TRIGGER",
+	extensionOnly(async (message) => {
+		const { trigger } = (message.payload ?? {}) as { trigger?: unknown };
+		if (trigger !== "auto" && trigger !== "icon" && trigger !== "shortcut") {
+			return { ok: false, error: "invalid_request" };
+		}
+		await broadcastAutofillTrigger(trigger);
+		return { ok: true, data: null };
+	}),
+);
+
+/**
+ * The `autofill-cycle` browser command. This is the only page-fill path that does not begin
+ * with a DOM event, so its trust comes from the browser: `commands.onCommand` fires only for a
+ * real shortcut press, and a page cannot synthesize it. The command is forwarded to the active
+ * tab only; each frame then requires the focused element to be a candidate field of its own, so
+ * at most one frame acts and nothing is filled on a page the user is not looking at.
+ */
+export async function cycleAutofillInActiveTab(): Promise<void> {
+	try {
+		if (!(await getAutofillEnabled())) return;
+		const [tab] = await api.tabs.query({ active: true, currentWindow: true });
+		if (tab?.id === undefined) return;
+		await api.tabs.sendMessage(tab.id, { type: "AUTOFILL_CYCLE" }).catch(() => {});
+	} catch {}
+}
 
 /** Create one alias for the page the sender is on. The site comes from the VERIFIED sender, not
  * from the message: it reaches the provider and lands in the user's dashboard, and a page must

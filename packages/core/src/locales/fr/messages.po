@@ -703,6 +703,10 @@ msgstr "Soumission automatique après remplissage"
 msgid "Autofill on web pages"
 msgstr "Remplissage automatique sur les pages web"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Autofill shortcut"
+msgstr "Raccourci de remplissage automatique"
+
 #: packages/core/src/app/components/PasswordGenerator.tsx
 msgid "Avoid look-alike characters (0 O l 1)"
 msgstr "Éviter les caractères similaires (0 O l 1)"
@@ -1047,6 +1051,10 @@ msgstr "Choisir un autre fichier"
 msgid "Choose the vault these items should go into"
 msgstr "Choisir le coffre où placer ces éléments"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Choose what opens the in-page list. The shortcut works in every mode."
+msgstr "Choisissez ce qui ouvre la liste dans la page. Le raccourci fonctionne dans tous les modes."
+
 #: packages/core/src/app/screens/TotpSetup/TotpSetup.tsx
 #~ msgid "Choose where to save this 2FA code."
 #~ msgstr "Choisissez où enregistrer ce code 2FA."
@@ -1070,6 +1078,10 @@ msgstr "Effacer après"
 #: packages/core/src/app/screens/VaultHome/VaultSearchBar.tsx
 msgid "Clear search"
 msgstr "Effacer la recherche"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Clicking the field"
+msgstr "Clic dans le champ"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Clipboard auto-clear"
@@ -2747,6 +2759,10 @@ msgstr "Pas maintenant"
 msgid "Not on this device yet. Waiting for a device that has it."
 msgstr "Pas encore sur cet appareil. En attente d’un appareil qui l’a."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Not set"
+msgstr "Non défini"
+
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Not syncing: this device can't read its sync key right now. Lock and unlock to try again. If it keeps happening, disconnect and join again with a code from another device."
 msgstr "Synchronisation impossible : cet appareil ne peut pas lire sa clé de synchronisation pour le moment. Verrouillez puis déverrouillez l’appareil pour réessayer. Si le problème persiste, dissociez cet appareil, puis réassociez-le avec un code provenant d’un autre appareil."
@@ -2904,9 +2920,17 @@ msgstr "Ouvrez-le depuis la fenêtre contextuelle {0} et déverrouillez-le avec 
 msgid "Open that vault"
 msgstr "Ouvrir ce coffre"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Open the list and step through saved logins. Change it in your browser's extension shortcuts."
+msgstr "Ouvre la liste et parcourt les identifiants enregistrés. Modifiez-le dans les raccourcis des extensions du navigateur."
+
 #: packages/core/src/app/components/OpenWebsiteLink.tsx
 msgid "Open website"
 msgstr "Ouvrir le site web"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Open with"
+msgstr "Ouvrir avec"
 
 #: packages/core/src/app/routes/VaultHomeRoute.tsx
 #: packages/core/src/app/screens/Auth/Auth.tsx
@@ -3738,6 +3762,10 @@ msgid "Settings sections"
 msgstr "Sections des paramètres"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Shortcut only"
+msgstr "Raccourci uniquement"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Show a save / update card in the corner of the page when you sign in with credentials Vault doesn't have."
 msgstr "Afficher une carte de sauvegarde ou de mise à jour dans le coin de la page lors de la connexion si les identifiants du coffre-fort n'incluent pas cette information."
 
@@ -3785,6 +3813,10 @@ msgstr "Afficher le mot de passe précédent"
 #: packages/core/src/app/entry-modes/ssh-key.tsx
 msgid "Show private key"
 msgstr "Afficher la clé privée"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Show saved logins"
+msgstr "Afficher les identifiants enregistrés"
 
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Show this entry in the autofill dropdown. When off, it's never auto-filled but stays in your vault."
@@ -4083,6 +4115,10 @@ msgstr "Cette année est en dehors de la plage utilisée par les cartes."
 #: packages/core/src/app/screens/Import/ImportShell.tsx
 #~ msgid "That's a full vault backup. Restore it instead: it's added as a new vault, and nothing here is changed."
 #~ msgstr "C’est une sauvegarde complète de coffre. Restaurez-la plutôt : elle est ajoutée en tant que nouveau coffre et rien ici n’est modifié."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "The Bramble icon"
+msgstr "L’icône Bramble"
 
 #: packages/core/src/app/screens/Settings/components/BrowserPairingSection.tsx
 msgid "The browser was not linked."

@@ -1,6 +1,6 @@
 import type { PasskeyCredential } from "../hooks/useVault";
 import type { EntriesPayload, RosterEntry, RosterPayload, WireRecoverySlot } from "../sync";
-import type { SubdomainMatchMode } from "./autofill";
+import type { AutofillTrigger, SubdomainMatchMode } from "./autofill";
 import type { HttpBodySource } from "./http";
 
 /** Minimal login shape for current-tab matching: id + the fields the hostname policy reads. */
@@ -182,6 +182,12 @@ export interface ShellAdapter {
 	 * capability). Persisting the pref is the caller's job; the background reads it per query anyway,
 	 * so this only exists to drop a dropdown that is already on screen. */
 	setAutofillEnabled?(enabled: boolean): Promise<void>;
+	/** Apply a new autofill trigger to open tabs now (extension only). Persisting the pref is the
+	 * caller's job; this settles what a page that is already focused should show. */
+	setAutofillTrigger?(trigger: AutofillTrigger): Promise<void>;
+	/** The browser's current key binding for the autofill cycle command, or null when unassigned.
+	 * Extension only; used to show the real shortcut in Settings rather than a guess. */
+	getAutofillShortcut?(): Promise<string | null>;
 	/** Open a login's website in a new tab and fill it there once (extension only). See
 	 * docs/launch-and-fill.md. */
 	launchLogin?(entryId: string, url: string): Promise<void>;

@@ -7,6 +7,14 @@
 		"message": "Blocca Bramble",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
+	"cmdAutofillCycle": {
+		"message": "Compila con Bramble",
+		"description": "Keyboard-shortcut command label shown in the browser's extension shortcuts page."
+	},
+	"autofillOpen": {
+		"message": "Apri compilazione automatica Bramble",
+		"description": "Accessible label for the small Bramble button inside a username or password field."
+	},
 	"cmdFillLogin": {
 		"message": "Compilare login",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts. Fills the saved login for the page."

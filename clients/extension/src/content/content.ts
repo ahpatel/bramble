@@ -21,6 +21,7 @@ import {
 	pageUsesShadowDom,
 } from "./detection";
 import { getPageFields, invalidatePageFields } from "./field-model";
+import { sampleFieldSkin } from "./field-skin";
 import {
 	fillCard,
 	fillCustomFields,
@@ -34,6 +35,7 @@ import {
 } from "./fill";
 import { installFrameRelay, type RelayRect } from "./frame-relay";
 import type { AliasRowState } from "./html/dropdown-alias";
+import { inlineIcon } from "./inline-icon";
 import { isLegible } from "./legibility";
 import { onTeardown, safeRequest, safeSendMessage } from "./lifecycle";
 import {
@@ -44,6 +46,7 @@ import {
 import { picker } from "./picker";
 import {
 	closeRelayed,
+	cycleRelayed,
 	installRelayClient,
 	keyToRelayed,
 	relayedPickerIsLive,
@@ -81,6 +84,17 @@ let cachedResult: QueryResult | null = null;
 // querying until it's turned back on. The background refuses the same requests regardless; this
 // is what keeps a disabled page from asking, and from drawing anything the answer can't reach.
 let autofillDisabled = false;
+// How the in-page list is asked for. Learned from every query result and pushed when the
+// setting changes, so a page focused before the change swaps its affordance without a reload.
+type Trigger = "auto" | "icon" | "shortcut";
+let autofillTrigger: Trigger = "auto";
+// Once the settings push has spoken, it is newer than any query that was already in flight.
+// A result that started before the change must not put the old mode back.
+let triggerPushed = false;
+
+function normalizeTrigger(v: unknown): Trigger | null {
+	return v === "auto" || v === "icon" || v === "shortcut" ? v : null;
+}
 // Set when the user explicitly closes the popover; suppresses redisplay from
 // re-queries until they re-engage (focus, type, or mousedown on a field).
 let silenceAutoOpen = false;
@@ -91,6 +105,12 @@ let reshowField: HTMLInputElement | null = null;
 // The field the user clicked "unlock" from. Clicking the locked row dismisses the picker, so on
 // unlock there's no active host to refresh; we re-surface matches on this field instead.
 let pendingUnlockField: HTMLInputElement | null = null;
+// The unlock was requested from our own row, so the list should open again on this field even
+// in icon/shortcut mode. A toolbar unlock does not set this: it was not asked for here.
+let reshowOpen = false;
+// The shortcut was pressed before the first query landed. Open the list and advance it when the
+// answer arrives, rather than dropping the press.
+let cycleAfterQuery = false;
 let lastCheck = 0;
 // Pending coalesced re-query (see scheduleQuery), and whether a DOM change went
 // unqueried because the tab was hidden at the time.
@@ -227,6 +247,7 @@ function repositionPicker(): void {
 function removePicker(): void {
 	picker.remove();
 	dropRelayed();
+	inlineIcon.setActive(false);
 }
 
 function showMatchesFor(
@@ -249,20 +270,23 @@ function showMatchesFor(
 	if (where === "local") {
 		dropRelayed();
 		picker.showMatches(matches, field, opts);
-		return;
+	} else {
+		picker.remove();
+		relayedField = field;
+		showRelayed(rectOf(field), {
+			kind: "matches",
+			matches,
+			otpOnly: opts?.otpOnly === true,
+			suggest: opts?.suggest,
+			alias: opts?.alias,
+			carriedId: opts?.carriedId,
+			newLogin: opts?.newLogin,
+			skin: sampleFieldSkin(field),
+		});
+		armRelayFallback(() => showMatchesFor(matches, field, opts));
 	}
-	picker.remove();
-	relayedField = field;
-	showRelayed(rectOf(field), {
-		kind: "matches",
-		matches,
-		otpOnly: opts?.otpOnly === true,
-		suggest: opts?.suggest,
-		alias: opts?.alias,
-		carriedId: opts?.carriedId,
-		newLogin: opts?.newLogin,
-	});
-	armRelayFallback(() => showMatchesFor(matches, field, opts));
+	// The mark stays visible while its list is up, and reads as pressed.
+	inlineIcon.setActive(pickerIsOpen() && anchorField() === field);
 }
 
 /**
@@ -319,12 +343,13 @@ function showLockedFor(field: HTMLInputElement): void {
 	if (where === "local") {
 		dropRelayed();
 		picker.showLocked(field);
-		return;
+	} else {
+		picker.remove();
+		relayedField = field;
+		showRelayed(rectOf(field), { kind: "locked", skin: sampleFieldSkin(field) });
+		armRelayFallback(() => showLockedFor(field));
 	}
-	picker.remove();
-	relayedField = field;
-	showRelayed(rectOf(field), { kind: "locked" });
-	armRelayFallback(() => showLockedFor(field));
+	inlineIcon.setActive(pickerIsOpen() && anchorField() === field);
 }
 
 function currentTargetKind(target: HTMLInputElement): TargetKind | null {
@@ -601,39 +626,218 @@ function visibleLoginsForField(field: HTMLInputElement, logins: MatchSummary[]):
 	return filterLoginsByQuery(logins, query);
 }
 
-/** Shows the login picker for `field`: existing matches, or ONLY the strong-password row on a signup/rotation form. */
-function showLoginPicker(field: HTMLInputElement, logins: MatchSummary[]): void {
+/** What the login path would draw for `field`, without drawing it. Shared by the renderer and
+ * the inline icon, so the mark can never appear for a list that would be empty. */
+function loginOffer(
+	field: HTMLInputElement,
+	logins: MatchSummary[],
+): {
+	matches: MatchSummary[];
+	opts?: { suggest?: { password: string }; alias?: AliasRowState; newLogin?: boolean };
+} | null {
 	const suggest = maybeSuggest(field, logins.length > 0);
 	// On an account-creation / password-rotation form, offer only the suggestion. Existing logins
 	// aren't useful when making or rotating a credential and would clutter the prompt.
-	if (suggest) {
-		showMatchesFor([], field, { suggest: { password: suggest.password } });
-		return;
-	}
+	if (suggest) return { matches: [], opts: { suggest: { password: suggest.password } } };
 	// The signup form's email box: an alias is the one thing that belongs here. Offered only when
 	// the background says a provider is configured, so a page cannot conjure the row, and kept on
 	// screen while a request is in flight or has failed so the state has somewhere to live.
 	const alias = aliasStateFor.get(field);
 	if (alias || (cachedResult?.aliasReady && shouldSuggestAlias(field))) {
-		showMatchesFor([], field, { alias: alias ?? { state: "idle" } });
-		return;
+		return { matches: [], opts: { alias: alias ?? { state: "idle" } } };
 	}
 	// Otherwise the same policy as before: the rest of an account-creation form gets nothing.
-	if (isCreationField(field)) return;
+	if (isCreationField(field)) return null;
 	const visible = visibleLoginsForField(field, logins);
-	if (visible.length === 0) {
+	if (visible.length === 0) return null;
+	return {
+		matches: visible,
+		// Under the site's logins, a way to save another one (#213), where accounts are chosen.
+		opts: field === getPageFields().login.username ? { newLogin: true } : undefined,
+	};
+}
+
+/** Shows the login picker for `field`: existing matches, or ONLY the strong-password row on a signup/rotation form. */
+function showLoginPicker(field: HTMLInputElement, logins: MatchSummary[]): void {
+	const offer = loginOffer(field, logins);
+	if (!offer) {
 		// Full dismissal, not picker.removeDropdown(): that only tears down the shadow-DOM
 		// (COEP-fallback) renderer and is a no-op against the primary iframe renderer, and it
 		// leaves any relayed (cross-origin iframe) picker painted too.
 		removePicker();
 		return;
 	}
-	// Under the site's logins, a way to save another one (#213), where accounts are chosen.
-	showMatchesFor(
-		visible,
-		field,
-		field === getPageFields().login.username ? { newLogin: true } : undefined,
-	);
+	showMatchesFor(offer.matches, field, offer.opts);
+}
+
+/**
+ * Whether the inline mark should be shown on `field`: the same question the renderer answers,
+ * asked without touching the picker. In icon mode this is what keeps the page quiet until the
+ * user asks, while still signalling that something is available.
+ */
+function hasOffer(field: HTMLInputElement): boolean {
+	if (!cachedResult || autofillDisabled) return false;
+	if (cachedResult.locked) {
+		if (maybeSuggest(field, cachedResult.hasPotentialMatch)) return true;
+		if (cachedResult.aliasReady && shouldSuggestAlias(field)) return true;
+		return cachedResult.hasPotentialMatch && !isCreationField(field);
+	}
+	const kind = kindOf(getPageFields(), field);
+	if (kind === "card") return cachedResult.cards.length > 0;
+	if (kind === "otp") return (cachedResult.otps ?? []).length > 0;
+	return loginOffer(field, cachedResult.logins) !== null;
+}
+
+/** Attach, move or drop the inline mark for `field` according to the trigger mode. */
+function syncAffordance(field: HTMLInputElement | null): void {
+	if (autofillTrigger !== "icon" || autofillDisabled || !field || !hasOffer(field)) {
+		inlineIcon.detach();
+		return;
+	}
+	inlineIcon.attach(field, { onToggle: () => toggleFor(field) });
+	inlineIcon.setActive(pickerIsOpen() && anchorField() === field);
+}
+
+/** The mark was clicked: open the list on its field, or close the list it already opened. */
+function toggleFor(field: HTMLInputElement): void {
+	if (!field.isConnected || field.ownerDocument !== document) return;
+	if (pickerIsOpen() && anchorField() === field) {
+		silenceAutoOpen = true;
+		removePicker();
+		return;
+	}
+	silenceAutoOpen = false;
+	presentFor(field, { allowQuery: true, explicit: true });
+}
+
+type PresentOpts = {
+	/** False when repainting from a response that this very query produced (avoids a loop). */
+	allowQuery: boolean;
+	/** The user asked for the list (icon click, shortcut, post-unlock): do not suppress a
+	 * single match just because the field already holds a value. */
+	explicit?: boolean;
+};
+
+/** Draws whatever a freshly-arrived result offers. Separate from `presentFor` because this path
+ * must not re-query: a query response that triggers another query is a loop. It also carries the
+ * alias/suggestion decision that only a fresh answer can make. */
+function presentFromResult(field: HTMLInputElement): void {
+	if (!cachedResult || autofillDisabled) return;
+	if (cachedResult.locked) {
+		showLockedPicker(field, cachedResult.hasPotentialMatch);
+		return;
+	}
+	const kind = kindOf(getPageFields(), field);
+	if (kind === "card") {
+		const cards = cardRows(cachedResult);
+		if (cards.matches.length > 0) showMatchesFor(cards.matches, field, cards.opts);
+		return;
+	}
+	if (kind === "otp") {
+		const otps = cachedResult.otps ?? [];
+		if (otps.length > 0) showMatchesFor(otps, field, { otpOnly: true });
+		return;
+	}
+	showLoginPicker(field, cachedResult.logins);
+}
+
+/** Draws whatever the cached result offers for `field`, with the same policy in every trigger mode. */
+function presentFor(field: HTMLInputElement, opts: PresentOpts): void {
+	if (!cachedResult || autofillDisabled) return;
+	if (cachedResult.locked) {
+		showLockedPicker(field, cachedResult.hasPotentialMatch);
+		return;
+	}
+	const kind = kindOf(getPageFields(), field);
+	if (kind === "card") {
+		const cards = cardRows(cachedResult);
+		if (cards.matches.length > 0) showMatchesFor(cards.matches, field, cards.opts);
+		// Then re-ask, always. A card field is the one place this frame's cached answer can go
+		// out of date without anything happening HERE: on a hosted-fields checkout the number is
+		// filled in a different frame entirely, and the carry that names it (`carriedCardId`)
+		// lands on the next query. Paint from cache so the dropdown is instant, refresh behind
+		// it; handleResult re-renders on this same field, and an unchanged render key makes that
+		// a no-op.
+		if (opts.allowQuery) queryAutofill();
+		return;
+	}
+	if (kind === "otp") {
+		const otps = cachedResult.otps ?? [];
+		if (otps.length === 0) {
+			if (opts.allowQuery) queryAutofill();
+		} else if (otps.length > 1 || !field.value || opts.explicit) {
+			// A single match auto-fills on load; only re-offer the picker on a
+			// choice, an empty field, or an explicit ask.
+			showMatchesFor(otps, field, { otpOnly: true });
+		}
+		return;
+	}
+	if (cachedResult.logins.length === 0) {
+		// No cached matches: offer a strong password if this looks like a signup
+		// form, and (re)query in case matches exist but weren't cached yet.
+		const offer = loginOffer(field, []);
+		if (offer) showMatchesFor(offer.matches, field, offer.opts);
+		if (opts.allowQuery) queryAutofill();
+		return;
+	}
+	// A single saved login has nothing to disambiguate: get out of the way while the user
+	// types their own value. This is a property of the site (how many logins it has), not of
+	// how the typed query narrows them, so it uses the unfiltered count.
+	if (!opts.explicit && cachedResult.logins.length === 1 && field.value) {
+		removePicker();
+		return;
+	}
+	showLoginPicker(field, cachedResult.logins);
+}
+
+/** Decides what (if anything) to show when the user focuses or edits `field`, based on the cached result. */
+function showFor(field: HTMLInputElement): void {
+	if (autofillDisabled) return;
+	if (!cachedResult) {
+		queryAutofill();
+		return;
+	}
+	// Icon mode: focus only reveals the mark. Shortcut mode: nothing happens until the command.
+	if (autofillTrigger === "icon") {
+		syncAffordance(field);
+		return;
+	}
+	if (autofillTrigger === "shortcut") {
+		inlineIcon.detach();
+		return;
+	}
+	inlineIcon.detach();
+	presentFor(field, { allowQuery: true });
+}
+
+/**
+ * The browser's `autofill-cycle` command, delivered to this frame by the background.
+ *
+ * The command is the trusted gesture (a page cannot synthesize `commands.onCommand`), but the
+ * fill itself still goes through the ordinary pick: the shortcut opens the list on the focused
+ * field and advances the highlight, and Enter picks. Nothing is written to the page until that
+ * pick, so this path adds no new way for a page to read a secret.
+ */
+function cycleAutofill(): void {
+	if (autofillDisabled || !documentIsActive()) return;
+	const field = focusedCandidate();
+	if (!field) return;
+	silenceAutoOpen = false;
+	if (!cachedResult) {
+		// The first query may still be in flight. Remember the press; the answer opens and
+		// advances the list rather than the shortcut doing nothing on a cold page.
+		cycleAfterQuery = true;
+		queryAutofill();
+		return;
+	}
+	if (!(pickerIsOpen() && anchorField() === field)) {
+		presentFor(field, { allowQuery: true, explicit: true });
+	}
+	// A locked row is a single navigable row: the cycle lands on it so Enter can open the
+	// pop-out. A matches list advances (and wraps) in whichever renderer is active.
+	if (relayedPickerIsOpen()) cycleRelayed();
+	else picker.cycle();
+	if (autofillTrigger === "icon") inlineIcon.setActive(pickerIsOpen() && anchorField() === field);
 }
 
 /**
@@ -895,42 +1099,52 @@ function handleResult(result: QueryResult | undefined): void {
 		return;
 	}
 	cachedResult = result;
+	if (!triggerPushed) {
+		const nextTrigger = normalizeTrigger(result.trigger);
+		if (nextTrigger) autofillTrigger = nextTrigger;
+	}
 	// Rides on the query so the suggestion below has a settings-shaped password to draw at once.
 	holdGeneratedPassword(result.generated);
 	if (result.launch) launchWatch = true;
 	if (claimLaunch()) return;
 
-	// User dismissed/selected: don't resurrect the dropdown from a re-query until
-	// they re-engage. cachedResult is still updated so the next focus sees fresh data.
-	if (silenceAutoOpen) {
-		reshowField = null;
-		return;
-	}
-
 	// Prefer the focused field; fall back to a pending re-show target (a post-unlock refresh
 	// whose field lost focus to the popup). Consume the target either way.
 	const target = focusedCandidate() ?? (reshowField?.isConnected ? reshowField : null);
 	reshowField = null;
-	if (!target) return;
-
-	if (result.locked) {
-		showLockedPicker(target, result.hasPotentialMatch);
+	const force = reshowOpen;
+	reshowOpen = false;
+	const cycle = cycleAfterQuery;
+	cycleAfterQuery = false;
+	if (!target) {
+		syncAffordance(null);
 		return;
 	}
 
-	const kind = kindOf(getPageFields(), target);
-	if (kind === "card") {
-		const cards = cardRows(result);
-		if (cards.matches.length > 0) showMatchesFor(cards.matches, target, cards.opts);
+	const openHere = pickerIsOpen() && anchorField() === target;
+	// A repaint of the list already on this field, or the list the user asked for by clicking
+	// unlock, ignores the trigger mode: both are already in response to an explicit action.
+	if (force || openHere || cycle) {
+		presentFromResult(target);
+		if (cycle) {
+			if (relayedPickerIsOpen()) cycleRelayed();
+			else picker.cycle();
+		}
 		return;
 	}
-	if (kind === "otp") {
-		const otps = result.otps ?? [];
-		if (otps.length > 0) showMatchesFor(otps, target, { otpOnly: true });
+	if (autofillTrigger === "icon") {
+		// Icon mode never opens on its own. The result still settles the mark: a query that
+		// found nothing takes it away, one that found a match brings it back.
+		syncAffordance(target);
 		return;
 	}
-	// login
-	showLoginPicker(target, result.logins);
+	inlineIcon.detach();
+	// Shortcut mode is explicitly "not until I ask". A query answer is not an ask.
+	if (autofillTrigger === "shortcut") return;
+	// User dismissed/selected: don't resurrect the dropdown from a re-query until
+	// they re-engage. cachedResult is still updated so the next focus sees fresh data.
+	if (silenceAutoOpen) return;
+	presentFromResult(target);
 }
 
 /**
@@ -945,10 +1159,35 @@ function applyAutofillEnabled(enabled: boolean): void {
 		cachedResult = null;
 		reshowField = null;
 		pendingUnlockField = null;
+		reshowOpen = false;
+		cycleAfterQuery = false;
+		// The switch off invalidates in-flight work (queryGeneration), so the next answer is
+		// current and may re-teach the trigger.
+		triggerPushed = false;
+		inlineIcon.detach();
 		removePicker();
 		return;
 	}
 	queryAutofill();
+}
+
+/**
+ * Apply a trigger mode to a page that is already open. Persisting the pref is the UI's job; the
+ * background reads it per query anyway, so this only settles what is on screen now: close a list
+ * that was opened under the old mode, and draw the new mode's affordance on the focused field.
+ */
+function applyTrigger(next: Trigger): void {
+	if (next === autofillTrigger) return;
+	autofillTrigger = next;
+	silenceAutoOpen = false;
+	removePicker();
+	const field = focusedCandidate();
+	if (next === "icon") {
+		syncAffordance(field);
+		return;
+	}
+	inlineIcon.detach();
+	if (next === "auto" && field) presentFor(field, { allowQuery: true });
 }
 
 /** Asks the background what's available for this page, but only if a fillable field exists. */
@@ -970,59 +1209,6 @@ function queryAutofill(): void {
 		if (generation !== queryGeneration || !response?.ok) return;
 		handleResult(response.data);
 	});
-}
-
-/** Decides what (if anything) to show when the user focuses or edits `field`, based on the cached result. */
-function showFor(field: HTMLInputElement): void {
-	if (autofillDisabled || silenceAutoOpen) return;
-	if (!cachedResult) {
-		queryAutofill();
-		return;
-	}
-	if (cachedResult.locked) {
-		showLockedPicker(field, cachedResult.hasPotentialMatch);
-		return;
-	}
-	const kind = kindOf(getPageFields(), field);
-	if (kind === "card") {
-		const cards = cardRows(cachedResult);
-		if (cards.matches.length > 0) showMatchesFor(cards.matches, field, cards.opts);
-		// Then re-ask, always. A card field is the one place this frame's cached answer can go
-		// out of date without anything happening HERE: on a hosted-fields checkout the number is
-		// filled in a different frame entirely, and the carry that names it (`carriedCardId`)
-		// lands on the next query. Paint from cache so the dropdown is instant, refresh behind
-		// it; handleResult re-renders on this same field, and an unchanged render key makes that
-		// a no-op.
-		queryAutofill();
-		return;
-	}
-	if (kind === "otp") {
-		const otps = cachedResult.otps ?? [];
-		if (otps.length === 0) {
-			queryAutofill();
-		} else if (otps.length > 1 || !field.value) {
-			// A single match auto-fills on load; only re-offer the picker on a
-			// choice or an empty field.
-			showMatchesFor(otps, field, { otpOnly: true });
-		}
-		return;
-	}
-	if (cachedResult.logins.length === 0) {
-		// No cached matches: offer a strong password if this looks like a signup
-		// form, and (re)query in case matches exist but weren't cached yet.
-		const suggest = maybeSuggest(field, false);
-		if (suggest) showMatchesFor([], field, { suggest: { password: suggest.password } });
-		queryAutofill();
-		return;
-	}
-	// A single saved login has nothing to disambiguate: get out of the way while the user
-	// types their own value. This is a property of the site (how many logins it has), not of
-	// how the typed query narrows them, so it uses the unfiltered count.
-	if (cachedResult.logins.length === 1 && field.value) {
-		removePicker();
-		return;
-	}
-	showLoginPicker(field, cachedResult.logins);
 }
 
 // Nodes that can hold, or turn into, a fillable field. A batch that moves
@@ -1359,6 +1545,25 @@ api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		return false;
 	}
 
+	if (message?.type === "AUTOFILL_TRIGGER") {
+		// The "Show saved logins" setting, applied to a page that is already open.
+		const next = normalizeTrigger((message.payload as { trigger?: unknown } | undefined)?.trigger);
+		if (next) {
+			triggerPushed = true;
+			applyTrigger(next);
+		}
+		sendResponse({ ok: true });
+		return false;
+	}
+
+	if (message?.type === "AUTOFILL_CYCLE") {
+		// The `autofill-cycle` browser command, forwarded by the background to the active tab.
+		// Every frame gets it; only the one whose own active element is a candidate acts.
+		cycleAutofill();
+		sendResponse({ ok: true });
+		return false;
+	}
+
 	if (message?.type === "VAULT_LOCK_STATE") {
 		// Either direction invalidates local response and delayed-submit work. A lock→unlock
 		// ABA cannot revive a request that began before the transition: cancellation invalidates
@@ -1374,6 +1579,7 @@ api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			// Lock only matters when a picker is open: swap to the "Vault locked" row on the focused
 			// field (or keep the strong-password suggestion, which needs no vault), or hide stale
 			// matches when focus has left. A fresh lock invalidates any pending unlock.
+			cycleAfterQuery = false;
 			if (pickerIsOpen()) {
 				if (focused) showLockedPicker(focused, cachedResult?.hasPotentialMatch ?? false);
 				else removePicker();
@@ -1386,6 +1592,9 @@ api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			const anchor = pickerIsOpen() ? anchorField() : null;
 			const pending = pendingUnlockField?.isConnected ? pendingUnlockField : null;
 			pendingUnlockField = null;
+			// The user clicked "unlock" in our own row. That is an explicit request for this
+			// field's list, so reopen it after the unlock even in icon/shortcut mode.
+			reshowOpen = pending !== null;
 			const field = focused ?? anchor ?? pending;
 			removePicker();
 			if (field) {

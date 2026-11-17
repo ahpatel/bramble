@@ -30,6 +30,8 @@ export interface QueryResult {
 	hasPotentialMatch: boolean;
 	// The user turned page autofill off: show nothing and stop querying.
 	disabled?: boolean;
+	// How the in-page list is opened (Settings -> General). Absent from an older background.
+	trigger?: "auto" | "icon" | "shortcut";
 	// A password shaped by the user's generator settings, for a signup form's suggestion.
 	// Absent when the page has no login field, or when an older background didn't send one.
 	generated?: string;

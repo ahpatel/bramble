@@ -1,7 +1,8 @@
 /// <reference types="chrome" />
 
 import { api } from "./content-api";
-import { anchorIsLive } from "./detection";
+import { anchorIsLive, deepActiveElement } from "./detection";
+import { type FieldSkin, sampleFieldSkin, skinKey } from "./field-skin";
 import { hostOffset } from "./host-offset";
 import { type AliasRowState, dropdownAlias } from "./html/dropdown-alias";
 import { dropdownItem } from "./html/dropdown-item";
@@ -45,6 +46,8 @@ type RowOpts = {
 	alias?: AliasRowState;
 	carriedId?: string;
 	newLogin?: boolean;
+	/** The anchor field's look, sampled once when the picker opens. */
+	skin?: FieldSkin;
 };
 
 /**
@@ -65,7 +68,10 @@ function renderKey(matches: MatchSummary[], opts?: RowOpts): string {
 	// different dropdown, and keyed on ids alone the badge would stay where it was first drawn.
 	const c = opts?.carriedId ? `c:${opts.carriedId}\0` : "";
 	const n = opts?.newLogin ? "n\0" : "";
-	return a + c + n + (opts?.suggest ? `s:${opts.suggest.password}\0` : "") + matchesKey(matches);
+	const s = opts?.skin ? `k:${skinKey(opts.skin)}\0` : "";
+	return (
+		a + c + n + s + (opts?.suggest ? `s:${opts.suggest.password}\0` : "") + matchesKey(matches)
+	);
 }
 
 // Anchor field shared by both renderers (the page input the picker sits under).
@@ -177,25 +183,50 @@ function clickIsOnAnchor(target: Node): boolean {
 	return false;
 }
 
-/** Match the field width for a bold, integrated look; floored so it stays substantial
- *  on narrow fields and capped so very wide fields don't sprawl. */
+/** Match the field width for an integrated look; floored so it stays substantial
+ *  on narrow fields and capped so very wide fields don't sprawl. Never wider than the
+ *  viewport, which a 320px field on a 360px phone used to overflow. */
 function pickerWidth(fieldWidth: number): number {
-	return Math.min(Math.max(fieldWidth, 300), 440);
+	const viewport = Math.max(200, window.innerWidth - 16);
+	return Math.min(Math.max(fieldWidth, 260), 420, viewport);
 }
 
-/** Anchor a host below `field` via a compositor-friendly transform (no layout). */
+/** The rendered height of whichever host is being positioned, before it has one (0). */
+function hostHeight(el: HTMLElement): number {
+	if (el === iframeHostEl && iframeEl) return Number.parseFloat(iframeEl.style.height) || 0;
+	const h = el.getBoundingClientRect().height;
+	return Number.isFinite(h) ? h : 0;
+}
+
+/** Anchor a host to `field` via a compositor-friendly transform (no layout). Flips above
+ *  the field when there is no room below, and shifts left rather than running off-screen. */
 function positionHostElement(el: HTMLElement, field: HTMLInputElement): void {
 	const rect = field.getBoundingClientRect();
 	const offset = hostOffset(el);
-	const x = rect.left + offset.x;
-	const y = rect.bottom + offset.y + 2;
-	const width = `${pickerWidth(rect.width)}px`;
+	const width = pickerWidth(rect.width);
+	const viewLeft = offset.x;
+	const viewTop = offset.y;
+	const viewRight = viewLeft + window.innerWidth;
+	const viewBottom = viewTop + window.innerHeight;
+	let x = rect.left + offset.x;
+	const maxX = viewRight - 8 - width;
+	if (x > maxX) x = Math.max(viewLeft + 8, maxX);
+	let y = rect.bottom + offset.y + 2;
+	const height = hostHeight(el);
+	// Only flip when the menu actually fits above; otherwise below is the better scroll box.
+	if (height > 0 && height < window.innerHeight - 24) {
+		const above = rect.top + offset.y - 2 - height;
+		if (y + height > viewBottom - 8 && above >= viewTop + 8) y = above;
+	}
 	// translate (compositor-only) instead of top/left (layout) so the per-frame
-	// tracker doesn't thrash layout; write only on change.
-	const transform = `translate3d(${x}px, ${y}px, 0)`;
-	if (el.style.transform === transform && el.style.width === width) return;
+	// tracker doesn't thrash layout; write only on change. `0px`, not `0`: the style
+	// declaration serializes a bare zero to `0px`, and comparing against `0` made every
+	// frame look like a move - which reset the early-click guard forever.
+	const transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0px)`;
+	const widthPx = `${Math.round(width)}px`;
+	if (el.style.transform === transform && el.style.width === widthPx) return;
 	el.style.transform = transform;
-	el.style.width = width;
+	el.style.width = widthPx;
 	markPickerMoved();
 }
 
@@ -216,9 +247,6 @@ function clickIsEarly(): boolean {
 // shadow root or a nested modal scroller (e.g. Reddit's login modal). The rAF
 // loop keeps the picker pinned; transform writes keep the common case smooth.
 let trackingRaf: number | null = null;
-let lastX = Number.NaN;
-let lastY = Number.NaN;
-let lastWidth = Number.NaN;
 let lastAnchor: HTMLInputElement | null = null;
 // Hidden mid-scroll: JS tracking trails the compositor inside a modal/shadow
 // scroller, so we hide while the field moves and snap back once it settles.
@@ -229,7 +257,6 @@ const SCROLL_SETTLE_MS = 120;
 function startPositionTracking(): void {
 	if (trackingRaf !== null) return;
 	// Fresh loop: clear the baseline so the first frame doesn't read as a scroll.
-	lastX = Number.NaN;
 	lastAnchor = null;
 	scrollHidden = false;
 	const tick = (ts: number): void => {
@@ -252,22 +279,13 @@ function startPositionTracking(): void {
 			removeActiveUi();
 			return;
 		}
-		const offset = hostOffset(host);
-		const x = rect.left + offset.x;
-		const y = rect.bottom + offset.y + 2;
-		const width = pickerWidth(rect.width);
 		// New field or first frame: re-baseline without treating it as a scroll.
-		const rebaseline = Number.isNaN(lastX) || anchorField !== lastAnchor;
-		const moved = !rebaseline && (x !== lastX || y !== lastY || width !== lastWidth);
-
-		if (rebaseline || moved) {
-			host.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-			host.style.width = `${width}px`;
-			markPickerMoved();
-		}
-		lastX = x;
-		lastY = y;
-		lastWidth = width;
+		const rebaseline = anchorField !== lastAnchor;
+		const beforeTransform = host.style.transform;
+		const beforeWidth = host.style.width;
+		positionHostElement(host, anchorField);
+		const moved =
+			!rebaseline && (beforeTransform !== host.style.transform || beforeWidth !== host.style.width);
 		lastAnchor = anchorField;
 
 		// A change in the field's *document* position is an internal/modal scroll
@@ -306,6 +324,13 @@ let dropdownEl: HTMLElement | null = null;
 // the remove-and-re-add cycle that caused flicker on dynamic pages.
 let openMatchesKey = "";
 let openDropdownKind: "matches" | "locked" | null = null;
+// Keyboard navigation for the fallback renderer. The iframe has had this all along; the
+// shadow dropdown only ever took a mouse, which meant the shortcut did nothing on a COEP page.
+let shadowRows: HTMLElement[] = [];
+let shadowHighlight = -1;
+let shadowOtpOnly = false;
+const SHADOW_ROW_SELECTOR =
+	"[data-entry-id], [data-tp-suggest], [data-tp-alias], [data-tp-popout], [data-tp-new-login]";
 
 function removeDropdown(): void {
 	if (dropdownEl) {
@@ -315,6 +340,9 @@ function removeDropdown(): void {
 	setAnchorField(null);
 	openMatchesKey = "";
 	openDropdownKind = null;
+	shadowRows = [];
+	shadowHighlight = -1;
+	shadowOtpOnly = false;
 }
 
 function positionDropdown(field: HTMLInputElement): void {
@@ -322,7 +350,25 @@ function positionDropdown(field: HTMLInputElement): void {
 	positionHostElement(dropdownEl, field);
 }
 
-function mountDropdown(field: HTMLInputElement, bodyHtml: string): ShadowRoot {
+/** Apply the anchor field's look to the fallback renderer's own box. */
+function applySkin(el: HTMLElement, skin: FieldSkin): void {
+	el.style.setProperty("--tp-surface", skin.surface);
+	el.style.setProperty("--tp-foreground", skin.foreground);
+	el.style.setProperty("--tp-muted", skin.muted);
+	el.style.setProperty("--tp-border", skin.border);
+	el.style.setProperty("--tp-radius", `${skin.radius}px`);
+	el.style.setProperty("--tp-row-radius", `${skin.radius <= 2 ? 4 : 8}px`);
+	el.style.setProperty("--tp-font-family", skin.fontFamily);
+	el.style.setProperty("--tp-font-size", `${skin.fontSize}px`);
+	el.style.colorScheme = skin.dark ? "dark" : "light";
+}
+
+function mountDropdown(
+	field: HTMLInputElement,
+	bodyHtml: string,
+	skin: FieldSkin,
+	animate: boolean,
+): ShadowRoot {
 	removeDropdown();
 	setAnchorField(field);
 
@@ -336,7 +382,9 @@ function mountDropdown(field: HTMLInputElement, bodyHtml: string): ShadowRoot {
 	const shadow = root.attachShadow({ mode: "closed" });
 	// Box styling lives on the inner .tp-dropdown (not :host) so the host page's
 	// CSS reset can't reach it across the shadow boundary.
-	shadow.innerHTML = `${dropdownStyles}<div class="tp-dropdown">${bodyHtml}</div>`;
+	shadow.innerHTML = `${dropdownStyles}<div class="tp-dropdown${animate ? " tp-enter" : ""}">${bodyHtml}</div>`;
+	const box = shadow.querySelector<HTMLElement>(".tp-dropdown");
+	if (box) applySkin(box, skin);
 
 	dropdownEl = root;
 	document.body.appendChild(dropdownEl);
@@ -345,11 +393,93 @@ function mountDropdown(field: HTMLInputElement, bodyHtml: string): ShadowRoot {
 	return shadow;
 }
 
+function setShadowHighlight(index: number): void {
+	shadowHighlight = index;
+	shadowRows.forEach((row, i) => {
+		row.classList.toggle("tp-active", i === index);
+	});
+	const row = shadowRows[index];
+	if (row) row.scrollIntoView?.({ block: "nearest" });
+}
+
+/** Move the fallback highlight. `wrap` is for the cycle shortcut; arrows clamp like a menu. */
+function moveShadowHighlight(delta: number, wrap: boolean): void {
+	const n = shadowRows.length;
+	if (n === 0) return;
+	let next: number;
+	if (shadowHighlight < 0) next = delta > 0 ? 0 : n - 1;
+	else if (wrap) next = (shadowHighlight + delta + n) % n;
+	else next = Math.max(0, Math.min(n - 1, shadowHighlight + delta));
+	setShadowHighlight(next);
+}
+
+/** Fire the row's action. `pointer` is true only for a real click, which is timed. */
+function activateShadowRow(row: HTMLElement, pointer: boolean): void {
+	if (row.dataset.entryId) {
+		if (pickAllowed(dropdownEl, pointer)) pickCb?.(row.dataset.entryId, shadowOtpOnly);
+		return;
+	}
+	if (row.matches("[data-tp-suggest]")) {
+		if (pickAllowed(dropdownEl, pointer)) onSuggestedCb?.();
+		return;
+	}
+	if (row.matches("[data-tp-alias]")) {
+		if (pickAllowed(dropdownEl, pointer)) aliasCb?.();
+		return;
+	}
+	if (row.matches("[data-tp-new-login]")) {
+		removeDropdown();
+		newLoginCb?.();
+		return;
+	}
+	if (row.matches("[data-tp-popout]")) {
+		// Capture the anchor before removeDropdown() clears it, so the caller can re-surface here.
+		const field = anchorField;
+		removeDropdown();
+		unlockCb?.(field);
+	}
+}
+
+/** Arrow/Enter/Escape for the fallback renderer; returns true if the key was consumed. */
+function handleShadowKey(e: KeyboardEvent): boolean {
+	if (!dropdownEl || !anchorField) return false;
+	if (deepActiveElement() !== anchorField) return false;
+	if (shadowRows.length === 0) return false;
+	if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+		e.preventDefault();
+		moveShadowHighlight(e.key === "ArrowDown" ? 1 : -1, false);
+		return true;
+	}
+	if (e.key === "Escape") {
+		e.preventDefault();
+		dismissCb?.();
+		removeDropdown();
+		return true;
+	}
+	// Enter only picks when a row is highlighted; otherwise the form submits normally.
+	if (e.key === "Enter" && shadowHighlight >= 0) {
+		const row = shadowRows[shadowHighlight];
+		if (!row) return false;
+		e.preventDefault();
+		activateShadowRow(row, false);
+		return true;
+	}
+	return false;
+}
+
+/** The cycle shortcut in the fallback renderer: open on the first row, then wrap. */
+function cycleShadow(): boolean {
+	if (!dropdownEl || shadowRows.length === 0) return false;
+	moveShadowHighlight(1, true);
+	return true;
+}
+
 /** Renders the match picker anchored to `field`; no-op when content is unchanged to avoid flicker. */
 function buildDropdown(matches: MatchSummary[], field: HTMLInputElement, opts?: RowOpts): void {
 	if (matches.length === 0 && !opts?.suggest && !opts?.alias) return;
 
-	const key = renderKey(matches, opts);
+	const skin = opts?.skin ?? sampleFieldSkin(field);
+	const key = renderKey(matches, { ...opts, skin });
 	// Same content/field already showing: keep the existing dropdown to avoid
 	// flicker from re-queries on every DOM mutation.
 	if (
@@ -369,9 +499,14 @@ function buildDropdown(matches: MatchSummary[], field: HTMLInputElement, opts?: 
 	if (opts?.suggest) parts.push(dropdownSuggest(opts.suggest.password));
 	for (const m of matches) parts.push(dropdownItem({ ...m, carried: m.id === opts?.carriedId }));
 	if (opts?.newLogin) parts.push(dropdownNewLogin());
-	const root = mountDropdown(field, parts.join(""));
+	// The entry animation belongs to opening, not to a keystroke that narrows the list.
+	const animate = !dropdownEl;
+	const root = mountDropdown(field, parts.join(""), skin, animate);
 	openMatchesKey = key;
 	openDropdownKind = "matches";
+	shadowOtpOnly = opts?.otpOnly === true;
+	shadowRows = Array.from(root.querySelectorAll<HTMLElement>(SHADOW_ROW_SELECTOR));
+	shadowHighlight = -1;
 
 	// mousedown (not click) beats the field's blur; otherwise focus leaves first
 	// and the click never reaches us.
@@ -385,27 +520,10 @@ function buildDropdown(matches: MatchSummary[], field: HTMLInputElement, opts?: 
 			regenerateCb?.();
 			return;
 		}
-		const item = target?.closest<HTMLElement>("[data-entry-id]");
-		if (item?.dataset.entryId) {
-			e.preventDefault();
-			if (pickAllowed(dropdownEl, true)) pickCb?.(item.dataset.entryId, opts?.otpOnly === true);
-			return;
-		}
-		if (target?.closest("[data-tp-suggest]")) {
-			e.preventDefault();
-			if (pickAllowed(dropdownEl, true)) onSuggestedCb?.();
-			return;
-		}
-		if (target?.closest("[data-tp-alias]")) {
-			e.preventDefault();
-			if (pickAllowed(dropdownEl, true)) aliasCb?.();
-			return;
-		}
-		if (target?.closest("[data-tp-new-login]")) {
-			e.preventDefault();
-			removeDropdown();
-			newLoginCb?.();
-		}
+		const item = target?.closest<HTMLElement>(SHADOW_ROW_SELECTOR);
+		if (!item) return;
+		e.preventDefault();
+		activateShadowRow(item, true);
 	});
 }
 
@@ -414,20 +532,21 @@ function buildLockedDropdown(field: HTMLInputElement): void {
 		positionDropdown(field);
 		return;
 	}
-	const root = mountDropdown(field, dropdownLocked());
+	const skin = sampleFieldSkin(field);
+	const animate = !dropdownEl;
+	const root = mountDropdown(field, dropdownLocked(), skin, animate);
 	openDropdownKind = "locked";
+	shadowRows = Array.from(root.querySelectorAll<HTMLElement>(SHADOW_ROW_SELECTOR));
+	shadowHighlight = -1;
 
 	// mousedown beats the field's blur; otherwise the row never gets the click.
 	root.addEventListener("mousedown", (e) => {
 		// Only a genuine user click opens the pop-out.
 		if (!e.isTrusted) return;
-		const item = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-tp-popout]");
+		const item = (e.target as HTMLElement | null)?.closest<HTMLElement>(SHADOW_ROW_SELECTOR);
 		if (!item) return;
 		e.preventDefault();
-		// Capture the anchor before removeDropdown() clears it, so the caller can re-surface here.
-		const field = anchorField;
-		removeDropdown();
-		unlockCb?.(field);
+		activateShadowRow(item, false);
 	});
 }
 
@@ -454,8 +573,10 @@ type IframeRender =
 			alias?: AliasRowState;
 			carriedId?: string;
 			newLogin?: boolean;
+			skin: FieldSkin;
+			animate: boolean;
 	  }
-	| { kind: "locked" };
+	| { kind: "locked"; skin: FieldSkin; animate: boolean };
 
 // "probe" until the first mount resolves to iframe (READY) or shadow (timeout).
 let uiMode: "probe" | "iframe" | "shadow" = "probe";
@@ -470,19 +591,46 @@ let iframeMatchesKey = "";
 // arrives a round trip late and lost the race to a quick Enter.
 let iframeHasHighlight = false;
 let iframeNavRows = 0;
+// A cycle request that arrived before the first render landed. The shortcut opens the list and
+// immediately asks for the first row, and on a cold iframe that request would be posted before
+// UI_CONNECTED and dropped.
+let pendingCycle = false;
+// Close fade: the host is hidden rather than destroyed, so the next open is instant. The timer
+// is what actually takes it out of the hit-testing tree.
+let hideTimer: number | null = null;
 // Ids last sent to the iframe. A pick naming anything else is dropped, as in relay-client.ts.
 let iframeRenderedIds = new Set<string>();
 
-/** Hide the iframe host (kept alive for reuse). */
+function prefersReducedMotion(): boolean {
+	return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/** Hide the iframe host (kept alive for reuse). Fades first unless reduced motion is asked for. */
 function hideIframe(): void {
+	if (hideTimer !== null) {
+		clearTimeout(hideTimer);
+		hideTimer = null;
+	}
 	if (iframeHostEl) {
-		iframeHostEl.style.display = "none";
 		// Drop a mid-scroll hide with it: the next show starts a fresh tracking loop,
 		// whose baseline is "not hidden", so nothing would ever clear it again.
 		iframeHostEl.style.visibility = "";
+		if (prefersReducedMotion()) {
+			iframeHostEl.style.opacity = "";
+			iframeHostEl.style.display = "none";
+		} else {
+			iframeHostEl.style.opacity = "0";
+			const host = iframeHostEl;
+			hideTimer = window.setTimeout(() => {
+				hideTimer = null;
+				host.style.display = "none";
+				host.style.opacity = "";
+			}, 120);
+		}
 	}
 	iframeMatchesKey = "";
 	iframeHasHighlight = false;
+	pendingCycle = false;
 	setAnchorField(null);
 }
 
@@ -491,6 +639,10 @@ function destroyIframeHost(): void {
 	if (readinessTimer !== null) {
 		clearTimeout(readinessTimer);
 		readinessTimer = null;
+	}
+	if (hideTimer !== null) {
+		clearTimeout(hideTimer);
+		hideTimer = null;
 	}
 	if (iframeHostEl) {
 		iframeHostEl.remove();
@@ -501,6 +653,7 @@ function destroyIframeHost(): void {
 	closeUiPort();
 	iframeRenderedIds = new Set();
 	pendingRender = null;
+	pendingCycle = false;
 	iframeMatchesKey = "";
 	iframeHasHighlight = false;
 	setAnchorField(null);
@@ -509,8 +662,13 @@ function destroyIframeHost(): void {
 /** Create the iframe host (closed-shadow wrapper around the extension-origin iframe), or un-hide it if it exists. */
 function ensureIframeHost(): void {
 	if (iframeHostEl) {
+		if (hideTimer !== null) {
+			clearTimeout(hideTimer);
+			hideTimer = null;
+		}
 		if (iframeHostEl.style.display === "none") markPickerMoved();
 		iframeHostEl.style.display = "block";
+		iframeHostEl.style.opacity = "1";
 		return;
 	}
 	const host = document.createElement("div");
@@ -518,7 +676,7 @@ function ensureIframeHost(): void {
 	host.id = `tp-${Math.random().toString(36).slice(2, 10)}`;
 	// pointer-events: modals set `body { pointer-events: none }`, which the host would inherit.
 	host.style.cssText =
-		"position: absolute; top: 0; left: 0; z-index: 2147483647; margin: 0; padding: 0; border: 0; pointer-events: auto;";
+		"position: absolute; top: 0; left: 0; z-index: 2147483647; margin: 0; padding: 0; border: 0; pointer-events: auto; opacity: 0; transition: opacity 120ms ease;";
 	const shadow = host.attachShadow({ mode: "closed" });
 	const frame = document.createElement("iframe");
 	frame.src = `${AUTOFILL_UI_URL}?parentOrigin=${encodeURIComponent(location.origin)}`;
@@ -532,6 +690,10 @@ function ensureIframeHost(): void {
 	iframeHostEl = host;
 	iframeEl = frame;
 	iframeReady = false;
+	// Next frame, so the transition runs from the initial 0 rather than being coalesced.
+	requestAnimationFrame(() => {
+		if (iframeHostEl === host && host.style.display !== "none") host.style.opacity = "1";
+	});
 }
 
 function closeUiPort(): void {
@@ -566,9 +728,20 @@ function flushPendingRender(): void {
 			alias: render.alias,
 			carriedId: render.carriedId,
 			newLogin: render.newLogin,
+			skin: render.skin,
+			animate: render.animate,
 		});
 	} else {
-		postToUi({ type: "RENDER_LOCKED" });
+		postToUi({ type: "RENDER_LOCKED", skin: render.skin, animate: render.animate });
+	}
+	// A shortcut that opened the list asks for the first row as soon as it exists. The port
+	// delivers in order, so the render above is applied first.
+	if (pendingCycle) {
+		pendingCycle = false;
+		if (render.kind === "matches") {
+			postToUi({ type: "UI_CYCLE" });
+			iframeHasHighlight = iframeNavRows > 0;
+		}
 	}
 }
 
@@ -581,6 +754,9 @@ function armReadinessTimeout(): void {
 		uiMode = "shadow";
 		const field = anchorField;
 		const render = pendingRender;
+		// The shortcut may have arrived while the iframe was still starting. Carry that one
+		// pending advance across to the renderer that actually took over.
+		const cycle = pendingCycle;
 		destroyIframeHost();
 		if (field && render) {
 			if (render.kind === "matches")
@@ -591,34 +767,42 @@ function armReadinessTimeout(): void {
 					suggest: render.suggest,
 					alias: render.alias,
 					newLogin: render.newLogin,
+					carriedId: render.carriedId,
+					skin: render.skin,
 				});
 			else buildLockedDropdown(field);
+			if (cycle) cycleShadow();
 		}
 	}, 700);
 }
 
 function iframeShow(field: HTMLInputElement, render: IframeRender): void {
+	const wasHidden = !iframeHostEl || iframeHostEl.style.display === "none";
 	ensureIframeHost();
 	if (!iframeHostEl) return;
 	setAnchorField(field);
 	positionHostElement(iframeHostEl, field);
 	startPositionTracking();
+	// The entry animation belongs to the transition from hidden to shown, not to every repaint:
+	// a keystroke that narrows the list must not re-play it.
+	const next: IframeRender = { ...render, animate: wasHidden };
 	// Skip a redundant re-post when the same content is already showing here.
 	// The alias state belongs in this key exactly as it does in the shadow renderer's: without it
 	// idle and busy hash the same, the re-post is skipped as redundant, and the row never leaves
 	// the state it was first drawn in. This is the primary renderer, so that is the whole spinner.
 	const key =
-		render.kind === "matches"
-			? renderKey(render.matches, {
-					suggest: render.suggest,
-					alias: render.alias,
-					carriedId: render.carriedId,
-					newLogin: render.newLogin,
+		next.kind === "matches"
+			? renderKey(next.matches, {
+					suggest: next.suggest,
+					alias: next.alias,
+					carriedId: next.carriedId,
+					newLogin: next.newLogin,
+					skin: next.skin,
 				})
-			: "\0locked";
+			: `\0locked\0${skinKey(next.skin)}`;
 	if (iframeReady && key === iframeMatchesKey) return;
 	iframeMatchesKey = key;
-	pendingRender = render;
+	pendingRender = next;
 	if (iframeReady) flushPendingRender();
 	else armReadinessTimeout();
 }
@@ -658,8 +842,9 @@ function removeActiveUi(): void {
 
 function showMatchesUi(matches: MatchSummary[], field: HTMLInputElement, opts?: RowOpts): void {
 	if (matches.length === 0 && !opts?.suggest && !opts?.alias) return;
+	const skin = opts?.skin ?? sampleFieldSkin(field);
 	if (uiMode === "shadow") {
-		buildDropdown(matches, field, opts);
+		buildDropdown(matches, field, { ...opts, skin });
 		return;
 	}
 	iframeShow(field, {
@@ -670,15 +855,18 @@ function showMatchesUi(matches: MatchSummary[], field: HTMLInputElement, opts?: 
 		alias: opts?.alias,
 		carriedId: opts?.carriedId,
 		newLogin: opts?.newLogin,
+		skin,
+		animate: false,
 	});
 }
 
 function showLockedUi(field: HTMLInputElement): void {
+	const skin = sampleFieldSkin(field);
 	if (uiMode === "shadow") {
 		buildLockedDropdown(field);
 		return;
 	}
-	iframeShow(field, { kind: "locked" });
+	iframeShow(field, { kind: "locked", skin, animate: false });
 }
 
 // Handshake: READY from OUR iframe's window on an extension origin (a page-forged postMessage has a
@@ -722,6 +910,9 @@ function onUiMessage(e: MessageEvent): void {
 		case "UI_RESIZE":
 			if (iframeEl) {
 				iframeEl.style.height = `${Math.max(0, Math.min(400, Number(msg.height) || 0))}px`;
+				// The height decides whether the menu fits below the field, so re-place once it is
+				// known. Without this the flip-up decision was made against a 0px frame.
+				if (anchorField && iframeHostEl) positionHostElement(iframeHostEl, anchorField);
 			}
 			break;
 		case "UI_PICK":
@@ -761,11 +952,12 @@ function onUiMessage(e: MessageEvent): void {
 	}
 }
 
-/** Arrow/Enter/Escape navigation for the open iframe dropdown; returns true if the key was consumed. */
+/** Arrow/Enter/Escape navigation for the open dropdown; returns true if the key was consumed. */
 function handleDropdownKey(e: KeyboardEvent): boolean {
+	if (uiMode === "shadow") return handleShadowKey(e);
 	if (uiMode !== "iframe" || !iframeReady || !iframeHostEl) return false;
 	if (iframeHostEl.style.display === "none") return false;
-	if (document.activeElement !== anchorField) return false;
+	if (deepActiveElement() !== anchorField) return false;
 	if (!iframeEl?.contentWindow) return false;
 	if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 		e.preventDefault();
@@ -786,6 +978,26 @@ function handleDropdownKey(e: KeyboardEvent): boolean {
 		return true;
 	}
 	return false;
+}
+
+/**
+ * Advance the highlight by one row, wrapping at the end. This is what the browser command
+ * drives: the list must already be open (content.ts opens it first), and a cold iframe holds
+ * the request until its first render lands. Returns false when there is nothing to cycle.
+ */
+function cycleUi(): boolean {
+	if (uiMode === "shadow") return cycleShadow();
+	// `probe` is the iframe before its handshake: the host exists and the first render is
+	// pending, so the cycle has somewhere to go once it lands.
+	if (!iframeHostEl) return false;
+	if (iframeHostEl.style.display === "none") return false;
+	if (pendingRender || !iframeReady) {
+		pendingCycle = true;
+		return true;
+	}
+	postToUi({ type: "UI_CYCLE" });
+	if (iframeNavRows > 0) iframeHasHighlight = true;
+	return true;
 }
 
 // Tear both renderers down when the extension context is lost.
@@ -809,6 +1021,8 @@ export const picker = {
 	anchorField: () => anchorField,
 	clickIsOnAnchor,
 	handleKey: handleDropdownKey,
+	/** Advance the open list's highlight by one row, wrapping. False when nothing is open. */
+	cycle: cycleUi,
 	/** Fired with (entryId, otpOnly) when the user picks a match. */
 	onPick(cb: (entryId: string, otpOnly: boolean) => void): void {
 		pickCb = cb;

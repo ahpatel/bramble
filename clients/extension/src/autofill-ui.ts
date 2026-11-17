@@ -9,6 +9,19 @@ interface MatchSummary {
 	secondary: string;
 }
 
+/** The anchor field's look, sampled by the content script. Presentation only; every value is
+ * re-validated here before it reaches a CSS custom property. */
+interface Skin {
+	radius?: number;
+	surface?: string;
+	foreground?: string;
+	muted?: string;
+	border?: string;
+	fontFamily?: string;
+	fontSize?: number;
+	dark?: boolean;
+}
+
 /** Twin of content/html/dropdown-alias.ts's type. Declared here rather than imported, like
  * MatchSummary above and for the same reason: this entry stays self-contained. */
 type AliasRowState = { state: "idle" } | { state: "busy" } | { state: "error"; message?: string };
@@ -25,9 +38,12 @@ type Inbound =
 			// The card already filled elsewhere on this page: rendered with a badge, never
 			// highlighted (Enter belongs to the page's form).
 			carriedId?: string;
+			skin?: Skin;
+			animate?: boolean;
 	  }
-	| { type: "RENDER_LOCKED" }
-	| { type: "UI_KEY"; key: string };
+	| { type: "RENDER_LOCKED"; skin?: Skin; animate?: boolean }
+	| { type: "UI_KEY"; key: string }
+	| { type: "UI_CYCLE" };
 
 // Page origin (from the iframe src): READY is pinned to it, and only the content script's
 // UI_CONNECT is taken from it. The page shares that window, so everything after rides the port.
@@ -114,8 +130,10 @@ function colorForName(name: string): string {
 
 // Colours reference the local --tp-* tokens below, never literals. The tokens mirror the
 // @vault/theme scale (packages/theme/theme.css); this iframe has no Bramble app shell to read a
-// `.dark` class, so light/dark follows the OS via prefers-color-scheme. Byte-identical to the
-// shadow renderer's copy (content/html/dropdown-styles.ts); keep both in sync with theme.css.
+// `.dark` class, so light/dark follows the OS via prefers-color-scheme until the content script
+// sends the anchor field's own skin. That skin wins: a dark site in a light OS should get a dark
+// menu, and a square field should get a square menu. Byte-identical defaults live in the shadow
+// renderer's copy (content/html/dropdown-styles.ts); keep both in sync with theme.css.
 const STYLE = `
 	:root {
 		color-scheme: light dark;
@@ -125,6 +143,11 @@ const STYLE = `
 		--tp-border: oklch(87% 0 0); /* --border */
 		--tp-primary: oklch(20.5% 0 0); /* --primary */
 		--tp-on-primary: #ffffff; /* --primary-foreground */
+		--tp-radius: 12px;
+		--tp-row-radius: 8px;
+		--tp-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+		--tp-font-size: 13px;
+		--tp-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
 	}
 	@media (prefers-color-scheme: dark) {
 		:root {
@@ -134,41 +157,69 @@ const STYLE = `
 			--tp-border: oklch(37.1% 0 0);
 			--tp-primary: oklch(97% 0 0);
 			--tp-on-primary: oklch(20.5% 0 0);
+			--tp-shadow: 0 16px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
 		}
+	}
+	html[data-theme="light"] {
+		color-scheme: light;
+		--tp-surface: #ffffff;
+		--tp-foreground: oklch(20.5% 0 0);
+		--tp-muted: oklch(55.6% 0 0);
+		--tp-border: oklch(87% 0 0);
+		--tp-primary: oklch(20.5% 0 0);
+		--tp-on-primary: #ffffff;
+		--tp-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+	}
+	html[data-theme="dark"] {
+		color-scheme: dark;
+		--tp-surface: oklch(26.9% 0 0);
+		--tp-foreground: oklch(97% 0 0);
+		--tp-muted: oklch(70.8% 0 0);
+		--tp-border: oklch(37.1% 0 0);
+		--tp-primary: oklch(97% 0 0);
+		--tp-on-primary: oklch(20.5% 0 0);
+		--tp-shadow: 0 16px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
 	}
 	.tp-list {
 		background: var(--tp-surface);
 		border: 1px solid var(--tp-border);
-		border-radius: 16px;
-		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.15);
-		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-		font-size: 13px;
+		border-radius: var(--tp-radius);
+		box-shadow: var(--tp-shadow);
+		font-family: var(--tp-font-family);
+		font-size: var(--tp-font-size);
 		color: var(--tp-foreground);
 		text-align: left;
-		max-height: 360px;
+		max-height: 320px;
 		overflow-y: auto;
-		padding: 6px;
+		padding: 4px;
 		box-sizing: border-box;
 	}
+	.tp-list.tp-enter {
+		animation: tp-enter 150ms cubic-bezier(0.2, 0, 0, 1);
+		transform-origin: top center;
+	}
+	@keyframes tp-enter {
+		from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+	}
 	.tp-item {
-		padding: 10px 12px;
+		padding: 8px 10px;
 		cursor: pointer;
 		display: flex;
 		align-items: center;
-		gap: 12px;
-		border-radius: 12px;
+		gap: 10px;
+		border-radius: var(--tp-row-radius);
 		transition: background 0.12s ease;
 	}
 	.tp-item:hover { background: color-mix(in oklab, var(--tp-foreground) 8%, transparent); }
 	.tp-item.tp-active { background: color-mix(in oklab, var(--tp-foreground) 12%, transparent); }
 	.tp-avatar {
-		width: 40px;
-		height: 40px;
-		border-radius: 11px;
+		width: 30px;
+		height: 30px;
+		border-radius: 8px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 15px;
+		font-size: 12px;
 		font-weight: 700;
 		color: #fff;
 		flex-shrink: 0;
@@ -179,11 +230,11 @@ const STYLE = `
 		background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
 		color: var(--tp-muted);
 	}
-	.tp-avatar-locked svg { width: 20px; height: 20px; }
+	.tp-avatar-locked svg { width: 18px; height: 18px; }
 	.tp-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 	.tp-name {
 		font-weight: 600;
-		font-size: 15px;
+		font-size: calc(var(--tp-font-size) + 1px);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -192,20 +243,20 @@ const STYLE = `
 	}
 	.tp-user {
 		color: var(--tp-muted);
-		font-size: 13px;
+		font-size: var(--tp-font-size);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		margin-top: 2px;
+		margin-top: 1px;
 		line-height: 1.3;
 	}
 	.tp-badge {
 		margin-left: auto;
 		flex-shrink: 0;
-		font-size: 11px;
+		font-size: 10px;
 		font-weight: 600;
 		letter-spacing: 0.2px;
-		padding: 3px 8px;
+		padding: 2px 7px;
 		border-radius: 999px;
 		color: var(--tp-muted);
 		background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
@@ -221,19 +272,19 @@ const STYLE = `
 	.tp-item:hover .tp-launch { color: var(--tp-foreground); }
 	.tp-avatar-suggest { background: var(--tp-primary); color: var(--tp-on-primary); }
 	.tp-avatar-alias { background: var(--tp-primary); color: var(--tp-on-primary); }
-	.tp-avatar-alias svg { width: 20px; height: 20px; }
+	.tp-avatar-alias svg { width: 18px; height: 18px; }
 	.tp-alias-busy { opacity: 0.75; cursor: default; }
 	.tp-alias-error .tp-user { color: var(--tp-danger, #dc2626); }
 	.tp-spin { animation: tp-spin 0.9s linear infinite; }
 	.tp-new-login { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 12px; border: 0; border-top: 1px solid var(--tp-border); background: none; color: var(--tp-muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 	.tp-new-login:hover { color: var(--tp-foreground); }
-	.tp-hint { padding: 8px 12px; color: var(--tp-muted); font-size: 12px; }
+	.tp-hint { padding: 7px 10px; color: var(--tp-muted); font-size: calc(var(--tp-font-size) - 1px); }
 	@keyframes tp-spin { to { transform: rotate(360deg); } }
-	.tp-avatar-suggest svg { width: 20px; height: 20px; }
+	.tp-avatar-suggest svg { width: 18px; height: 18px; }
 	.tp-suggest-pw {
 		font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-		font-size: 14px;
-		letter-spacing: 0.5px;
+		font-size: calc(var(--tp-font-size) + 1px);
+		letter-spacing: 0.4px;
 	}
 	.tp-regenerate {
 		margin-left: auto;
@@ -241,17 +292,21 @@ const STYLE = `
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 32px;
-		height: 32px;
+		width: 28px;
+		height: 28px;
 		padding: 0;
 		border: 0;
-		border-radius: 8px;
+		border-radius: 7px;
 		background: transparent;
 		color: var(--tp-muted);
 		cursor: pointer;
 		transition: background 0.12s ease, color 0.12s ease;
 	}
 	.tp-regenerate:hover { background: color-mix(in oklab, var(--tp-foreground) 12%, transparent); color: var(--tp-foreground); }
+	@media (prefers-reduced-motion: reduce) {
+		.tp-list.tp-enter { animation: none; }
+		.tp-item, .tp-regenerate { transition: none; }
+	}
 `;
 
 function matchRow(m: MatchSummary, carried: boolean): string {
@@ -363,16 +418,99 @@ function lockedRow(): string {
 	`;
 }
 
+const SKIN_VARS = [
+	"--tp-surface",
+	"--tp-foreground",
+	"--tp-muted",
+	"--tp-border",
+	"--tp-primary",
+	"--tp-on-primary",
+	"--tp-radius",
+	"--tp-row-radius",
+	"--tp-font-family",
+	"--tp-font-size",
+	"--tp-shadow",
+] as const;
+
+function validColor(value: unknown): string | null {
+	if (typeof value !== "string" || value.length === 0 || value.length > 80) return null;
+	try {
+		if (typeof CSS !== "undefined" && typeof CSS.supports === "function") {
+			return CSS.supports("color", value) ? value : null;
+		}
+	} catch {
+		return null;
+	}
+	return value;
+}
+
+function validLength(value: unknown, min: number, max: number): number | null {
+	if (typeof value !== "number" || !Number.isFinite(value)) return null;
+	return Math.min(max, Math.max(min, value));
+}
+
+/** Apply the anchor field's look. Every value is checked again here: the content script is
+ * trusted, but this document is the one that must never accept a malformed declaration. */
+function applySkin(skin?: Skin): void {
+	const root = document.documentElement;
+	for (const name of SKIN_VARS) root.style.removeProperty(name);
+	if (!skin) {
+		root.removeAttribute("data-theme");
+		return;
+	}
+	const surface = validColor(skin.surface);
+	const foreground = validColor(skin.foreground);
+	const muted = validColor(skin.muted);
+	const border = validColor(skin.border);
+	const radius = validLength(skin.radius, 0, 16);
+	const fontSize = validLength(skin.fontSize, 11, 15);
+	if (surface) root.style.setProperty("--tp-surface", surface);
+	if (foreground) root.style.setProperty("--tp-foreground", foreground);
+	if (muted) root.style.setProperty("--tp-muted", muted);
+	if (border) root.style.setProperty("--tp-border", border);
+	if (surface && foreground) {
+		root.style.setProperty("--tp-primary", foreground);
+		root.style.setProperty("--tp-on-primary", surface);
+	}
+	if (radius !== null) {
+		root.style.setProperty("--tp-radius", `${Math.round(radius)}px`);
+		root.style.setProperty("--tp-row-radius", `${radius <= 2 ? 4 : 8}px`);
+	}
+	if (
+		typeof skin.fontFamily === "string" &&
+		skin.fontFamily.length > 0 &&
+		skin.fontFamily.length <= 200 &&
+		(typeof CSS === "undefined" ||
+			typeof CSS.supports !== "function" ||
+			CSS.supports("font-family", skin.fontFamily))
+	) {
+		root.style.setProperty("--tp-font-family", skin.fontFamily);
+	}
+	if (fontSize !== null) root.style.setProperty("--tp-font-size", `${fontSize}px`);
+	if (skin.dark === true) root.setAttribute("data-theme", "dark");
+	else if (skin.dark === false) root.setAttribute("data-theme", "light");
+	else root.removeAttribute("data-theme");
+	root.style.setProperty(
+		"--tp-shadow",
+		skin.dark === true
+			? "0 16px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06)"
+			: "0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08)",
+	);
+}
+
 /** Render body html, then report the rendered height so the parent can size the iframe. */
-function render(bodyHtml: string): void {
-	document.body.innerHTML = `<style>${STYLE}</style><div class="tp-list" role="listbox">${bodyHtml}</div>`;
+function render(bodyHtml: string, skin?: Skin, animate = false): void {
+	document.body.innerHTML = `<style>${STYLE}</style><div class="tp-list${animate ? " tp-enter" : ""}" role="listbox">${bodyHtml}</div>`;
+	applySkin(skin);
 	reportHeight();
 }
 
 function reportHeight(): void {
 	requestAnimationFrame(() => {
-		const list = document.body.querySelector(".tp-list");
-		postHeight(list ? Math.ceil(list.getBoundingClientRect().height) : 0);
+		const list = document.body.querySelector<HTMLElement>(".tp-list");
+		// offsetHeight is the layout height: the entry animation's scale must not shrink the
+		// measured box, or the frame clips the last row for the duration of the animation.
+		postHeight(list ? list.offsetHeight : 0);
 	});
 }
 
@@ -417,16 +555,18 @@ function setHighlight(index: number): void {
 	rows.forEach((row, i) => {
 		const active = i === highlight;
 		row.classList.toggle("tp-active", active);
-		if (active) row.scrollIntoView({ block: "nearest" });
+		if (active) row.scrollIntoView?.({ block: "nearest" });
 	});
 	post({ type: "UI_HIGHLIGHT", active: highlight >= 0 });
 }
 
-function moveHighlight(delta: number): void {
+function moveHighlight(delta: number, wrap = false): void {
 	const n = rows.length;
 	if (n === 0) return;
-	const next =
-		highlight < 0 ? (delta > 0 ? 0 : n - 1) : Math.max(0, Math.min(n - 1, highlight + delta));
+	let next: number;
+	if (highlight < 0) next = delta > 0 ? 0 : n - 1;
+	else if (wrap) next = (highlight + delta + n) % n;
+	else next = Math.max(0, Math.min(n - 1, highlight + delta));
 	setHighlight(next);
 }
 
@@ -480,7 +620,7 @@ document.addEventListener("mousedown", (e) => {
 	}
 });
 
-const CONTENT_TYPES = new Set(["RENDER_MATCHES", "RENDER_LOCKED", "UI_KEY"]);
+const CONTENT_TYPES = new Set(["RENDER_MATCHES", "RENDER_LOCKED", "UI_KEY", "UI_CYCLE"]);
 
 window.addEventListener("message", (e) => {
 	if (RELAYED) {
@@ -528,7 +668,7 @@ function handleInbound(msg: Inbound | undefined): void {
 				body.push(matchRow(m, m.id === msg.carriedId));
 			}
 			if (msg.newLogin) body.push(newLoginRow());
-			render(body.join(""));
+			render(body.join(""), msg.skin, msg.animate === true);
 			settledAt = performance.now();
 			post({ type: "UI_HIGHLIGHT", active: false });
 			break;
@@ -536,7 +676,7 @@ function handleInbound(msg: Inbound | undefined): void {
 		case "RENDER_LOCKED":
 			rows = [{ kind: "locked" }];
 			highlight = -1;
-			render(lockedRow());
+			render(lockedRow(), msg.skin, msg.animate === true);
 			settledAt = performance.now();
 			post({ type: "UI_HIGHLIGHT", active: false });
 			break;
@@ -544,6 +684,9 @@ function handleInbound(msg: Inbound | undefined): void {
 			if (msg.key === "ArrowDown") moveHighlight(1);
 			else if (msg.key === "ArrowUp") moveHighlight(-1);
 			else if (msg.key === "Enter" && highlight >= 0) activate(highlight);
+			break;
+		case "UI_CYCLE":
+			moveHighlight(1, true);
 			break;
 	}
 }

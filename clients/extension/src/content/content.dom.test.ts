@@ -51,6 +51,32 @@ let pickCb: ((entryId: string, otpOnly: boolean) => void) | null = null;
 const removeDropdown = vi.fn(() => {
 	pickerState.anchor = null;
 });
+const cyclePicker = vi.fn(() => false);
+// The inline mark's real module builds a shadow host and samples computed style; the policy
+// tests only need to know which field it is attached to and whether it is active.
+const iconState: {
+	field: HTMLInputElement | null;
+	active: boolean;
+	opts?: { onToggle: () => void };
+} = { field: null, active: false };
+const iconDetach = vi.fn(() => {
+	iconState.field = null;
+	iconState.active = false;
+	iconState.opts = undefined;
+});
+vi.mock("./inline-icon", () => ({
+	inlineIcon: {
+		attach: (field: HTMLInputElement, opts: { onToggle: () => void }) => {
+			iconState.field = field;
+			iconState.opts = opts;
+		},
+		detach: iconDetach,
+		setActive: (active: boolean) => {
+			iconState.active = active;
+		},
+		current: () => iconState.field,
+	},
+}));
 vi.mock("./picker", () => ({
 	picker: {
 		showMatches,
@@ -62,6 +88,7 @@ vi.mock("./picker", () => ({
 		anchorField: () => pickerState.anchor,
 		clickIsOnAnchor: () => false,
 		handleKey: () => false,
+		cycle: cyclePicker,
 		onPick: (cb: (entryId: string, otpOnly: boolean) => void) => {
 			pickCb = cb;
 		},
@@ -179,6 +206,7 @@ let onMessage: MessageListener | null = null;
 		sendMessage: vi.fn(),
 		getURL: (p: string) => p,
 	},
+	i18n: { getMessage: (key: string) => key },
 };
 
 const trustedInteractionListeners = new Map<string, EventListener>();
@@ -1663,8 +1691,10 @@ describe("content: email alias row on signup", () => {
 	it("offers nothing when no provider is configured", () => {
 		email().focus();
 		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
+		const before = showMatches.mock.calls.length;
 		send({ type: "AUTOFILL_MATCHES", payload: result({ logins: [] }) });
-		expect(lastAlias()).toBeUndefined();
+		expect(showMatches.mock.calls.length).toBe(before);
+		expect(pickerState.host).toBeNull();
 	});
 
 	it("shows the spinner while the provider is asked, then fills the address", async () => {
@@ -2119,5 +2149,127 @@ describe("content: the save card's Username frame", () => {
 		});
 		expect(handleCornerField).toHaveBeenCalledWith({ id: "abc", op: "open" });
 		expect(reply).toEqual({ ok: true, data: { value: "alice" } });
+	});
+});
+
+// The trigger setting decides whether focusing a field opens the list, shows the inline mark,
+// or does nothing until the browser command. The picker and the mark are mocked; this is the
+// page policy above them.
+describe("content: autofill trigger modes", () => {
+	const LOGIN = { id: "l1", name: "Example", secondary: "alice@example.com" };
+
+	/** Reset module state through the master switch, then prime a clean cached result. */
+	function prime(
+		trigger: "auto" | "icon" | "shortcut",
+		logins: Array<typeof LOGIN> = [LOGIN],
+	): HTMLInputElement {
+		document.body.innerHTML = `
+			<form>
+				<input id="user" type="email" name="email" autocomplete="username" />
+				<input id="pass" type="password" name="password" autocomplete="current-password" />
+			</form>`;
+		invalidatePageFields();
+		showMatches.mockClear();
+		iconDetach.mockClear();
+		cyclePicker.mockClear();
+		pickerState.host = null;
+		pickerState.anchor = null;
+		pendingQueryResponses.length = 0;
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: false } });
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: true } });
+		pendingQueryResponses.pop()?.({ ok: true, data: result({ logins, trigger }) });
+		return document.getElementById("user") as HTMLInputElement;
+	}
+
+	afterEach(() => vi.restoreAllMocks());
+
+	it("auto mode still opens on focus", () => {
+		const email = prime("auto");
+		email.focus();
+		expect(showMatches).toHaveBeenCalled();
+	});
+
+	it("icon mode shows the mark instead of opening on focus", () => {
+		const email = prime("icon");
+		email.focus();
+
+		expect(showMatches).not.toHaveBeenCalled();
+		expect(iconState.field).toBe(email);
+		expect(iconState.active).toBe(false);
+	});
+
+	it("clicking the mark opens the list on its field", () => {
+		const email = prime("icon");
+		email.focus();
+
+		iconState.opts?.onToggle();
+
+		expect(showMatches).toHaveBeenCalledWith([LOGIN], email, { newLogin: true });
+		expect(iconState.active).toBe(true);
+	});
+
+	it("does not show the mark when there is nothing to offer", () => {
+		const email = prime("icon", []);
+		email.focus();
+		expect(iconState.field).toBeNull();
+	});
+
+	it("shortcut mode stays closed until the command, which opens and advances the list", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(true);
+		const email = prime("shortcut");
+		email.focus();
+
+		expect(showMatches).not.toHaveBeenCalled();
+		expect(iconState.field).toBeNull();
+
+		send({ type: "AUTOFILL_CYCLE" });
+
+		expect(showMatches).toHaveBeenCalled();
+		expect(cyclePicker).toHaveBeenCalled();
+	});
+
+	it("a fresh query answer does not open the list in shortcut mode", () => {
+		const email = prime("shortcut");
+		email.focus();
+		showMatches.mockClear();
+
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: true } });
+		pendingQueryResponses.pop()?.({
+			ok: true,
+			data: result({ logins: [LOGIN], trigger: "shortcut" }),
+		});
+
+		expect(showMatches).not.toHaveBeenCalled();
+	});
+
+	it("holds a cycle pressed before the first answer, then opens and advances", () => {
+		vi.spyOn(document, "hasFocus").mockReturnValue(true);
+		const email = prime("shortcut");
+		// Drop the primed answer, leaving the next query in flight.
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: false } });
+		email.focus();
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: true } });
+		showMatches.mockClear();
+
+		send({ type: "AUTOFILL_CYCLE" });
+		pendingQueryResponses.pop()?.({
+			ok: true,
+			data: result({ logins: [LOGIN], trigger: "shortcut" }),
+		});
+
+		expect(showMatches).toHaveBeenCalled();
+		expect(cyclePicker).toHaveBeenCalled();
+	});
+
+	it("a push switches an already-focused page to the mark", () => {
+		const email = prime("auto");
+		email.focus();
+		expect(showMatches).toHaveBeenCalled();
+		showMatches.mockClear();
+
+		send({ type: "AUTOFILL_TRIGGER", payload: { trigger: "icon" } });
+
+		expect(showMatches).not.toHaveBeenCalled();
+		expect(iconState.field).toBe(email);
 	});
 });

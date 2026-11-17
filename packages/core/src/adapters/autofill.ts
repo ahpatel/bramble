@@ -3,6 +3,16 @@ import type { PasskeyCredential } from "../hooks/useVault";
 export type SubdomainMatchMode = "etld1" | "exact" | "subdomain";
 
 /**
+ * How the in-page autofill list is triggered (extension only).
+ *
+ * - `auto`: focusing a username/password/card/OTP field opens it (the original behavior).
+ * - `icon`: a small Bramble mark inside the field opens it; focusing does nothing.
+ * - `shortcut`: nothing opens on its own; the browser command does. The command also works
+ *   in the other modes, as an accelerator.
+ */
+export type AutofillTrigger = "auto" | "icon" | "shortcut";
+
+/**
  * A custom field's autofillable content. The `key` (the user's field name)
  * drives page-field matching: the content script derives token variants from it.
  */
@@ -100,6 +110,8 @@ export interface QueryResult {
 	/** The user switched page autofill off: show nothing at all, not even the locked hint or a
 	 * generated-password suggestion, and stop querying until told otherwise. Extension only. */
 	disabled?: boolean;
+	/** How the in-page list is opened on this install (Settings -> General). Extension only. */
+	trigger?: AutofillTrigger;
 	/** A password shaped by the user's generator settings, for a signup form's suggestion. Sent
 	 * with the query itself so the suggestion has one to draw the moment it paints. Extension
 	 * only; absent when the page has no login field. */

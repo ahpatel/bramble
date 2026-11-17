@@ -703,6 +703,10 @@ msgstr "Enviar automáticamente después de rellenar"
 msgid "Autofill on web pages"
 msgstr "Autorrelleno en páginas web"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Autofill shortcut"
+msgstr "Atajo de autorrelleno"
+
 #: packages/core/src/app/components/PasswordGenerator.tsx
 msgid "Avoid look-alike characters (0 O l 1)"
 msgstr "Evitar caracteres similares (0 O l 1)"
@@ -1047,6 +1051,10 @@ msgstr "Seleccionar otro archivo"
 msgid "Choose the vault these items should go into"
 msgstr "Elija la caja fuerte a la que deben ir estos elementos"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Choose what opens the in-page list. The shortcut works in every mode."
+msgstr "Elige qué abre la lista en la página. El atajo funciona en todos los modos."
+
 #: packages/core/src/app/screens/TotpSetup/TotpSetup.tsx
 #~ msgid "Choose where to save this 2FA code."
 #~ msgstr "Elija dónde guardar este código de 2FA."
@@ -1070,6 +1078,10 @@ msgstr "Borrar después de"
 #: packages/core/src/app/screens/VaultHome/VaultSearchBar.tsx
 msgid "Clear search"
 msgstr "Borrar búsqueda"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Clicking the field"
+msgstr "Al hacer clic en el campo"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Clipboard auto-clear"
@@ -2747,6 +2759,10 @@ msgstr "Ahora no"
 msgid "Not on this device yet. Waiting for a device that has it."
 msgstr "Aún no está en este dispositivo. Esperando a un dispositivo que lo tenga."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Not set"
+msgstr "Sin asignar"
+
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Not syncing: this device can't read its sync key right now. Lock and unlock to try again. If it keeps happening, disconnect and join again with a code from another device."
 msgstr "No se está sincronizando: este dispositivo no puede leer su clave de sincronización ahora mismo. Bloquee y desbloquee para intentarlo de nuevo. Si sigue ocurriendo, desconéctelo y vuelva a unirlo con un código de otro dispositivo."
@@ -2904,9 +2920,17 @@ msgstr "Ábralo desde la ventana emergente de {0} y desbloquéelo con su contras
 msgid "Open that vault"
 msgstr "Abrir esa bóveda"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Open the list and step through saved logins. Change it in your browser's extension shortcuts."
+msgstr "Abre la lista y recorre las credenciales guardadas. Cámbialo en los atajos de extensiones del navegador."
+
 #: packages/core/src/app/components/OpenWebsiteLink.tsx
 msgid "Open website"
 msgstr "Abrir sitio web"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Open with"
+msgstr "Abrir con"
 
 #: packages/core/src/app/routes/VaultHomeRoute.tsx
 #: packages/core/src/app/screens/Auth/Auth.tsx
@@ -3738,6 +3762,10 @@ msgid "Settings sections"
 msgstr "Secciones de configuración"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Shortcut only"
+msgstr "Solo atajo"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Show a save / update card in the corner of the page when you sign in with credentials Vault doesn't have."
 msgstr "Mostrar una tarjeta para guardar/actualizar en la esquina de la página cuando se inicia sesión con credenciales que la Bóveda no posee."
 
@@ -3785,6 +3813,10 @@ msgstr "Mostrar contraseña anterior"
 #: packages/core/src/app/entry-modes/ssh-key.tsx
 msgid "Show private key"
 msgstr "Mostrar clave privada"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Show saved logins"
+msgstr "Mostrar credenciales guardadas"
 
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Show this entry in the autofill dropdown. When off, it's never auto-filled but stays in your vault."
@@ -4083,6 +4115,10 @@ msgstr "Ese año está fuera del rango que utilizan las tarjetas."
 #: packages/core/src/app/screens/Import/ImportShell.tsx
 #~ msgid "That's a full vault backup. Restore it instead: it's added as a new vault, and nothing here is changed."
 #~ msgstr "Es una copia de seguridad completa de la caja fuerte. Restáurela en su lugar: se añade como una caja fuerte nueva y no se cambia nada de aquí."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "The Bramble icon"
+msgstr "El icono de Bramble"
 
 #: packages/core/src/app/screens/Settings/components/BrowserPairingSection.tsx
 msgid "The browser was not linked."

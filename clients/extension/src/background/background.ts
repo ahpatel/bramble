@@ -22,7 +22,7 @@ import "./webauthn-content-transport";
 import { clearHandoffs } from "../files/idb";
 import { isVaultBlobKey } from "../storage";
 import { isSyncGroupKey } from "../sync/sync-config";
-import { indexHydration } from "./autofill-index";
+import { cycleAutofillInActiveTab, indexHydration } from "./autofill-index";
 import { CLIPBOARD_ALARM, runClipboardClear } from "./clipboard";
 import { ensureOffscreen, sendToOffscreen } from "./offscreen-client";
 import { getLockOnScreenLock, PREF_AUTOLOCK_MINUTES } from "./prefs";
@@ -125,8 +125,13 @@ api.alarms.onAlarm.addListener((alarm) => {
 
 // Manual lock via the user-bound `lock-vault` shortcut (declared without a default chord).
 api.commands?.onCommand.addListener((command) => {
-	if (command !== "lock-vault") return;
-	void lockFromBackground("lock command");
+	if (command === "lock-vault") {
+		void lockFromBackground("lock command");
+		return;
+	}
+	// Autofill's cycle shortcut. The browser command is the trusted gesture; the content
+	// script only ever advances the list or opens it for the field the user is in.
+	if (command === "autofill-cycle") void cycleAutofillInActiveTab();
 });
 
 // "Immediate" auto-lock: lock when the last extension view (popup / pop-out / options)

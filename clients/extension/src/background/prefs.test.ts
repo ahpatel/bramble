@@ -100,6 +100,26 @@ describe("getAutofillEnabled", () => {
 	});
 });
 
+describe("getAutofillTrigger", () => {
+	it("defaults to auto and honors each declared mode", async () => {
+		expect(await (await loadPrefs()).prefs.getAutofillTrigger()).toBe("auto");
+		expect(
+			await (await loadPrefs({ "pref.autofillTrigger": "icon" })).prefs.getAutofillTrigger(),
+		).toBe("icon");
+		expect(
+			await (await loadPrefs({ "pref.autofillTrigger": "shortcut" })).prefs.getAutofillTrigger(),
+		).toBe("shortcut");
+	});
+	it("falls back to auto for anything else", async () => {
+		expect(
+			await (await loadPrefs({ "pref.autofillTrigger": "hover" })).prefs.getAutofillTrigger(),
+		).toBe("auto");
+		expect(
+			await (await loadPrefs({ "pref.autofillTrigger": true })).prefs.getAutofillTrigger(),
+		).toBe("auto");
+	});
+});
+
 describe("never-save sites", () => {
 	it("parses the stored array and filters out non-strings", async () => {
 		const { prefs } = await loadPrefs({ "pref.neverSaveSites": ["a.com", 5, "b.com", null] });

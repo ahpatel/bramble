@@ -21,6 +21,7 @@
 // through AUTOFILL_SELECT on this frame's own verified background channel.
 
 import { isExtensionOrigin } from "./ext-origin";
+import type { FieldSkin } from "./field-skin";
 import type { FrameRelay, RelayRect } from "./frame-relay";
 import type { AliasRowState } from "./html/dropdown-alias";
 import type { MatchSummary } from "./types";
@@ -42,8 +43,9 @@ export type RelayRender =
 			alias?: AliasRowState;
 			carriedId?: string;
 			newLogin?: boolean;
+			skin?: FieldSkin;
 	  }
-	| { kind: "locked" };
+	| { kind: "locked"; skin?: FieldSkin };
 
 export interface RelayClientHandlers {
 	onPick(entryId: string, otpOnly: boolean): void;
@@ -64,6 +66,12 @@ let pending: RelayRender | null = null;
 // Ids currently on screen. A pick naming anything else is dropped.
 let renderedIds = new Set<string>();
 let otpOnlyFlag = false;
+// A cycle requested before the UI announced itself. The render is flushed on the
+// announcement; the advance has to wait for that render to land first.
+let pendingCycle = false;
+// Only the first render into a freshly opened host gets the entry animation; a keystroke
+// that narrows the list must not replay it.
+let firstRender = true;
 
 /** True while a relayed picker is open in an ancestor frame. */
 export function relayedPickerIsOpen(): boolean {
@@ -94,22 +102,30 @@ function flush(): void {
 	if (!pending || !relayedPickerIsLive()) return;
 	const render = pending;
 	pending = null;
+	const animate = firstRender;
+	firstRender = false;
 	if (render.kind === "locked") {
 		renderedIds = new Set();
-		post({ type: "RENDER_LOCKED" });
-		return;
+		post({ type: "RENDER_LOCKED", skin: render.skin, animate });
+	} else {
+		renderedIds = new Set(render.matches.map((m) => m.id));
+		otpOnlyFlag = render.otpOnly;
+		post({
+			type: "RENDER_MATCHES",
+			matches: render.matches,
+			otpOnly: render.otpOnly,
+			suggest: render.suggest,
+			alias: render.alias,
+			carriedId: render.carriedId,
+			newLogin: render.newLogin,
+			skin: render.skin,
+			animate,
+		});
 	}
-	renderedIds = new Set(render.matches.map((m) => m.id));
-	otpOnlyFlag = render.otpOnly;
-	post({
-		type: "RENDER_MATCHES",
-		matches: render.matches,
-		otpOnly: render.otpOnly,
-		suggest: render.suggest,
-		alias: render.alias,
-		carriedId: render.carriedId,
-		newLogin: render.newLogin,
-	});
+	if (pendingCycle) {
+		pendingCycle = false;
+		post({ type: "UI_CYCLE" });
+	}
 }
 
 /**
@@ -138,11 +154,23 @@ export function closeRelayed(): void {
 	uiOrigin = null;
 	pending = null;
 	renderedIds = new Set();
+	pendingCycle = false;
+	firstRender = true;
 }
 
 /** Forward a navigation key to the relayed UI. */
 export function keyToRelayed(key: string): void {
 	if (relayedPickerIsLive()) post({ type: "UI_KEY", key });
+}
+
+/** Advance the relayed list's highlight by one row, wrapping. Held until the UI is live. */
+export function cycleRelayed(): void {
+	if (!relayId) return;
+	if (!relayedPickerIsLive()) {
+		pendingCycle = true;
+		return;
+	}
+	post({ type: "UI_CYCLE" });
 }
 
 function handleMessage(e: MessageEvent): void {

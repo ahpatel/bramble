@@ -223,6 +223,86 @@ is suppressed when an interactive captcha is present (see
 TOTP codes are computed in the background; only the resulting digits are filled,
 never the seed. See [totp.md](totp.md).
 
+## Trigger modes: focus, inline mark, or the keyboard
+
+Settings -> General -> **Show saved logins** picks what opens the list. The default is the
+original behavior, so an existing install sees no change until it chooses one.
+
+- **Clicking the field** (`auto`): focusing a username, password, card or one-time-code
+  field opens the list.
+- **The Bramble icon** (`icon`): a small mark appears inside the field's right edge. Focus
+  only reveals the mark; clicking it opens the list, and clicking it again closes the
+  list. Nothing opens on its own.
+- **Shortcut only** (`shortcut`): nothing appears on focus; the browser command opens it.
+
+The trigger is a device-scoped pref (`pref.autofillTrigger`). The background reads it on
+every query, alongside the master switch, and rides it on the query answer so the content
+script never has to make a second storage-shaped request to draw the right affordance.
+Changing it pushes `AUTOFILL_TRIGGER` to every open tab, which settles what a page that is
+already focused shows without a reload.
+
+### The inline mark
+
+The mark is a 16-28px host positioned over the field's inner-right edge, in a closed
+shadow root. It is not a child of the input (inputs cannot have children), so the page can
+see that a host exists but cannot style it or read the glyph. It appears only while its
+field is focused (or while the list it opened is still up), so the page stays quiet
+otherwise. The first inner-right spot that is not already occupied by the site's own
+reveal/clear control is used, found by a hit test; a field narrower than 80px gets no
+mark, because a one-character OTP box has no room and the keyboard shortcut is the better
+affordance there. The glyph is painted in the field's own text colour at low opacity, so
+it reads as part of the field. It is the app mark's scalloped ring rather than the solid
+berry: at 20px the filled form reads as a plain dot, so the centre is cut out of the mask.
+
+**A click on the mark only opens the list.** It never fills, so it does not need the
+pick-time clickjacking gate a row does. Its `mousedown` and `pointerdown` are
+`isTrusted`-gated and stop propagating, so the page's own handlers and the content
+script's dismissal listeners do not read a mark click as a click somewhere else on the
+page. The mark is not in the tab order: the keyboard path is the browser command below.
+
+### The menu takes the field's skin
+
+The menu samples the anchor field's computed style when it opens: corner radius, surface,
+text colour, hairline, font family and size. A square field gets a square menu; a dark
+field gets a dark menu, independent of the OS preference. The radius is capped at 12px so
+a pill field does not turn the menu into a capsule. On a dark field the surface is lifted
+a few percent toward the text colour, so the menu reads as raised rather than as a hole in
+the page. The menu flips above the field when it does not fit below, and shifts left
+rather than running off the viewport.
+
+The skin is presentation only: no entry ids, summaries or secrets. Every value is parsed
+to a number or an `rgb()` string before it crosses into the extension iframe, and the
+iframe re-validates each one before setting a CSS custom property. A page can choose how
+its own menu looks, not what it says or does.
+
+Both renderers animate the menu in (a short fade plus a 4px rise); the iframe host fades
+out on dismissal. `prefers-reduced-motion` turns both off. The shadow fallback also gained
+Up/Down/Enter/Escape and the cycle shortcut, which it never had: a COEP page used to be
+mouse-only.
+
+### The keyboard shortcut
+
+The shortcut is a manifest `commands` entry (`autofill-cycle`), not a page key listener.
+`commands.onCommand` fires only for a real browser shortcut, which a page cannot
+synthesize, so it is a trusted gesture in the same sense a click is. The background
+forwards it to the **active tab only**, and each frame acts only when its own active
+element is a candidate field, so at most one frame responds and a page the user is not
+looking at is never filled. The command is refused entirely while the master switch is
+off.
+
+The first press opens the list on the focused field and highlights the first row; further
+presses advance and wrap; Enter picks. **Nothing is written to the page until Enter**, so
+the shortcut adds no new fill path: it drives the same `AUTOFILL_SELECT` pick the mouse
+does, with the same `isTrusted` and clickjacking rules. In the iframe a cold start holds
+the cycle until the first render lands; the shadow fallback and the relayed picker have
+the same pending-cycle handling.
+
+The real binding is shown in Settings (`chrome.commands.getAll`), because the manifest's
+suggested key is only a suggestion and the user can remap it in the browser's extension
+shortcuts page. `autofill-cycle` ships with Alt+Shift+L on every platform (Option+Shift+L
+on a Mac), kept distinct from the separate `fill-login` command's Cmd+Shift+L /
+Ctrl+Shift+L. Both are only suggestions and can be remapped in the browser.
+
 ## The master switch
 
 Settings -> General -> **Autofill on web pages** (extension only; mobile's autofill is

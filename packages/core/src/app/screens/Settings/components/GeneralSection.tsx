@@ -5,6 +5,7 @@ import {
 	Keyboard,
 	KeyRound,
 	Lock,
+	MousePointerClick,
 	Power,
 	ShieldCheck,
 	SlidersHorizontal,
@@ -15,7 +16,7 @@ import {
 import { useEffect, useState } from "react";
 import { useCan, usePlatform } from "../../../../context/PlatformContext";
 import { useAutostart } from "../../../../hooks/useAutostart";
-import { usePrefs } from "../../../../hooks/usePrefs";
+import { isAutofillTrigger, usePrefs } from "../../../../hooks/usePrefs";
 import { useVaultActions } from "../../../../hooks/useVault";
 import { useVaultRegistry } from "../../../../hooks/useVaultRegistry";
 import { toAutofillIndex } from "../../../../vault/autofill-index";
@@ -52,6 +53,17 @@ export function GeneralSection() {
 	// Turning the passkey provider on can fail in the background (another extension already holds
 	// the browser's WebAuthn proxy), so the switch reverts and says why.
 	const [passkeyProviderError, setPasskeyProviderError] = useState<string | null>(null);
+	// The real binding, not the manifest's suggestion: the user can remap it in the browser.
+	const [autofillShortcut, setAutofillShortcut] = useState<string | null>(null);
+	useEffect(() => {
+		let cancelled = false;
+		void shell.getAutofillShortcut?.().then((shortcut) => {
+			if (!cancelled) setAutofillShortcut(shortcut);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [shell]);
 
 	// The current vault's name, edited inline, and renamed on every device in its sync group.
 	const { vaults, activeId } = useVaultRegistry();
@@ -337,6 +349,53 @@ export function GeneralSection() {
 						label={t`Toggle default password manager`}
 					/>
 				</Row>
+			)}
+
+			{/* How the list is asked for. The icon and shortcut modes keep the page quiet until
+			    the user asks; the keyboard shortcut remains available in every mode. */}
+			{hasAutofillToggle && prefs.autofillEnabled && (
+				<>
+					<Row
+						icon={<MousePointerClick className="w-4 h-4 text-primary" />}
+						title={t`Show saved logins`}
+						subtitle={t`Choose what opens the in-page list. The shortcut works in every mode.`}
+					>
+						<div className="w-52">
+							<SelectField
+								label={t`Open with`}
+								value={prefs.autofillTrigger}
+								onChange={(e) => {
+									const next = e.target.value;
+									if (!isAutofillTrigger(next)) return;
+									void (async () => {
+										await update("autofillTrigger", next);
+										await shell.setAutofillTrigger?.(next);
+									})();
+								}}
+							>
+								<option value="auto">{t`Clicking the field`}</option>
+								<option value="icon">{t`The Bramble icon`}</option>
+								<option value="shortcut">{t`Shortcut only`}</option>
+							</SelectField>
+						</div>
+					</Row>
+
+					{/* The command is a browser-level shortcut, so the real binding is whatever the
+					    browser has assigned. Showing it is also the pointer to where it changes. */}
+					<Row
+						icon={<Keyboard className="w-4 h-4 text-primary" />}
+						title={t`Autofill shortcut`}
+						subtitle={t`Open the list and step through saved logins. Change it in your browser's extension shortcuts.`}
+					>
+						<kbd
+							className={`px-2 py-1 rounded border border-border bg-muted/40 font-mono text-xs ${
+								autofillShortcut ? "text-foreground" : "text-muted-foreground"
+							}`}
+						>
+							{autofillShortcut ?? t`Not set`}
+						</kbd>
+					</Row>
+				</>
 			)}
 
 			{/* Corner-prompt card; only on platforms with a save-capture surface (not mobile). */}

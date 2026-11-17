@@ -251,6 +251,17 @@ export const extensionShell: ShellAdapter = {
 		if (!this.isDetached()) window.close();
 		return true;
 	},
+	async setAutofillTrigger(trigger) {
+		await api.runtime.sendMessage({ type: "AUTOFILL_SET_TRIGGER", payload: { trigger } });
+	},
+	async getAutofillShortcut() {
+		try {
+			const commands = await api.commands.getAll();
+			return commands.find((command) => command.name === "autofill-cycle")?.shortcut || null;
+		} catch {
+			return null;
+		}
+	},
 	// Reports failure, unlike setAutofillEnabled above: turning this on can genuinely fail
 	// (another extension holds the WebAuthn proxy), and a switch that says "on" while nothing is
 	// attached is worse than an error.

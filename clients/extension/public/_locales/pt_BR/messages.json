@@ -7,6 +7,14 @@
 		"message": "Bloquear Bramble",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
+	"cmdAutofillCycle": {
+		"message": "Preencher com Bramble",
+		"description": "Keyboard-shortcut command label shown in the browser's extension shortcuts page."
+	},
+	"autofillOpen": {
+		"message": "Abrir preenchimento automático do Bramble",
+		"description": "Accessible label for the small Bramble button inside a username or password field."
+	},
 	"cmdFillLogin": {
 		"message": "Preencher login",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts. Fills the saved login for the page."
