@@ -703,10 +703,6 @@ msgstr "Auto-submit after fill"
 msgid "Autofill on web pages"
 msgstr "Autofill on web pages"
 
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Autofill shortcut"
-msgstr "Autofill shortcut"
-
 #: packages/core/src/app/components/PasswordGenerator.tsx
 msgid "Avoid look-alike characters (0 O l 1)"
 msgstr "Avoid look-alike characters (0 O l 1)"
@@ -1051,10 +1047,6 @@ msgstr "Choose another file"
 msgid "Choose the vault these items should go into"
 msgstr "Choose the vault these items should go into"
 
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Choose what opens the in-page list. The shortcut works in every mode."
-msgstr "Choose what opens the in-page list. The shortcut works in every mode."
-
 #: packages/core/src/app/screens/TotpSetup/TotpSetup.tsx
 #~ msgid "Choose where to save this 2FA code."
 #~ msgstr "Choose where to save this 2FA code."
@@ -1078,10 +1070,6 @@ msgstr "Clear after"
 #: packages/core/src/app/screens/VaultHome/VaultSearchBar.tsx
 msgid "Clear search"
 msgstr "Clear search"
-
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Clicking the field"
-msgstr "Clicking the field"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Clipboard auto-clear"
@@ -2759,10 +2747,6 @@ msgstr "Not now"
 msgid "Not on this device yet. Waiting for a device that has it."
 msgstr "Not on this device yet. Waiting for a device that has it."
 
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Not set"
-msgstr "Not set"
-
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Not syncing: this device can't read its sync key right now. Lock and unlock to try again. If it keeps happening, disconnect and join again with a code from another device."
 msgstr "Not syncing: this device can't read its sync key right now. Lock and unlock to try again. If it keeps happening, disconnect and join again with a code from another device."
@@ -2920,17 +2904,9 @@ msgstr "Open it from the {0} popup and unlock it with its master password."
 msgid "Open that vault"
 msgstr "Open that vault"
 
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Open the list and step through saved logins. Change it in your browser's extension shortcuts."
-msgstr "Open the list and step through saved logins. Change it in your browser's extension shortcuts."
-
 #: packages/core/src/app/components/OpenWebsiteLink.tsx
 msgid "Open website"
 msgstr "Open website"
-
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Open with"
-msgstr "Open with"
 
 #: packages/core/src/app/routes/VaultHomeRoute.tsx
 #: packages/core/src/app/screens/Auth/Auth.tsx
@@ -3814,10 +3790,6 @@ msgstr "Show previous password"
 msgid "Show private key"
 msgstr "Show private key"
 
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Show saved logins"
-msgstr "Show saved logins"
-
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Show this entry in the autofill dropdown. When off, it's never auto-filled but stays in your vault."
 msgstr "Show this entry in the autofill dropdown. When off, it's never auto-filled but stays in your vault."
@@ -4115,10 +4087,6 @@ msgstr "That year is outside the range cards use."
 #: packages/core/src/app/screens/Import/ImportShell.tsx
 #~ msgid "That's a full vault backup. Restore it instead: it's added as a new vault, and nothing here is changed."
 #~ msgstr "That's a full vault backup. Restore it instead: it's added as a new vault, and nothing here is changed."
-
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "The Bramble icon"
-msgstr "The Bramble icon"
 
 #: packages/core/src/app/screens/Settings/components/BrowserPairingSection.tsx
 msgid "The browser was not linked."
@@ -5171,3 +5139,44 @@ msgstr "Your vault is empty. Add your first item."
 #: packages/core/src/app/screens/Auth/Auth.tsx
 msgid "Your vault stays on this device, encrypted with AES-256-GCM. Keep your master password and recovery code somewhere safe."
 msgstr "Your vault stays on this device, encrypted with AES-256-GCM. Keep your master password and recovery code somewhere safe."
+
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "When you click a login field"
+msgstr "When you click a login field"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Show"
+msgstr "Show"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Bramble icon"
+msgstr "Bramble icon"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Open on focus"
+msgstr "Open on focus"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Cycle logins with the keyboard"
+msgstr "Cycle logins with the keyboard"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Saved logins open as soon as you click into a field."
+msgstr "Saved logins open as soon as you click into a field."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Nothing is drawn on the page. Use the keyboard shortcut to fill a login."
+msgstr "Nothing is drawn on the page. Use the keyboard shortcut to fill a login."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "A small Bramble mark appears in the field. Click it to see saved logins, or type a username to see it completed."
+msgstr "A small Bramble mark appears in the field. Click it to see saved logins, or type a username to see it completed."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "No shortcut is set. Set one in your browser's extension shortcuts."
+msgstr "No shortcut is set. Set one in your browser's extension shortcuts."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Press {autofillShortcut} in a login field to fill the next saved login."
+msgstr "Press {autofillShortcut} in a login field to fill the next saved login."

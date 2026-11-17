@@ -8,12 +8,8 @@
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
 	"cmdAutofillCycle": {
-		"message": "Preencher com Bramble",
-		"description": "Keyboard-shortcut command label shown in the browser's extension shortcuts page."
-	},
-	"autofillOpen": {
-		"message": "Abrir preenchimento automático do Bramble",
-		"description": "Accessible label for the small Bramble button inside a username or password field."
+		"message": "Preencher o próximo login salvo",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
 	"cmdFillLogin": {
 		"message": "Preencher login",
@@ -190,5 +186,61 @@
 	"cardUsedHere": {
 		"message": "Usado aqui",
 		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	},
+	"cmdAutofillCycleBack": {
+		"message": "Preencher o login salvo anterior",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
+	"autofillOpenMenu": {
+		"message": "Bramble: preencher do cofre",
+		"description": "Accessible name for the small Bramble mark inside a login field."
+	},
+	"hintLogins": {
+		"message": "Logins salvos para este site",
+		"description": "One-time hint beside the in-field Bramble mark when the site has saved logins."
+	},
+	"hintLocked": {
+		"message": "Bloqueado: clique para desbloquear e preencher",
+		"description": "One-time hint beside the in-field Bramble mark while the vault is locked."
+	},
+	"hintCards": {
+		"message": "Cartões salvos para o pagamento",
+		"description": "One-time hint beside the in-field Bramble mark on a payment form."
+	},
+	"hintOtp": {
+		"message": "Códigos de uso único salvos",
+		"description": "One-time hint beside the in-field Bramble mark on a one-time-code field."
+	},
+	"hintGeneratedPassword": {
+		"message": "Uma senha forte está pronta",
+		"description": "One-time hint beside the in-field Bramble mark on a signup password field."
+	},
+	"hintAlias": {
+		"message": "Criar um alias de e-mail",
+		"description": "One-time hint beside the in-field Bramble mark on a signup email field."
+	},
+	"savedLogin": {
+		"message": "Login salvo",
+		"description": "Primary label for an entry with no name and no username, e.g. from an import."
+	},
+	"menuMore": {
+		"message": "Continue digitando para refinar a lista",
+		"description": "Note at the end of the picker when only the first 50 matches are rendered."
+	},
+	"enterKey": {
+		"message": "Enter",
+		"description": "Label on the keycap that accepts the inline username completion."
+	},
+	"usedHere": {
+		"message": "Usado aqui",
+		"description": "Badge on the picker row for the card or login already used on this site. A card carry is per tab; a login carry is per registrable domain."
+	},
+	"openEntryDetails": {
+		"message": "Abrir no Bramble",
+		"description": "Row action that opens the entry's details in a Bramble window."
+	},
+	"hudFillRefused": {
+		"message": "Não foi possível preencher",
+		"description": "HUD shown when a keyboard pick cannot fill, such as when the vault is locked or the site no longer matches."
 	}
 }

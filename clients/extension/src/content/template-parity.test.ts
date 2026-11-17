@@ -13,8 +13,10 @@ import uiSource from "../autofill-ui.ts?raw";
 import { html as uiHtml } from "../autofill-ui-template";
 import aliasSource from "./html/dropdown-alias.ts?raw";
 import itemSource from "./html/dropdown-item.ts?raw";
+import moreSource from "./html/dropdown-more.ts?raw";
 import newLoginSource from "./html/dropdown-new-login.ts?raw";
 import stylesSource from "./html/dropdown-styles.ts?raw";
+import skinSource from "./skin.ts?raw";
 import { html as contentHtml } from "./template";
 
 const HOSTILE = [
@@ -98,13 +100,13 @@ describe("the email-alias row is identical in both renderers", () => {
 describe("the carried-card badge is in both renderers", () => {
 	it("is drawn by the iframe renderer", () => {
 		expect(uiSource).toContain('class="tp-badge"');
-		expect(uiSource).toContain('t("cardUsedHere")');
+		expect(uiSource).toContain('t("usedHere")');
 		expect(uiSource).toContain(".tp-badge {");
 	});
 
 	it("is drawn by the shadow renderer", () => {
 		expect(itemSource).toContain('class="tp-badge"');
-		expect(itemSource).toContain('t("cardUsedHere")');
+		expect(itemSource).toContain('t("usedHere")');
 		expect(stylesSource).toContain(".tp-badge {");
 	});
 });
@@ -130,5 +132,49 @@ describe("the new-login row is identical in both renderers", () => {
 
 	it("keeps the hook the click handlers match on", () => {
 		for (const src of [uiSource, newLoginSource]) expect(src).toContain('data-tp-new-login="1"');
+	});
+});
+
+// The iframe cannot import skin.ts as a value: both entries would share it, Vite would hoist it
+// into a chunk, and the content script cannot import one. The constant is copied, so pin it.
+describe("the corner-radius ceiling is the same in both renderers", () => {
+	const value = (src: string): string | undefined => src.match(/const MAX_RADIUS = (\d+);/)?.[1];
+
+	it("matches content/skin.ts", () => {
+		expect(value(uiSource)).toBeDefined();
+		expect(value(uiSource)).toBe(value(skinSource));
+	});
+});
+
+// The avatar initials live twice for the same reason the escaper does. A name that produces a
+// broken surrogate in one renderer and a whole emoji in the other is exactly the drift this
+// catches; keep the two functions byte-identical.
+describe("the avatar initials are identical in both renderers", () => {
+	function initialsSource(src: string): string {
+		const start = src.indexOf("function initials(");
+		expect(start).toBeGreaterThan(-1);
+		const end = src.indexOf("\n}\n", start);
+		expect(end).toBeGreaterThan(start);
+		return src.slice(start, end + 3);
+	}
+
+	it("renders the same initials", () => {
+		expect(initialsSource(uiSource)).toBe(initialsSource(itemSource));
+	});
+});
+
+// The note after a capped match list. Added to one renderer only, a user on a COEP page sees 50
+// rows with no explanation, or the other sees a note with no cap.
+describe("the capped-list note is in both renderers", () => {
+	it("is drawn by the iframe renderer", () => {
+		expect(uiSource).toContain('class="tp-more"');
+		expect(uiSource).toContain('t("menuMore")');
+		expect(uiSource).toContain(".tp-more {");
+	});
+
+	it("is drawn by the shadow renderer", () => {
+		expect(moreSource).toContain('class="tp-more"');
+		expect(moreSource).toContain('t("menuMore")');
+		expect(stylesSource).toContain(".tp-more {");
 	});
 });

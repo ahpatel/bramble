@@ -624,7 +624,7 @@ describe("autofill master switch", () => {
 				locked: false,
 				hasPotentialMatch: false,
 				disabled: true,
-				trigger: "auto",
+				trigger: "icon",
 			},
 		});
 	});
@@ -743,7 +743,11 @@ describe("the autofill-cycle command", () => {
 		bg.fireCommand("autofill-cycle");
 		await bg.flush();
 		expect(bg.state.tabMessages).toEqual([
-			{ tabId: 7, message: { type: "AUTOFILL_CYCLE" }, options: undefined },
+			{
+				tabId: 7,
+				message: { type: "AUTOFILL_CYCLE", payload: { back: false } },
+				options: undefined,
+			},
 		]);
 	});
 

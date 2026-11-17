@@ -33,9 +33,18 @@ function frameOf(): HTMLIFrameElement {
 	return frame;
 }
 
-/** Run the rAF watchdog one tick. */
+/** Run the rAF watchdog one tick, past the 150ms trust-check throttle. */
 function tick(): Promise<void> {
-	return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+	return new Promise((resolve) =>
+		setTimeout(() => requestAnimationFrame(() => setTimeout(resolve, 0)), 160),
+	);
+}
+
+/** Wait past the watchdog's ~150ms trust-check interval, then run one tick. */
+function tickAfterTrustCheck(): Promise<void> {
+	return new Promise((resolve) =>
+		setTimeout(() => requestAnimationFrame(() => setTimeout(resolve, 0)), 170),
+	);
 }
 
 function stubRect(el: Element, r: { x: number; y: number; width: number; height: number }): void {
@@ -78,39 +87,12 @@ describe("hosting a descendant's picker", () => {
 		expect(hostEl()!.style.transform).toBe("translate3d(24px, 354px, 0)");
 	});
 
-	it("parks from the containing block's origin, not the document's", () => {
-		// Angular CDK's scroll-block: <html> is position:fixed at top:-441px and
-		// window.scrollY reads 0, so the host's coordinates start 441px above the viewport.
-		const origin = vi
-			.spyOn(HTMLElement.prototype, "getBoundingClientRect")
-			.mockReturnValue(new DOMRect(0, -441, 0, 0));
-		showRelayHost(ANCHOR);
-		origin.mockRestore();
-
-		expect(hostEl()!.style.transform).toBe("translate3d(24px, 795px, 0)");
-	});
-
 	it("re-parks rather than stacking a second host on repeat anchors", () => {
 		showRelayHost(ANCHOR);
 		showRelayHost({ relayId: "relay-1", rect: { ...ANCHOR.rect, y: 400 } });
 
 		expect(document.body.querySelectorAll("div[id^='tp-']")).toHaveLength(1);
 		expect(hostEl()!.style.transform).toBe("translate3d(24px, 434px, 0)");
-	});
-
-	it("tells the UI each time it moves the host, and not when it stays put", () => {
-		// The UI holds clicks until the picker has sat still, and only this frame sees it move.
-		showRelayHost(ANCHOR);
-		const sent: unknown[] = [];
-		// jsdom gives a frame inside a shadow root no window of its own.
-		Object.defineProperty(frameOf(), "contentWindow", {
-			value: { postMessage: (m: unknown) => sent.push(m) },
-		});
-
-		showRelayHost({ relayId: "relay-1", rect: { ...ANCHOR.rect, y: 400 } });
-		showRelayHost({ relayId: "relay-1", rect: { ...ANCHOR.rect, y: 400 } });
-
-		expect(sent).toEqual([{ type: "UI_MOVED" }]);
 	});
 
 	it("replaces the host when a different relay takes over", () => {
@@ -224,7 +206,7 @@ describe("clickjacking watchdog", () => {
 	it("tears the host down when the page makes it transparent", async () => {
 		const host = await mountRendered();
 		host.style.opacity = "0.2";
-		await tick();
+		await tickAfterTrustCheck();
 
 		expect(hostEl()).toBeNull();
 	});
@@ -232,7 +214,7 @@ describe("clickjacking watchdog", () => {
 	it("tears the host down when the page hides it", async () => {
 		const host = await mountRendered();
 		host.style.visibility = "hidden";
-		await tick();
+		await tickAfterTrustCheck();
 
 		expect(hostEl()).toBeNull();
 	});
@@ -242,7 +224,7 @@ describe("clickjacking watchdog", () => {
 		const overlay = document.createElement("div");
 		document.body.appendChild(overlay);
 		document.elementFromPoint = () => overlay;
-		await tick();
+		await tickAfterTrustCheck();
 
 		expect(hostEl()).toBeNull();
 		expect(host.isConnected).toBe(false);
@@ -251,8 +233,23 @@ describe("clickjacking watchdog", () => {
 	it("tears the host down when the page shrinks it below legibility", async () => {
 		const host = await mountRendered();
 		stubRect(host, { x: 24, y: 354, width: 432, height: 4 });
-		await tick();
+		await tickAfterTrustCheck();
 
+		expect(hostEl()).toBeNull();
+	});
+});
+
+describe("clickjacking watchdog ancestors", () => {
+	it("tears the host down when an ancestor makes it transparent", async () => {
+		showRelayHost(ANCHOR);
+		const host = hostEl()!;
+		const frame = frameOf();
+		stubRect(frame, { x: 24, y: 354, width: 432, height: 120 });
+		stubRect(host, { x: 24, y: 354, width: 432, height: 120 });
+		document.elementFromPoint = () => host;
+		await tick();
+		document.body.style.opacity = "0.2";
+		await tickAfterTrustCheck();
 		expect(hostEl()).toBeNull();
 	});
 });

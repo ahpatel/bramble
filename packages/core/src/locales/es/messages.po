@@ -703,10 +703,6 @@ msgstr "Enviar automáticamente después de rellenar"
 msgid "Autofill on web pages"
 msgstr "Autorrelleno en páginas web"
 
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Autofill shortcut"
-msgstr "Atajo de autorrelleno"
-
 #: packages/core/src/app/components/PasswordGenerator.tsx
 msgid "Avoid look-alike characters (0 O l 1)"
 msgstr "Evitar caracteres similares (0 O l 1)"
@@ -1051,10 +1047,6 @@ msgstr "Seleccionar otro archivo"
 msgid "Choose the vault these items should go into"
 msgstr "Elija la caja fuerte a la que deben ir estos elementos"
 
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Choose what opens the in-page list. The shortcut works in every mode."
-msgstr "Elige qué abre la lista en la página. El atajo funciona en todos los modos."
-
 #: packages/core/src/app/screens/TotpSetup/TotpSetup.tsx
 #~ msgid "Choose where to save this 2FA code."
 #~ msgstr "Elija dónde guardar este código de 2FA."
@@ -1078,10 +1070,6 @@ msgstr "Borrar después de"
 #: packages/core/src/app/screens/VaultHome/VaultSearchBar.tsx
 msgid "Clear search"
 msgstr "Borrar búsqueda"
-
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Clicking the field"
-msgstr "Al hacer clic en el campo"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Clipboard auto-clear"
@@ -2759,10 +2747,6 @@ msgstr "Ahora no"
 msgid "Not on this device yet. Waiting for a device that has it."
 msgstr "Aún no está en este dispositivo. Esperando a un dispositivo que lo tenga."
 
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Not set"
-msgstr "Sin asignar"
-
 #: packages/core/src/app/screens/Settings/components/SyncConnectSection.tsx
 msgid "Not syncing: this device can't read its sync key right now. Lock and unlock to try again. If it keeps happening, disconnect and join again with a code from another device."
 msgstr "No se está sincronizando: este dispositivo no puede leer su clave de sincronización ahora mismo. Bloquee y desbloquee para intentarlo de nuevo. Si sigue ocurriendo, desconéctelo y vuelva a unirlo con un código de otro dispositivo."
@@ -2920,17 +2904,9 @@ msgstr "Ábralo desde la ventana emergente de {0} y desbloquéelo con su contras
 msgid "Open that vault"
 msgstr "Abrir esa bóveda"
 
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Open the list and step through saved logins. Change it in your browser's extension shortcuts."
-msgstr "Abre la lista y recorre las credenciales guardadas. Cámbialo en los atajos de extensiones del navegador."
-
 #: packages/core/src/app/components/OpenWebsiteLink.tsx
 msgid "Open website"
 msgstr "Abrir sitio web"
-
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Open with"
-msgstr "Abrir con"
 
 #: packages/core/src/app/routes/VaultHomeRoute.tsx
 #: packages/core/src/app/screens/Auth/Auth.tsx
@@ -3814,10 +3790,6 @@ msgstr "Mostrar contraseña anterior"
 msgid "Show private key"
 msgstr "Mostrar clave privada"
 
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "Show saved logins"
-msgstr "Mostrar credenciales guardadas"
-
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Show this entry in the autofill dropdown. When off, it's never auto-filled but stays in your vault."
 msgstr "Mostrar esta entrada en el menú desplegable de autocompletado. Cuando está desactivada, nunca se rellena automáticamente, pero permanece en su bóveda."
@@ -4115,10 +4087,6 @@ msgstr "Ese año está fuera del rango que utilizan las tarjetas."
 #: packages/core/src/app/screens/Import/ImportShell.tsx
 #~ msgid "That's a full vault backup. Restore it instead: it's added as a new vault, and nothing here is changed."
 #~ msgstr "Es una copia de seguridad completa de la caja fuerte. Restáurela en su lugar: se añade como una caja fuerte nueva y no se cambia nada de aquí."
-
-#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
-msgid "The Bramble icon"
-msgstr "El icono de Bramble"
 
 #: packages/core/src/app/screens/Settings/components/BrowserPairingSection.tsx
 msgid "The browser was not linked."
@@ -5171,3 +5139,44 @@ msgstr "Su bóveda está vacía. Agregue su primer elemento."
 #: packages/core/src/app/screens/Auth/Auth.tsx
 msgid "Your vault stays on this device, encrypted with AES-256-GCM. Keep your master password and recovery code somewhere safe."
 msgstr "Su bóveda permanece en este dispositivo, cifrada con AES-256-GCM. Guarde su contraseña maestra y el código de recuperación en un lugar seguro."
+
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "When you click a login field"
+msgstr "Al hacer clic en un campo de inicio de sesión"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Show"
+msgstr "Mostrar"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Bramble icon"
+msgstr "Icono de Bramble"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Open on focus"
+msgstr "Abrir al enfocar"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Cycle logins with the keyboard"
+msgstr "Cambiar de inicio de sesión con el teclado"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Saved logins open as soon as you click into a field."
+msgstr "Los inicios de sesión guardados se abren al hacer clic en un campo."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Nothing is drawn on the page. Use the keyboard shortcut to fill a login."
+msgstr "No se muestra nada en la página. Usa el atajo de teclado para rellenar un inicio de sesión."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "A small Bramble mark appears in the field. Click it to see saved logins, or type a username to see it completed."
+msgstr "Aparece una pequeña marca de Bramble en el campo. Haz clic en ella para ver los inicios de sesión guardados o escribe un nombre de usuario para verlo completado."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "No shortcut is set. Set one in your browser's extension shortcuts."
+msgstr "No hay ningún atajo configurado. Configura uno en los atajos de extensiones de tu navegador."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Press {autofillShortcut} in a login field to fill the next saved login."
+msgstr "Pulsa {autofillShortcut} en un campo de inicio de sesión para rellenar el siguiente inicio de sesión guardado."

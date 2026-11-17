@@ -12,16 +12,25 @@ async function render(over: { id?: string; name?: string; secondary?: string; ca
 }
 
 describe("dropdownItem", () => {
-	it("marks the card already filled elsewhere on this page", async () => {
+	it("marks the entry already used on this site", async () => {
 		const html = await render({ carried: true });
 		expect(html).toContain('class="tp-badge"');
-		expect(html).toContain("cardUsedHere");
+		expect(html).toContain("usedHere");
 	});
 
 	it("draws no badge for an ordinary row", async () => {
 		const html = await render({});
 		expect(html).not.toContain("tp-badge");
-		expect(html).not.toContain("cardUsedHere");
+		expect(html).not.toContain("usedHere");
+	});
+
+	it("keeps an emoji-first name whole and uses the surname", async () => {
+		const fox = await render({ name: "🦊 Fox" });
+		expect(fox).toContain("🦊F");
+		expect(fox).not.toContain("\uFFFD");
+
+		const montgomery = await render({ name: "Christopher Alexander Montgomery III" });
+		expect(montgomery).toContain("CM");
 	});
 
 	it("still escapes the entry's own text", async () => {

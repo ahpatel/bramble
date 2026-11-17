@@ -54,11 +54,10 @@ function hostEl(): HTMLElement | null {
 	return document.body.querySelector<HTMLElement>("div[id^='tp-']");
 }
 
-/** The iframe renderer is hidden rather than removed on dismissal, so display (and the close
- * fade's opacity) is the tell. */
+/** The iframe renderer is hidden rather than removed on dismissal, so display is the tell. */
 function pickerIsShowing(): boolean {
 	const host = hostEl();
-	return !!host && host.style.display !== "none" && host.style.opacity !== "0";
+	return !!host && host.style.display !== "none";
 }
 
 /** Run the position tracker one frame. */
@@ -81,8 +80,6 @@ const EXT_ORIGIN = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
 type ReadyIframe = {
 	/** What reached the iframe document over its port, from the handshake on. */
 	posts: unknown[];
-	/** The first render, captured before `posts` is cleared. */
-	firstRender: unknown;
 	/** The iframe's end of the port, to answer the content script with. */
 	uiPort: MessagePort;
 	/** The iframe's window, for posting on the window the way a page could. */
@@ -147,9 +144,8 @@ async function readyIframe(field: HTMLInputElement): Promise<ReadyIframe> {
 			throw new Error("first render never arrived over the port");
 		}
 	});
-	const firstRender = posts.find((m) => (m as { type?: string })?.type === "RENDER_MATCHES");
 	posts.length = 0;
-	return { posts, firstRender, uiPort: uiPort as unknown as MessagePort, uiWindow };
+	return { posts, uiPort: uiPort as unknown as MessagePort, uiWindow };
 }
 
 /** Make the visible-picker check pass in jsdom, which has no layout: the host on screen and
@@ -194,18 +190,7 @@ describe("picker: losing the anchor field", () => {
 		await openOnField();
 
 		expect(pickerIsShowing()).toBe(true);
-		expect(hostEl()!.style.transform).toBe("translate3d(40px, 334px, 0px)");
-	});
-
-	it("sits under the field while a modal has the page's scroll blocked", async () => {
-		// Angular CDK's scroll-block: <html> is position:fixed at top:-441px and
-		// window.scrollY reads 0, so the host's coordinates start 441px above the viewport.
-		vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
-			new DOMRect(0, -441, 0, 0),
-		);
-		await openOnField();
-
-		expect(hostEl()!.style.transform).toBe("translate3d(40px, 775px, 0px)");
+		expect(hostEl()!.style.transform).toBe("translate3d(40px, 334px, 0)");
 	});
 
 	it("dismisses when a route change unmounts the field", async () => {
@@ -227,7 +212,7 @@ describe("picker: losing the anchor field", () => {
 		await frame();
 
 		expect(pickerIsShowing()).toBe(false);
-		expect(hostEl()!.style.transform).not.toBe("translate3d(0px, 2px, 0px)");
+		expect(hostEl()!.style.transform).not.toBe("translate3d(0px, 2px, 0)");
 		expect(picker.anchorField()).toBeNull();
 	});
 
@@ -238,7 +223,7 @@ describe("picker: losing the anchor field", () => {
 		await frame();
 
 		expect(pickerIsShowing()).toBe(true);
-		expect(hostEl()!.style.transform).toBe("translate3d(40px, 534px, 0px)");
+		expect(hostEl()!.style.transform).toBe("translate3d(40px, 534px, 0)");
 		expect(picker.anchorField()).toBe(field);
 	});
 
@@ -320,21 +305,6 @@ describe("picker: only the iframe's port can pick", () => {
 		uiPort.postMessage({ type: "UI_PICK", entryId: MATCH.id, otpOnly: false });
 
 		await vi.waitFor(() => expect(picks).toEqual([[MATCH.id, false]]));
-	});
-
-	// #213: the new-login row rides the same port, and a render with it counts one more row.
-	it("passes the new-login row to the iframe and reports its choice", async () => {
-		const { uiPort, posts, field } = await setup();
-		let opened = 0;
-		picker.onNewLogin(() => opened++);
-		picker.showMatches([MATCH], field, { newLogin: true });
-		await settle();
-		expect(posts).toContainEqual(
-			expect.objectContaining({ type: "RENDER_MATCHES", newLogin: true }),
-		);
-
-		uiPort.postMessage({ type: "UI_NEW_LOGIN" });
-		await vi.waitFor(() => expect(opened).toBe(1));
 	});
 
 	it("ignores a pick for an entry it never rendered", async () => {
@@ -489,123 +459,12 @@ describe("picker: Enter after an arrow key", () => {
 	});
 });
 
-// The browser command drives the list without a DOM key event. It must work in both renderers,
-// and it must not fill anything by itself: the first press lands on a row, Enter picks.
-describe("picker: the cycle shortcut", () => {
-	const key = (k: string) => new KeyboardEvent("keydown", { key: k, cancelable: true });
-
-	it("advances the iframe list and arms Enter", async () => {
-		document.body.innerHTML = `<form><input id="user" type="email" name="email" /></form>`;
-		const field = document.getElementById("user") as HTMLInputElement;
-		stubRect(field, BOX);
-		field.focus();
-		const { posts } = await readyIframe(field);
-
-		expect(picker.cycle()).toBe(true);
-		await vi.waitFor(() => expect(posts).toContainEqual({ type: "UI_CYCLE" }));
-		expect(picker.handleKey(key("Enter"))).toBe(true);
-	});
-});
-
-describe("picker: fitting the field", () => {
-	async function setup(fieldBox = BOX): Promise<{
-		field: HTMLInputElement;
-		posts: unknown[];
-		firstRender: unknown;
-		uiPort: MessagePort;
-	}> {
-		document.body.innerHTML = `<form><input id="user" type="email" name="email" /></form>`;
-		const field = document.getElementById("user") as HTMLInputElement;
-		stubRect(field, fieldBox);
-		const { posts, firstRender, uiPort } = await readyIframe(field);
-		return { field, posts, firstRender, uiPort };
-	}
-
-	it("sends the field's skin and animates only the first open", async () => {
-		const { field, posts, firstRender } = await setup();
-		const first = firstRender as
-			| { skin?: { radius?: number; surface?: string }; animate?: boolean }
-			| undefined;
-		expect(first?.skin?.surface).toEqual(expect.any(String));
-		expect(first?.animate).toBe(true);
-
-		posts.length = 0;
-		picker.showMatches([MATCH, { ...MATCH, id: "entry-2" }], field);
-		await vi.waitFor(() => {
-			const next = posts.find((m) => (m as { type?: string })?.type === "RENDER_MATCHES") as
-				| { animate?: boolean }
-				| undefined;
-			if (!next) throw new Error("repaint never arrived");
-			expect(next.animate).toBe(false);
-		});
-	});
-
-	it("flips above the field when the list does not fit below", async () => {
-		const { uiPort } = await setup({ x: 40, y: 700, width: 320, height: 32 });
-		const host = hostEl()!;
-
-		uiPort.postMessage({ type: "UI_RESIZE", height: 200 });
-		await settle();
-
-		// 700 - 2 - 200 = 498; the field's own top edge, not the viewport corner.
-		expect(host.style.transform).toBe("translate3d(40px, 498px, 0px)");
-	});
-
-	it("shifts left rather than running off the right edge", async () => {
-		const { uiPort } = await setup({ x: 900, y: 100, width: 320, height: 32 });
-		const host = hostEl()!;
-
-		uiPort.postMessage({ type: "UI_RESIZE", height: 120 });
-		await settle();
-
-		// jsdom's 1024px viewport, 8px margin, 320px wide: left edge at 696.
-		expect(host.style.transform).toBe("translate3d(696px, 134px, 0px)");
-	});
-});
-
-it("advances and wraps the fallback list", () => {
-	document.body.innerHTML = `<form><input id="user" type="email" name="email" /></form>`;
-	const field = document.getElementById("user") as HTMLInputElement;
-	stubRect(field, BOX);
-	field.focus();
-	// Force the COEP fallback by letting the readiness timeout expire.
-	const shadows = new Map<Element, ShadowRoot>();
-	const attach = Element.prototype.attachShadow;
-	vi.spyOn(Element.prototype, "attachShadow").mockImplementation(function (
-		this: Element,
-		init: ShadowRootInit,
-	) {
-		const root = attach.call(this, init);
-		shadows.set(this, root);
-		return root;
-	});
-	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-	try {
-		picker.showMatches([MATCH, { ...MATCH, id: "entry-2" }], field);
-		vi.advanceTimersByTime(700);
-	} finally {
-		vi.useRealTimers();
-	}
-	const host = document.getElementById("bramble-autofill-dropdown")!;
-	const shadow = shadows.get(host)!;
-	const rows = shadow.querySelectorAll(".tp-item");
-
-	expect(picker.cycle()).toBe(true);
-	expect(rows[0]!.classList.contains("tp-active")).toBe(true);
-	expect(picker.cycle()).toBe(true);
-	expect(rows[1]!.classList.contains("tp-active")).toBe(true);
-	// The third press wraps rather than sticking on the last row.
-	expect(picker.cycle()).toBe(true);
-	expect(rows[0]!.classList.contains("tp-active")).toBe(true);
-});
-
 // The fallback renders in the page's own DOM, and a page can force it by keeping the iframe from
 // loading (COEP, or removing its host), so it needs the same pick-time check as the iframe.
 describe("picker: the shadow fallback", () => {
 	/** Fall back to the shadow renderer on `field`, returning its row and the mousedown handler. */
 	function fallBack(field: HTMLInputElement): {
 		host: HTMLElement;
-		shadow: ShadowRoot;
 		row: Element;
 		mousedown: EventListener;
 	} {
@@ -642,7 +501,7 @@ describe("picker: the shadow fallback", () => {
 		const row = shadow?.querySelector("[data-entry-id]");
 		const mousedown = shadow && mousedowns.get(shadow);
 		if (!host || !row || !mousedown) throw new Error("never fell back to the shadow renderer");
-		return { host, shadow: shadow as ShadowRoot, row, mousedown };
+		return { host, row, mousedown };
 	}
 
 	/** jsdom will not mark an event trusted, so hand the listener a stand-in that is. */

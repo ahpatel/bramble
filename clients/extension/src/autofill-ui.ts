@@ -2,24 +2,21 @@
 // docs/autofill.md ("UI isolation"). Self-contained so the bundle stays flat.
 
 import { html } from "./autofill-ui-template";
+import type { DropdownSkin } from "./content/skin";
+
+// Keep in step with content/skin.ts. Imported as a value it would make Vite hoist skin.ts into a
+// chunk shared with the content script, which loads as a classic script. template-parity.test.ts
+// asserts the two constants stay equal.
+const MAX_RADIUS = 16;
+// A click this soon after the rows appear or move may have been aimed at whatever was there
+// before. The content script enforces the same window for the local renderer; a relayed pick
+// never passes through it, so the UI holds its own.
+const EARLY_CLICK_MS = 500;
 
 interface MatchSummary {
 	id: string;
 	name: string;
 	secondary: string;
-}
-
-/** The anchor field's look, sampled by the content script. Presentation only; every value is
- * re-validated here before it reaches a CSS custom property. */
-interface Skin {
-	radius?: number;
-	surface?: string;
-	foreground?: string;
-	muted?: string;
-	border?: string;
-	fontFamily?: string;
-	fontSize?: number;
-	dark?: boolean;
 }
 
 /** Twin of content/html/dropdown-alias.ts's type. Declared here rather than imported, like
@@ -33,17 +30,32 @@ type Inbound =
 			otpOnly?: boolean;
 			suggest?: { password: string };
 			alias?: AliasRowState;
-			// A trailing "new login" row, under a login field's matches (#213).
-			newLogin?: boolean;
 			// The card already filled elsewhere on this page: rendered with a badge, never
 			// highlighted (Enter belongs to the page's form).
 			carriedId?: string;
-			skin?: Skin;
+			// Geometry and palette borrowed from the anchor field. See content/skin.ts.
+			skin?: DropdownSkin;
+			// True only for a fresh open; a filtered re-render stays still.
 			animate?: boolean;
+			// The menu was placed above the field, so it unfolds from the field's top edge.
+			above?: boolean;
+			// The tallest the list may draw in the current viewport, so it scrolls instead of
+			// clipping against the window edge.
+			maxHeight?: number;
+			// The match list was capped; draw the "keep typing" note after the rows.
+			more?: boolean;
+			// A trailing "new login" row, under a login field's matches (#213).
+			newLogin?: boolean;
 	  }
-	| { type: "RENDER_LOCKED"; skin?: Skin; animate?: boolean }
-	| { type: "UI_KEY"; key: string }
-	| { type: "UI_CYCLE" };
+	| {
+			type: "RENDER_LOCKED";
+			skin?: DropdownSkin;
+			animate?: boolean;
+			above?: boolean;
+			maxHeight?: number;
+	  }
+	| { type: "UI_MAX_HEIGHT"; maxHeight?: number }
+	| { type: "UI_KEY"; key: string };
 
 // Page origin (from the iframe src): READY is pinned to it, and only the content script's
 // UI_CONNECT is taken from it. The page shares that window, so everything after rides the port.
@@ -63,11 +75,6 @@ const ANNOUNCE_ATTEMPTS = 25;
 const MAX_FRAME_DEPTH = 8;
 const MAX_FRAMES_VISITED = 128;
 let peer: { win: Window; origin: string } | null = null;
-// Relayed picks go straight to the field's frame, past the content script's early-click guard, so
-// it is kept here: a click counts only once the rows have sat still this long. The host frame
-// reports each move (UI_MOVED), forged ones included, and a new render restarts it too.
-const EARLY_CLICK_MS = 500;
-let settledAt = Number.NEGATIVE_INFINITY;
 
 let otpOnly = false;
 // Navigable rows in render order: an optional leading "suggest a password" row,
@@ -79,6 +86,7 @@ type NavRow =
 	| { kind: "locked" };
 let rows: NavRow[] = [];
 let highlight = -1;
+let settledAt = performance.now();
 
 function post(message: unknown): void {
 	if (RELAYED) {
@@ -100,29 +108,55 @@ function postHeight(height: number): void {
 	window.parent.postMessage(message, PARENT_ORIGIN);
 }
 
-/** Uppercase avatar initials: first letter of the first two words, else first two letters. */
+type GraphemeSegmenter = new (
+	locales?: string | string[],
+	options?: { granularity: "grapheme" },
+) => { segment(input: string): Iterable<{ segment: string }> };
+
+const SEGMENTER = (() => {
+	const Segmenter = (Intl as unknown as { Segmenter?: GraphemeSegmenter }).Segmenter;
+	if (!Segmenter) return null;
+	try {
+		return new Segmenter(undefined, { granularity: "grapheme" });
+	} catch {
+		return null;
+	}
+})();
+
+function graphemes(text: string): string[] {
+	if (SEGMENTER) return [...SEGMENTER.segment(text)].map((part) => part.segment);
+	return Array.from(text);
+}
+
+const NAME_SUFFIXES = new Set(["jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v"]);
+
+/** Uppercase avatar initials from grapheme clusters: first + last significant word, else the
+ *  first two graphemes of a single-word name. Twin of content/html/dropdown-item.ts. */
 function initials(name: string): string {
 	const trimmed = name.trim();
 	if (!trimmed) return "??";
-	const words = trimmed.split(/\s+/);
-	if (words.length >= 2 && words[0] && words[1]) {
-		return (words[0][0]! + words[1][0]!).toUpperCase();
+	const words = trimmed.split(/\s+/).filter(Boolean);
+	const significant = words.filter((word) => !NAME_SUFFIXES.has(word.toLowerCase()));
+	const firstWord = significant[0] ?? words[0] ?? "";
+	const lastWord = significant.length > 1 ? significant[significant.length - 1]! : "";
+	if (lastWord) {
+		return (graphemes(firstWord)[0]! + graphemes(lastWord)[0]!).toUpperCase();
 	}
-	return trimmed.slice(0, 2).toUpperCase();
+	return graphemes(firstWord).slice(0, 2).join("").toUpperCase() || "??";
 }
 
 const AVATAR_COLORS = [
-	"#7C3AED",
-	"#2563EB",
-	"#0E7490",
-	"#047857",
-	"#4D7C0F",
-	"#A16207",
-	"#C2410C",
-	"#DC2626",
-	"#DB2777",
+	{ bg: "#7C3AED", ink: "#ffffff" },
+	{ bg: "#2563EB", ink: "#ffffff" },
+	{ bg: "#0891B2", ink: "#17202b" },
+	{ bg: "#059669", ink: "#17202b" },
+	{ bg: "#65A30D", ink: "#17202b" },
+	{ bg: "#CA8A04", ink: "#17202b" },
+	{ bg: "#EA580C", ink: "#17202b" },
+	{ bg: "#DC2626", ink: "#ffffff" },
+	{ bg: "#DB2777", ink: "#ffffff" },
 ];
-function colorForName(name: string): string {
+function avatarFor(name: string): { bg: string; ink: string } {
 	let hash = 0;
 	for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
 	return AVATAR_COLORS[hash % AVATAR_COLORS.length]!;
@@ -130,197 +164,414 @@ function colorForName(name: string): string {
 
 // Colours reference the local --tp-* tokens below, never literals. The tokens mirror the
 // @vault/theme scale (packages/theme/theme.css); this iframe has no Bramble app shell to read a
-// `.dark` class, so light/dark follows the OS via prefers-color-scheme until the content script
-// sends the anchor field's own skin. That skin wins: a dark site in a light OS should get a dark
-// menu, and a square field should get a square menu. Byte-identical defaults live in the shadow
-// renderer's copy (content/html/dropdown-styles.ts); keep both in sync with theme.css.
+// `.dark` class, so light/dark follows the OS via prefers-color-scheme. Byte-identical to the
+// shadow renderer's copy (content/html/dropdown-styles.ts); keep both in sync with theme.css.
 const STYLE = `
-	:root {
-		color-scheme: light dark;
-		--tp-surface: #ffffff; /* --popover */
-		--tp-foreground: oklch(20.5% 0 0); /* --popover-foreground */
-		--tp-muted: oklch(52% 0 0); /* --muted-foreground */
-		--tp-border: oklch(87% 0 0); /* --border */
-		--tp-primary: oklch(20.5% 0 0); /* --primary */
-		--tp-on-primary: #ffffff; /* --primary-foreground */
-		--tp-radius: 12px;
-		--tp-row-radius: 8px;
-		--tp-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-		--tp-font-size: 13px;
-		--tp-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
-	}
-	@media (prefers-color-scheme: dark) {
-		:root {
-			--tp-surface: oklch(26.9% 0 0);
-			--tp-foreground: oklch(97% 0 0);
-			--tp-muted: oklch(70.8% 0 0);
-			--tp-border: oklch(37.1% 0 0);
-			--tp-primary: oklch(97% 0 0);
-			--tp-on-primary: oklch(20.5% 0 0);
-			--tp-shadow: 0 16px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
-		}
-	}
-	html[data-theme="light"] {
-		color-scheme: light;
-		--tp-surface: #ffffff;
-		--tp-foreground: oklch(20.5% 0 0);
-		--tp-muted: oklch(55.6% 0 0);
-		--tp-border: oklch(87% 0 0);
-		--tp-primary: oklch(20.5% 0 0);
-		--tp-on-primary: #ffffff;
-		--tp-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
-	}
-	html[data-theme="dark"] {
-		color-scheme: dark;
-		--tp-surface: oklch(26.9% 0 0);
-		--tp-foreground: oklch(97% 0 0);
-		--tp-muted: oklch(70.8% 0 0);
-		--tp-border: oklch(37.1% 0 0);
-		--tp-primary: oklch(97% 0 0);
-		--tp-on-primary: oklch(20.5% 0 0);
-		--tp-shadow: 0 16px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
-	}
-	.tp-list {
-		background: var(--tp-surface);
-		border: 1px solid var(--tp-border);
-		border-radius: var(--tp-radius);
-		box-shadow: var(--tp-shadow);
-		font-family: var(--tp-font-family);
-		font-size: var(--tp-font-size);
-		color: var(--tp-foreground);
-		text-align: left;
-		max-height: 320px;
-		overflow-y: auto;
-		padding: 4px;
-		box-sizing: border-box;
-	}
-	.tp-list.tp-enter {
-		animation: tp-enter 150ms cubic-bezier(0.2, 0, 0, 1);
-		transform-origin: top center;
-	}
-	@keyframes tp-enter {
-		from { opacity: 0; transform: translateY(-4px) scale(0.985); }
-	}
-	.tp-item {
-		padding: 8px 10px;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		border-radius: var(--tp-row-radius);
-		transition: background 0.12s ease;
-	}
-	.tp-item:hover { background: color-mix(in oklab, var(--tp-foreground) 8%, transparent); }
-	.tp-item.tp-active { background: color-mix(in oklab, var(--tp-foreground) 12%, transparent); }
-	.tp-avatar {
-		width: 30px;
-		height: 30px;
-		border-radius: 8px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 12px;
-		font-weight: 700;
-		color: #fff;
-		flex-shrink: 0;
-		letter-spacing: 0.3px;
-		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.14);
-	}
-	.tp-avatar-locked {
-		background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
-		color: var(--tp-muted);
-	}
-	.tp-avatar-locked svg { width: 18px; height: 18px; }
-	.tp-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-	.tp-name {
-		font-weight: 600;
-		font-size: calc(var(--tp-font-size) + 1px);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		color: var(--tp-foreground);
-		line-height: 1.3;
-	}
-	.tp-user {
-		color: var(--tp-muted);
-		font-size: var(--tp-font-size);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		margin-top: 1px;
-		line-height: 1.3;
-	}
-	.tp-badge {
-		margin-left: auto;
-		flex-shrink: 0;
-		font-size: 10px;
-		font-weight: 600;
-		letter-spacing: 0.2px;
-		padding: 2px 7px;
-		border-radius: 999px;
-		color: var(--tp-muted);
-		background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
-	}
-	.tp-launch {
-		margin-left: auto;
-		flex-shrink: 0;
-		display: flex;
-		align-items: center;
-		color: var(--tp-muted);
-		transition: color 0.12s ease;
-	}
-	.tp-item:hover .tp-launch { color: var(--tp-foreground); }
-	.tp-avatar-suggest { background: var(--tp-primary); color: var(--tp-on-primary); }
-	.tp-avatar-alias { background: var(--tp-primary); color: var(--tp-on-primary); }
-	.tp-avatar-alias svg { width: 18px; height: 18px; }
-	.tp-alias-busy { opacity: 0.75; cursor: default; }
-	.tp-alias-error .tp-user { color: var(--tp-danger, #dc2626); }
-	.tp-spin { animation: tp-spin 0.9s linear infinite; }
-	.tp-new-login { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 12px; border: 0; border-top: 1px solid var(--tp-border); background: none; color: var(--tp-muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
-	.tp-new-login:hover { color: var(--tp-foreground); }
-	.tp-hint { padding: 7px 10px; color: var(--tp-muted); font-size: calc(var(--tp-font-size) - 1px); }
-	@keyframes tp-spin { to { transform: rotate(360deg); } }
-	.tp-avatar-suggest svg { width: 18px; height: 18px; }
-	.tp-suggest-pw {
-		font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-		font-size: calc(var(--tp-font-size) + 1px);
-		letter-spacing: 0.4px;
-	}
-	.tp-regenerate {
-		margin-left: auto;
-		flex-shrink: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		padding: 0;
-		border: 0;
-		border-radius: 7px;
-		background: transparent;
-		color: var(--tp-muted);
-		cursor: pointer;
-		transition: background 0.12s ease, color 0.12s ease;
-	}
-	.tp-regenerate:hover { background: color-mix(in oklab, var(--tp-foreground) 12%, transparent); color: var(--tp-foreground); }
-	@media (prefers-reduced-motion: reduce) {
-		.tp-list.tp-enter { animation: none; }
-		.tp-item, .tp-regenerate { transition: none; }
-	}
-`;
+		html, body { margin: 0; padding: 0; background: transparent; }
+			:root {
+				color-scheme: light dark;
+				--tp-surface: #ffffff; /* --popover */
+				--tp-foreground: oklch(20.5% 0 0); /* --popover-foreground */
+				--tp-muted: oklch(55.6% 0 0); /* --muted-foreground */
+				--tp-border: oklch(87% 0 0); /* --border */
+				--tp-primary: oklch(20.5% 0 0); /* --primary */
+				--tp-on-primary: #ffffff; /* --primary-foreground */
+				--tp-radius: 16px;
+				--tp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--tp-surface: oklch(26.9% 0 0);
+					--tp-foreground: oklch(97% 0 0);
+					--tp-muted: oklch(70.8% 0 0);
+					--tp-border: oklch(37.1% 0 0);
+					--tp-primary: oklch(97% 0 0);
+					--tp-on-primary: oklch(20.5% 0 0);
+				}
+			}
+			.tp-list {
+				container-type: inline-size;
+				background: var(--tp-surface);
+				border: 1px solid var(--tp-border);
+				border-radius: var(--tp-radius);
+				box-shadow:
+					0 20px 48px -22px rgba(0, 0, 0, 0.38),
+					0 3px 10px rgba(0, 0, 0, 0.06);
+				font-family: var(--tp-font);
+				font-size: 13px;
+				color: var(--tp-foreground);
+				text-align: left;
+				letter-spacing: normal;
+				text-transform: none;
+				font-style: normal;
+				text-indent: 0;
+				max-height: 380px;
+				overflow-y: auto;
+				margin: 0;
+				padding: 6px;
+				box-sizing: border-box;
+				transform-origin: top center;
+			}
+			.tp-list.tp-dark {
+				box-shadow:
+					0 24px 56px -20px rgba(0, 0, 0, 0.72),
+					0 3px 10px rgba(0, 0, 0, 0.28);
+			}
+			.tp-list.tp-animate {
+				animation: tp-unfold 0.16s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+			}
+			.tp-item {
+				box-sizing: border-box;
+				padding: 10px 12px;
+				cursor: pointer !important;
+				display: flex;
+				align-items: center;
+				gap: 12px;
+				border-radius: max(0px, calc(var(--tp-radius) - 4px));
+				transition: background 0.1s ease;
+			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 7%, transparent);
+				}
+			}
+			.tp-avatar {
+				width: 40px;
+				height: 40px;
+				border-radius: 11px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				font-size: 15px;
+				font-weight: 700;
+				color: #fff;
+				flex-shrink: 0;
+				letter-spacing: 0.3px;
+				box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.14);
+			}
+			.tp-avatar-locked {
+				background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
+				color: var(--tp-muted);
+			}
+			.tp-avatar-locked svg {
+				width: 20px;
+				height: 20px;
+			}
+			.tp-text {
+				display: flex;
+				flex-direction: column;
+				min-width: 0;
+				flex: 1;
+			}
+			.tp-name {
+				font-weight: 600;
+				font-size: 15px;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				color: var(--tp-foreground);
+				line-height: 1.3;
+				unicode-bidi: plaintext;
+			}
+			.tp-user {
+				color: var(--tp-muted);
+				font-size: 13px;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				margin-top: 2px;
+				line-height: 1.3;
+				unicode-bidi: plaintext;
+			}
+			.tp-badge {
+				margin-left: auto;
+				flex-shrink: 0;
+				font-size: 11px;
+				font-weight: 600;
+				letter-spacing: 0.2px;
+				padding: 3px 8px;
+				border-radius: 999px;
+				color: var(--tp-foreground);
+				background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
+			}
+			/* Compact rows are one line: a text badge ("Hier verwendet", 102px) leaves the name
+			   almost nothing at 320px. A dot keeps the meaning (and the title/accessible text)
+			   without stealing the width; normal rows keep the words. */
+			.tp-item-compact .tp-badge {
+				width: 8px;
+				height: 8px;
+				padding: 0;
+				border-radius: 999px;
+				font-size: 0;
+				color: transparent;
+				background: var(--tp-muted);
+			}
+			.tp-open {
+				margin-left: auto;
+				flex-shrink: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				width: 28px;
+				height: 28px;
+				padding: 0;
+				border: 0;
+				border-radius: 7px;
+				background: transparent;
+				color: var(--tp-muted);
+				cursor: pointer !important;
+				opacity: 1;
+				transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+			}
+			.tp-open:focus-visible {
+				opacity: 1;
+				color: var(--tp-foreground);
+			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover .tp-open {
+					opacity: 1;
+					color: var(--tp-foreground);
+				}
+				.tp-open:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
+				}
+			}
+			.tp-open svg {
+				width: 15px;
+				height: 15px;
+			}
+			.tp-badge + .tp-open {
+				margin-left: 4px;
+			}
+			.tp-launch {
+				margin-left: auto;
+				flex-shrink: 0;
+				display: flex;
+				align-items: center;
+				color: var(--tp-muted);
+				transition: color 0.12s ease;
+			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover .tp-launch {
+					color: var(--tp-foreground);
+				}
+			}
+			.tp-avatar-suggest {
+				background: var(--tp-primary);
+				color: var(--tp-on-primary);
+			}
+			.tp-avatar-suggest svg {
+				width: 20px;
+				height: 20px;
+			}
+			.tp-suggest-pw {
+				font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+				font-size: 14px;
+				letter-spacing: 0.5px;
+			}
+			/* The note under a capped list. Not a row: no hover, no key target. */
+			.tp-more {
+				padding: 8px 12px 6px;
+				text-align: center;
+				font-size: 11px;
+				line-height: 1.3;
+				color: var(--tp-muted);
+			}
+			.tp-new-login {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				width: 100%;
+				padding: 6px 12px;
+				border: 0;
+				border-top: 1px solid var(--tp-border);
+				background: none;
+				color: var(--tp-muted);
+				font: inherit;
+				font-size: 12px;
+				text-align: left;
+				cursor: pointer;
+			}
+			.tp-new-login:hover {
+				color: var(--tp-foreground);
+			}
+			.tp-regenerate {
+				margin-left: auto;
+				flex-shrink: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				width: 32px;
+				height: 32px;
+				padding: 0;
+				border: 0;
+				border-radius: 8px;
+				background: transparent;
+				color: var(--tp-muted);
+				cursor: pointer !important;
+				transition: background 0.12s ease, color 0.12s ease;
+			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-regenerate:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 12%, transparent);
+					color: var(--tp-foreground);
+				}
+			}
+			/* Compact: one line per entry, with a small monogram so the row still reads as Bramble.
+			   The old avatar-less version was faster to scan but felt like a debug list. */
+			.tp-item-compact {
+				padding: 11px 12px;
+				gap: 10px;
+				min-height: 62px;
+			}
+			.tp-avatar-compact {
+				width: 30px;
+				height: 30px;
+				font-size: 11px;
+				border-radius: clamp(6px, calc(var(--tp-radius) - 2px), 10px);
+			}
+			.tp-text-compact {
+				flex-direction: row;
+				align-items: baseline;
+				gap: 0;
+			}
+			.tp-text-compact .tp-name {
+				font-size: 13.5px;
+			}
+			.tp-text-compact .tp-user {
+				font-size: 12px;
+				margin: 0;
+				min-width: 0;
+			}
+			.tp-text-compact .tp-user::before {
+				content: "·";
+				margin: 0 6px;
+				opacity: 0.55;
+			}
+			.tp-text-compact .tp-user:empty::before {
+				content: none;
+			}
+			.tp-compact .tp-item-compact + .tp-item-compact {
+				margin-top: 2px;
+			}
+			@keyframes tp-unfold {
+				from {
+					opacity: 0;
+					transform: translateY(-6px) scale(0.985);
+				}
+				to {
+					opacity: 1;
+					transform: none;
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				.tp-list.tp-animate {
+					animation: none;
+				}
+			}
+			@media (forced-colors: active) {
+				.tp-list {
+					background: Canvas;
+					border-color: CanvasText;
+					box-shadow: none;
+				}
+				.tp-item { color: CanvasText; }
+				.tp-item.tp-active { outline: 2px solid Highlight; outline-offset: -2px; }
+				.tp-badge {
+					--tp-badge-dot-bg: CanvasText;
+					background: Canvas;
+					color: CanvasText;
+					border: 1px solid CanvasText;
+				}
+			}
+			/* The menu can be as narrow as 152px at 200% zoom on a 320px screen. The avatar and
+			   the text badge are the first things to go: the entry name is the identifier. */
+			@container (max-width: 320px) {
+				.tp-badge {
+					width: 8px;
+					height: 8px;
+					padding: 0;
+					border-radius: 999px;
+					font-size: 0;
+					color: transparent;
+					background: var(--tp-badge-dot-bg, var(--tp-muted));
+				}
+			}
+			@container (max-width: 260px) {
+				.tp-text-compact { flex-direction: column; align-items: stretch; }
+				.tp-text-compact .tp-user { margin-top: 2px; }
+				.tp-text-compact .tp-user::before { content: none; }
+			}
+			@container (max-width: 220px) {
+				.tp-item { padding: 9px 8px; gap: 8px; }
+				.tp-avatar { display: none; }
+			}
+		`;
 
-function matchRow(m: MatchSummary, carried: boolean): string {
-	const badge = carried ? html`<span class="tp-badge">${t("cardUsedHere")}</span>` : "";
-	return html`
-		<div class="tp-item" data-entry-id="${m.id}" role="option">
-			<div class="tp-avatar" style="background: ${colorForName(m.name)};">${initials(m.name)}</div>
-			<div class="tp-text">
-				<span class="tp-name">${m.name}</span>
-				<span class="tp-user">${m.secondary}</span>
+function matchRow(m: MatchSummary, carried: boolean, compact: boolean): string {
+	// A nameless entry still needs a primary line; the username is its only identifier. A generic
+	// label covers the rare row with neither. Twin of content/html/dropdown-item.ts.
+	const primary = m.name || m.secondary || t("savedLogin");
+	const detail = m.name ? m.secondary : "";
+	const avatar = avatarFor(primary);
+	const badge = carried
+		? html`<span class="tp-badge" title="${t("usedHere")}">${t("usedHere")}</span>`
+		: "";
+	const open = html`<button class="tp-open" type="button" data-tp-open-entry="1" aria-label="${t("openEntryDetails")}" title="${t("openEntryDetails")}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg></button>`;
+	if (compact) {
+		return html`
+		<div class="tp-item tp-item-compact" data-entry-id="${m.id}" role="option" aria-selected="false">
+			<div class="tp-avatar tp-avatar-compact" style="background: ${avatar.bg}; color: ${avatar.ink};" aria-hidden="true">${initials(primary)}</div>
+			<div class="tp-text tp-text-compact">
+				<span class="tp-name" title="${primary}">${primary}</span>
+				<span class="tp-user" title="${detail}">${detail}</span>
 			</div>
-			${[badge]}
+			${[badge, open]}
 		</div>
 	`;
+	}
+	return html`
+		<div class="tp-item" data-entry-id="${m.id}" role="option" aria-selected="false">
+			<div class="tp-avatar" style="background: ${avatar.bg}; color: ${avatar.ink};" aria-hidden="true">${initials(primary)}</div>
+			<div class="tp-text">
+				<span class="tp-name" title="${primary}">${primary}</span>
+				<span class="tp-user" title="${detail}">${detail}</span>
+			</div>
+			${[badge, open]}
+		</div>
+	`;
+}
+
+/** Apply the field's skin. Values are validated here as well as in the content script: the UI
+ *  document is reachable by anything in the tab, so it treats its input as untrusted plumbing. */
+function applySkin(el: HTMLElement, skin?: DropdownSkin): void {
+	if (!skin) return;
+	const radius = Number(skin.radius);
+	if (Number.isFinite(radius)) {
+		el.style.setProperty("--tp-radius", `${Math.max(0, Math.min(MAX_RADIUS, radius))}px`);
+	}
+	const isColor = (v: unknown): v is string =>
+		typeof v === "string" &&
+		/^(rgb|hsl|oklch|oklab|lab|lch|color|#)/i.test(v) &&
+		!/url\s*\(/i.test(v);
+	if (isColor(skin.surface)) el.style.setProperty("--tp-surface", skin.surface);
+	if (isColor(skin.ink)) el.style.setProperty("--tp-foreground", skin.ink);
+	if (isColor(skin.muted)) el.style.setProperty("--tp-muted", skin.muted);
+	if (isColor(skin.border)) el.style.setProperty("--tp-border", skin.border);
+	else if (isColor(skin.ink)) {
+		el.style.setProperty("--tp-border", `color-mix(in oklab, ${skin.ink} 18%, transparent)`);
+	}
+	if (typeof skin.font === "string") {
+		const font = skin.font
+			.replace(/[;{}]/g, " ")
+			.replace(/url\s*\(/gi, " ")
+			.slice(0, 120)
+			.trim();
+		if (font) el.style.setProperty("--tp-font", font);
+	}
+	el.classList.toggle("tp-compact", skin.compact === true);
+	el.classList.toggle("tp-dark", skin.dark === true);
+	el.style.colorScheme = skin.dark ? "dark" : "light";
 }
 
 // Extension i18n: browser locale with en default_locale fallback. Kept inline (not a
@@ -349,7 +600,7 @@ function aliasRow(row: AliasRowState): string {
 	}
 	if (row.state === "error") {
 		return html`
-		<div class="tp-item tp-alias tp-alias-error" data-tp-alias="1" role="option">
+		<div class="tp-item tp-alias tp-alias-error" data-tp-alias="1" role="option" aria-selected="false">
 			<div class="tp-avatar tp-avatar-alias">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>
 			</div>
@@ -361,7 +612,7 @@ function aliasRow(row: AliasRowState): string {
 	`;
 	}
 	return html`
-		<div class="tp-item tp-alias" data-tp-alias="1" role="option">
+		<div class="tp-item tp-alias" data-tp-alias="1" role="option" aria-selected="false">
 			<div class="tp-avatar tp-avatar-alias">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"></path></svg>
 			</div>
@@ -373,14 +624,21 @@ function aliasRow(row: AliasRowState): string {
 	`;
 }
 
+/** First and last few characters, not the whole secret. Twin of
+ *  content/html/dropdown-suggest.ts's previewPassword; both must change together. */
+function previewPassword(password: string): string {
+	if (password.length <= 12) return password;
+	return `${password.slice(0, 6)}…${password.slice(-4)}`;
+}
+
 function suggestRow(password: string): string {
 	return html`
-		<div class="tp-item tp-suggest" data-tp-suggest="1" role="option">
+		<div class="tp-item tp-suggest" data-tp-suggest="1" role="option" aria-selected="false">
 			<div class="tp-avatar tp-avatar-suggest">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"></circle><path d="M10.7 12.3 20 3"></path><path d="m16 6 3 3"></path><path d="m14 8 3 3"></path></svg>
 			</div>
 			<div class="tp-text">
-				<span class="tp-name tp-suggest-pw">${password}</span>
+				<span class="tp-name tp-suggest-pw">${previewPassword(password)}</span>
 				<span class="tp-user">${t("suggestPasswordUse")}</span>
 			</div>
 			<button class="tp-regenerate" data-tp-regenerate="1" type="button" aria-label="${t("suggestPasswordRegenerate")}">
@@ -388,6 +646,11 @@ function suggestRow(password: string): string {
 			</button>
 		</div>
 	`;
+}
+
+/** The note after a capped match list. Not a row: it takes no keys and no clicks. */
+function moreRow(): string {
+	return html`<div class="tp-more" id="tp-more-note" role="note">${t("menuMore")}</div>`;
 }
 
 /** Twin of content/html/dropdown-new-login.ts. Both must change together; see template-parity.
@@ -403,7 +666,7 @@ function newLoginRow(): string {
 
 function lockedRow(): string {
 	return html`
-		<div class="tp-item tp-locked" data-tp-popout="1">
+		<div class="tp-item tp-locked" data-tp-popout="1" role="option" aria-selected="false">
 			<div class="tp-avatar tp-avatar-locked">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="10" rx="2.4"></rect><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"></path></svg>
 			</div>
@@ -418,99 +681,70 @@ function lockedRow(): string {
 	`;
 }
 
-const SKIN_VARS = [
-	"--tp-surface",
-	"--tp-foreground",
-	"--tp-muted",
-	"--tp-border",
-	"--tp-primary",
-	"--tp-on-primary",
-	"--tp-radius",
-	"--tp-row-radius",
-	"--tp-font-family",
-	"--tp-font-size",
-	"--tp-shadow",
-] as const;
-
-function validColor(value: unknown): string | null {
-	if (typeof value !== "string" || value.length === 0 || value.length > 80) return null;
-	try {
-		if (typeof CSS !== "undefined" && typeof CSS.supports === "function") {
-			return CSS.supports("color", value) ? value : null;
-		}
-	} catch {
-		return null;
+/** Render body html, then report the rendered height so the parent can size the iframe.
+ *
+ * The stylesheet and the list element are created once and reused: rebuilding them on every
+ * keystroke re-parsed the CSS and restarted the entrance animation, which is exactly the flicker
+ * the render cache exists to avoid. `animate` is true only for a fresh open, so a filtered re-render
+ * is instant. */
+let sizeObserver: ResizeObserver | null = null;
+function render(
+	bodyHtml: string,
+	skin?: DropdownSkin,
+	animate = false,
+	above = false,
+	maxHeight?: number,
+): void {
+	let list = document.body.querySelector<HTMLElement>(".tp-list");
+	if (!list) {
+		document.body.innerHTML = `<style>${STYLE}</style><div class="tp-list" role="listbox" aria-label="${t("autofillOpenMenu")}"></div>`;
+		list = document.body.querySelector<HTMLElement>(".tp-list");
 	}
-	return value;
-}
-
-function validLength(value: unknown, min: number, max: number): number | null {
-	if (typeof value !== "number" || !Number.isFinite(value)) return null;
-	return Math.min(max, Math.max(min, value));
-}
-
-/** Apply the anchor field's look. Every value is checked again here: the content script is
- * trusted, but this document is the one that must never accept a malformed declaration. */
-function applySkin(skin?: Skin): void {
-	const root = document.documentElement;
-	for (const name of SKIN_VARS) root.style.removeProperty(name);
-	if (!skin) {
-		root.removeAttribute("data-theme");
-		return;
+	if (!list) return;
+	// Clamp what the content script sends: this document is reachable by anything in the tab, so
+	// it treats its input as untrusted plumbing. The default stylesheet cap applies when absent.
+	if (typeof maxHeight === "number" && Number.isFinite(maxHeight)) {
+		list.style.maxHeight = `${Math.max(96, Math.min(380, maxHeight))}px`;
 	}
-	const surface = validColor(skin.surface);
-	const foreground = validColor(skin.foreground);
-	const muted = validColor(skin.muted);
-	const border = validColor(skin.border);
-	const radius = validLength(skin.radius, 0, 16);
-	const fontSize = validLength(skin.fontSize, 11, 15);
-	if (surface) root.style.setProperty("--tp-surface", surface);
-	if (foreground) root.style.setProperty("--tp-foreground", foreground);
-	if (muted) root.style.setProperty("--tp-muted", muted);
-	if (border) root.style.setProperty("--tp-border", border);
-	if (surface && foreground) {
-		root.style.setProperty("--tp-primary", foreground);
-		root.style.setProperty("--tp-on-primary", surface);
+	list.innerHTML = bodyHtml;
+	// The note is a description of the list, not an option: point the listbox at it instead of
+	// leaving a note role inside the option set where some screen readers drop it.
+	const more = list.querySelector(".tp-more");
+	if (more) list.setAttribute("aria-describedby", "tp-more-note");
+	else list.removeAttribute("aria-describedby");
+	list.style.transformOrigin = above ? "bottom center" : "top center";
+	applySkin(list, skin);
+	// A webfont, a browser zoom or a scrollbar can change the list's height after the first paint.
+	// Without this the parent keeps the pre-font height and the last row (or the bottom border) is
+	// cut off on exactly the sites whose form fonts arrive late.
+	if (!sizeObserver && typeof ResizeObserver !== "undefined") {
+		sizeObserver = new ResizeObserver(() => reportHeight());
+		sizeObserver.observe(list);
 	}
-	if (radius !== null) {
-		root.style.setProperty("--tp-radius", `${Math.round(radius)}px`);
-		root.style.setProperty("--tp-row-radius", `${radius <= 2 ? 4 : 8}px`);
+	const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+	if (animate && !reduced && typeof list.animate === "function") {
+		list.animate(
+			[
+				{
+					opacity: 0,
+					transform: above ? "translateY(6px) scale(0.985)" : "translateY(-6px) scale(0.985)",
+				},
+				{ opacity: 1, transform: "none" },
+			],
+			{ duration: 160, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+		);
 	}
-	if (
-		typeof skin.fontFamily === "string" &&
-		skin.fontFamily.length > 0 &&
-		skin.fontFamily.length <= 200 &&
-		(typeof CSS === "undefined" ||
-			typeof CSS.supports !== "function" ||
-			CSS.supports("font-family", skin.fontFamily))
-	) {
-		root.style.setProperty("--tp-font-family", skin.fontFamily);
-	}
-	if (fontSize !== null) root.style.setProperty("--tp-font-size", `${fontSize}px`);
-	if (skin.dark === true) root.setAttribute("data-theme", "dark");
-	else if (skin.dark === false) root.setAttribute("data-theme", "light");
-	else root.removeAttribute("data-theme");
-	root.style.setProperty(
-		"--tp-shadow",
-		skin.dark === true
-			? "0 16px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06)"
-			: "0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08)",
-	);
-}
-
-/** Render body html, then report the rendered height so the parent can size the iframe. */
-function render(bodyHtml: string, skin?: Skin, animate = false): void {
-	document.body.innerHTML = `<style>${STYLE}</style><div class="tp-list${animate ? " tp-enter" : ""}" role="listbox">${bodyHtml}</div>`;
-	applySkin(skin);
 	reportHeight();
 }
 
+/** Report the list's height plus a small inset. The inset is the iframe's bottom margin for the
+ *  list's own border: a viewport sized exactly to the border-box clips that last pixel at some
+ *  device pixel ratios, which reads as a missing bottom border. */
+const BOTTOM_INSET = 2;
 function reportHeight(): void {
 	requestAnimationFrame(() => {
-		const list = document.body.querySelector<HTMLElement>(".tp-list");
-		// offsetHeight is the layout height: the entry animation's scale must not shrink the
-		// measured box, or the frame clips the last row for the duration of the animation.
-		postHeight(list ? list.offsetHeight : 0);
+		const list = document.body.querySelector(".tp-list");
+		postHeight(list ? Math.ceil(list.getBoundingClientRect().height) + BOTTOM_INSET : 0);
 	});
 }
 
@@ -555,18 +789,25 @@ function setHighlight(index: number): void {
 	rows.forEach((row, i) => {
 		const active = i === highlight;
 		row.classList.toggle("tp-active", active);
-		if (active) row.scrollIntoView?.({ block: "nearest" });
+		row.setAttribute("aria-selected", active ? "true" : "false");
+		if (active) row.scrollIntoView({ block: "nearest" });
 	});
-	post({ type: "UI_HIGHLIGHT", active: highlight >= 0 });
+	// The parent keeps focus in the page field (typing filters), so the active row is announced
+	// through its live region. The id lets Ctrl/Cmd+Enter reach the row's secondary action.
+	const active = rows[highlight] ?? null;
+	post({
+		type: "UI_HIGHLIGHT",
+		active: highlight >= 0,
+		entryId: active?.dataset.entryId,
+		label: active?.textContent?.trim() || undefined,
+	});
 }
 
-function moveHighlight(delta: number, wrap = false): void {
+function moveHighlight(delta: number): void {
 	const n = rows.length;
 	if (n === 0) return;
-	let next: number;
-	if (highlight < 0) next = delta > 0 ? 0 : n - 1;
-	else if (wrap) next = (highlight + delta + n) % n;
-	else next = Math.max(0, Math.min(n - 1, highlight + delta));
+	const next =
+		highlight < 0 ? (delta > 0 ? 0 : n - 1) : Math.max(0, Math.min(n - 1, highlight + delta));
 	setHighlight(next);
 }
 
@@ -584,10 +825,24 @@ function activate(i: number): void {
 document.addEventListener("mousedown", (e) => {
 	if (!e.isTrusted) return;
 	const target = e.target as HTMLElement | null;
+	// Let the content script see where this click landed in the page. A click on the left half of
+	// another field's mark switches the menu to that field instead of picking the row under it.
+	post({ type: "UI_POINTER", x: e.clientX, y: e.clientY });
 	// Regenerate lives inside the suggest row, so match it before data-tp-suggest.
 	if (target?.closest("[data-tp-regenerate]")) {
 		e.preventDefault();
 		post({ type: "UI_REGENERATE" });
+		return;
+	}
+	// The row's "open in Bramble" action. It is inside the row, so match it before the entry id or
+	// the row would treat this as a fill.
+	const open = target?.closest<HTMLElement>("[data-tp-open-entry]");
+	if (open) {
+		e.preventDefault();
+		const row = open.closest<HTMLElement>("[data-entry-id]");
+		if (row?.dataset.entryId && clickAllowed()) {
+			post({ type: "UI_OPEN_ENTRY", entryId: row.dataset.entryId, pointer: true });
+		}
 		return;
 	}
 	// Anything that fills is marked as a click, so the content script can time it.
@@ -620,7 +875,7 @@ document.addEventListener("mousedown", (e) => {
 	}
 });
 
-const CONTENT_TYPES = new Set(["RENDER_MATCHES", "RENDER_LOCKED", "UI_KEY", "UI_CYCLE"]);
+const CONTENT_TYPES = new Set(["RENDER_MATCHES", "RENDER_LOCKED", "UI_MAX_HEIGHT", "UI_KEY"]);
 
 window.addEventListener("message", (e) => {
 	if (RELAYED) {
@@ -665,10 +920,11 @@ function handleInbound(msg: Inbound | undefined): void {
 			}
 			for (const m of msg.matches) {
 				rows.push({ kind: "match", id: m.id });
-				body.push(matchRow(m, m.id === msg.carriedId));
+				body.push(matchRow(m, m.id === msg.carriedId, msg.skin?.compact === true));
 			}
+			if (msg.more) body.push(moreRow());
 			if (msg.newLogin) body.push(newLoginRow());
-			render(body.join(""), msg.skin, msg.animate === true);
+			render(body.join(""), msg.skin, msg.animate === true, msg.above === true, msg.maxHeight);
 			settledAt = performance.now();
 			post({ type: "UI_HIGHLIGHT", active: false });
 			break;
@@ -676,17 +932,25 @@ function handleInbound(msg: Inbound | undefined): void {
 		case "RENDER_LOCKED":
 			rows = [{ kind: "locked" }];
 			highlight = -1;
-			render(lockedRow(), msg.skin, msg.animate === true);
+			render(lockedRow(), msg.skin, msg.animate === true, msg.above === true, msg.maxHeight);
 			settledAt = performance.now();
 			post({ type: "UI_HIGHLIGHT", active: false });
 			break;
+		case "UI_MAX_HEIGHT": {
+			// The viewport changed under an open menu (a phone URL bar, a window resize). Re-cap the
+			// list and report the new height so the host can re-place it.
+			const list = document.body.querySelector<HTMLElement>(".tp-list");
+			const cap = Number(msg.maxHeight);
+			if (list && Number.isFinite(cap)) {
+				list.style.maxHeight = `${Math.max(96, Math.min(380, cap))}px`;
+				reportHeight();
+			}
+			break;
+		}
 		case "UI_KEY":
 			if (msg.key === "ArrowDown") moveHighlight(1);
 			else if (msg.key === "ArrowUp") moveHighlight(-1);
 			else if (msg.key === "Enter" && highlight >= 0) activate(highlight);
-			break;
-		case "UI_CYCLE":
-			moveHighlight(1, true);
 			break;
 	}
 }

@@ -66,6 +66,9 @@
 			"suggested_key": {
 				"default": "Alt+Shift+L"
 			}
+		},
+		"autofill-cycle-back": {
+			"description": "__MSG_cmdAutofillCycleBack__"
 		}
 	},
 	"content_security_policy": {

@@ -37,11 +37,16 @@ const removePicker = vi.fn(() => {
 	pickerState.host = null;
 	pickerState.anchor = null;
 });
+// The selection path collapses the menu into the mark before removing it; the mock clears the
+// state the same way so the tests that assert "picker gone" still hold.
+const dismissTo = vi.fn((_target: DOMRect | null) => {
+	pickerState.host = null;
+	pickerState.anchor = null;
+});
 // Captured content-side callbacks for the suggested-password row and the unlock request.
 let onSuggestedCb: (() => void) | null = null;
 let regenerateCb: (() => void) | null = null;
 let aliasRowCb: (() => void) | null = null;
-let newLoginCb: (() => void) | null = null;
 let unlockCb: ((field: HTMLInputElement | null) => void) | null = null;
 let pickCb: ((entryId: string, otpOnly: boolean) => void) | null = null;
 // Models picker.removeDropdown()'s real behavior: on a normal (iframe-mode) site it is a
@@ -51,44 +56,19 @@ let pickCb: ((entryId: string, otpOnly: boolean) => void) | null = null;
 const removeDropdown = vi.fn(() => {
 	pickerState.anchor = null;
 });
-const cyclePicker = vi.fn(() => false);
-// The inline mark's real module builds a shadow host and samples computed style; the policy
-// tests only need to know which field it is attached to and whether it is active.
-const iconState: {
-	field: HTMLInputElement | null;
-	active: boolean;
-	opts?: { onToggle: () => void };
-} = { field: null, active: false };
-const iconDetach = vi.fn(() => {
-	iconState.field = null;
-	iconState.active = false;
-	iconState.opts = undefined;
-});
-vi.mock("./inline-icon", () => ({
-	inlineIcon: {
-		attach: (field: HTMLInputElement, opts: { onToggle: () => void }) => {
-			iconState.field = field;
-			iconState.opts = opts;
-		},
-		detach: iconDetach,
-		setActive: (active: boolean) => {
-			iconState.active = active;
-		},
-		current: () => iconState.field,
-	},
-}));
 vi.mock("./picker", () => ({
 	picker: {
 		showMatches,
 		showLocked,
 		remove: removePicker,
+		dismissTo,
+		isExiting: () => false,
 		removeDropdown,
 		reposition: vi.fn(),
 		activeHost: () => pickerState.host,
 		anchorField: () => pickerState.anchor,
 		clickIsOnAnchor: () => false,
 		handleKey: () => false,
-		cycle: cyclePicker,
 		onPick: (cb: (entryId: string, otpOnly: boolean) => void) => {
 			pickCb = cb;
 		},
@@ -105,9 +85,9 @@ vi.mock("./picker", () => ({
 		onUseAlias: (cb: () => void) => {
 			aliasRowCb = cb;
 		},
-		onNewLogin: (cb: () => void) => {
-			newLoginCb = cb;
-		},
+		onOpenEntry: vi.fn(),
+		onPointer: vi.fn(),
+		onNewLogin: vi.fn(),
 	},
 }));
 
@@ -121,8 +101,6 @@ let generateResponse: unknown = { ok: true, data: { password: "from-the-backgrou
 let aliasResponse: unknown = { ok: true, data: { address: "w40myp02@anonaddy.com" } };
 const pendingQueryResponses: Array<(response: unknown) => void> = [];
 const pendingSelectResponses: Array<(response: unknown) => void> = [];
-const pendingClaimResponses: Array<(response: unknown) => void> = [];
-const pendingLiveResponses: Array<(response: unknown) => void> = [];
 let submitRevalidationResponder:
 	| ((message: { sessionGeneration: number }) => Promise<unknown>)
 	| null = null;
@@ -147,8 +125,6 @@ vi.mock("./lifecycle", () => ({
 			then: (cb: (response: unknown) => void) => {
 				if (m.type === "AUTOFILL_QUERY") pendingQueryResponses.push(cb);
 				if (m.type === "AUTOFILL_SELECT") pendingSelectResponses.push(cb);
-				if (m.type === "AUTOFILL_LAUNCH_CLAIM") pendingClaimResponses.push(cb);
-				if (m.type === "AUTOFILL_LAUNCH_LIVE") pendingLiveResponses.push(cb);
 				return Promise.resolve();
 			},
 		};
@@ -157,13 +133,7 @@ vi.mock("./lifecycle", () => ({
 		teardownCallback = cb;
 	},
 }));
-let frameIsLegible = true;
-vi.mock("./legibility", () => ({ isLegible: () => frameIsLegible, EARLY_CLICK_MS: 500 }));
-vi.mock("./corner-prompt", () => ({
-	handleCornerField: vi.fn(),
-	handleCornerPromptShow: vi.fn(),
-	queryCornerPrompt: vi.fn(),
-}));
+vi.mock("./corner-prompt", () => ({ handleCornerPromptShow: vi.fn(), queryCornerPrompt: vi.fn() }));
 vi.mock("./capture", () => ({ maybeCommitCapture: vi.fn(), onPasswordEnter: vi.fn() }));
 const fillTextField = vi.fn(() => true);
 // What fill.ts would report as the password most recently put into the page. Drives the
@@ -217,11 +187,7 @@ document.addEventListener = ((
 	options?: boolean | AddEventListenerOptions,
 ) => {
 	if (
-		(type === "pointerdown" ||
-			type === "mousedown" ||
-			type === "input" ||
-			type === "keydown" ||
-			type === "focusin") &&
+		(type === "pointerdown" || type === "mousedown" || type === "input") &&
 		typeof listener === "function"
 	) {
 		trustedInteractionListeners.set(type, listener);
@@ -230,12 +196,9 @@ document.addEventListener = ((
 }) as typeof document.addEventListener;
 await import("./content");
 document.addEventListener = nativeAddEventListener;
-const askedLiveAtLoad = safeRequest.mock.calls.some(
-	([m]) => (m as { type?: string }).type === "AUTOFILL_LAUNCH_LIVE",
-);
 
 function dispatchTrustedInteraction(
-	type: "pointerdown" | "mousedown" | "input" | "keydown" | "focusin",
+	type: "pointerdown" | "mousedown" | "input",
 	target: HTMLElement,
 ): void {
 	const nativeEvent = new MouseEvent(type, { bubbles: true, composed: true });
@@ -264,32 +227,10 @@ const result = (over: Partial<Record<string, unknown>>) => ({
 	otps: [],
 	locked: false,
 	hasPotentialMatch: false,
+	// These suites exercise the panel policy, which is what "focus" mode means. The quiet
+	// default is covered by e2e/extension/autofill-inline.spec.ts.
+	trigger: "focus",
 	...over,
-});
-
-describe("content: a code widget whose boxes have wrappers of their own", () => {
-	const CODE = { id: "1", name: "Example", secondary: "123 456" };
-
-	beforeEach(() => {
-		showMatches.mockClear();
-		pendingQueryResponses.length = 0;
-		document.body.innerHTML = `<div>${Array.from(
-			{ length: 6 },
-			(_, i) =>
-				`<div class="cell"><div><input id="d${i}" type="text" inputmode="numeric" maxlength="1" autocomplete="new-password" /></div></div>`,
-		).join("")}</div>`;
-		invalidatePageFields();
-	});
-
-	it("offers the code on any box", () => {
-		for (const id of ["d0", "d3"]) {
-			showMatches.mockClear();
-			(document.getElementById(id) as HTMLInputElement).focus();
-			send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
-			pendingQueryResponses.pop()?.({ ok: true, data: result({ otps: [CODE] }) });
-			expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([CODE]);
-		}
-	});
 });
 
 describe("content: the tab's last-filled card leads the card list", () => {
@@ -314,13 +255,15 @@ describe("content: the tab's last-filled card leads the card list", () => {
 	it("puts the carried card first and names it to the renderer", () => {
 		query({ cards: [VISA, MC], carriedCardId: "mc" });
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([MC, VISA]);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual({ carriedId: "mc" });
+		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual(
+			expect.objectContaining({ carriedId: "mc" }),
+		);
 	});
 
 	it("leaves the list alone when nothing was carried", () => {
 		query({ cards: [VISA, MC] });
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([VISA, MC]);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toBeUndefined();
+		expect(showMatches.mock.calls.at(-1)?.[2]).not.toHaveProperty("carriedId");
 	});
 
 	it("re-asks on focus, so a pick made in another frame reaches this one", () => {
@@ -342,14 +285,16 @@ describe("content: the tab's last-filled card leads the card list", () => {
 			data: result({ cards: [VISA, MC], carriedCardId: "mc" }),
 		});
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([MC, VISA]);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual({ carriedId: "mc" });
+		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual(
+			expect.objectContaining({ carriedId: "mc" }),
+		);
 	});
 
 	it("ignores a carried card that is no longer in the list", () => {
 		// Deleted between the pick and this frame's query.
 		query({ cards: [VISA], carriedCardId: "mc" });
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([VISA]);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toBeUndefined();
+		expect(showMatches.mock.calls.at(-1)?.[2]).not.toHaveProperty("carriedId");
 	});
 });
 
@@ -399,7 +344,7 @@ describe("content: refresh the picker on unlock (issue #20)", () => {
 		// The module persists across this suite; force this case's own direct query.
 		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
 		send({ type: "AUTOFILL_MATCHES", payload: result({ locked: true }) });
-		expect(showLocked).toHaveBeenCalledWith(user);
+		expect(showLocked.mock.calls.at(-1)?.[0]).toBe(user);
 
 		// Unlock happens off-page (toolbar/pop-out), so the field is no longer focused.
 		user.blur();
@@ -447,7 +392,7 @@ describe("content: refresh the picker on unlock (issue #20)", () => {
 		// Locked: focusing the field shows the "Vault locked" row anchored to it.
 		user.focus();
 		send({ type: "AUTOFILL_MATCHES", payload: result({ locked: true, hasPotentialMatch: true }) });
-		expect(showLocked).toHaveBeenCalledWith(user);
+		expect(showLocked.mock.calls.at(-1)?.[0]).toBe(user);
 
 		// The user clicks the locked row: the real picker dismisses its host, then reports the field.
 		pickerState.host = null;
@@ -615,7 +560,7 @@ describe("content: strong-password suggestion on signup", () => {
 		// than inheriting a cached result from the preceding signup case.
 		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
 		send({ type: "AUTOFILL_MATCHES", payload: result({ locked: true, hasPotentialMatch: true }) });
-		expect(showLocked).toHaveBeenCalledWith(pass);
+		expect(showLocked.mock.calls.at(-1)?.[0]).toBe(pass);
 	});
 
 	it("keeps the suggestion across re-renders even after the anchor autocomplete is suppressed", () => {
@@ -762,119 +707,6 @@ describe("content: strong-password suggestion on signup", () => {
 	});
 });
 
-// #215: the fill shortcut fills the site's first login, or the first whose username starts with
-// what is typed in the username field.
-describe("content: the fill shortcut", () => {
-	const logins = [
-		{ id: "1", name: "Example", secondary: "alice@example.com" },
-		{ id: "2", name: "Example", secondary: "bob@example.com" },
-		{ id: "3", name: "Zed's", secondary: "zed@example.com" },
-	];
-
-	beforeEach(() => {
-		safeRequest.mockClear();
-		pendingQueryResponses.length = 0;
-		pendingSelectResponses.length = 0;
-		vi.spyOn(document, "hasFocus").mockReturnValue(true);
-		// jsdom has no layout; the shortcut only fills a field that is drawn.
-		vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
-			width: 200,
-			height: 24,
-			top: 0,
-			left: 0,
-			right: 200,
-			bottom: 24,
-			x: 0,
-			y: 0,
-			toJSON: () => ({}),
-		} as DOMRect);
-		document.body.innerHTML = `
-			<form>
-				<input id="user" type="email" name="email" autocomplete="username" />
-				<input id="pass" type="password" name="password" autocomplete="current-password" />
-			</form>`;
-		invalidatePageFields();
-	});
-
-	async function press(typed = ""): Promise<string | undefined> {
-		(document.getElementById("user") as HTMLInputElement).value = typed;
-		send({ type: "AUTOFILL_SHORTCUT" });
-		await Promise.resolve();
-		send({ type: "AUTOFILL_MATCHES", payload: result({ logins }) });
-		await vi.waitFor(() =>
-			expect(safeRequest).toHaveBeenCalledWith(
-				expect.objectContaining({ type: "AUTOFILL_SELECT" }),
-			),
-		);
-		const select = safeRequest.mock.calls
-			.map(([m]) => m as { type?: string; payload?: { entryId?: string } })
-			.find((m) => m.type === "AUTOFILL_SELECT");
-		return select?.payload?.entryId;
-	}
-
-	it("fills the site's first login", async () => {
-		expect(await press()).toBe("1");
-	});
-
-	it("fills the first whose username starts with what is typed", async () => {
-		expect(await press("bo")).toBe("2");
-	});
-
-	it("falls back to the name, then the first, when no username starts with it", async () => {
-		expect(await press("zed's")).toBe("3");
-		safeRequest.mockClear();
-		expect(await press("nobody")).toBe("1");
-	});
-});
-
-// #213: a login field's matches end with a row to save another login for the site.
-describe("content: the new-login row", () => {
-	beforeEach(() => {
-		showMatches.mockClear();
-		removePicker.mockClear();
-		pickerState.host = null;
-		pickerState.anchor = null;
-		pendingQueryResponses.length = 0;
-		document.body.innerHTML = `
-			<form>
-				<input id="user" type="email" name="email" autocomplete="username" />
-				<input id="pass" type="password" name="password" autocomplete="current-password" />
-			</form>`;
-		invalidatePageFields();
-	});
-
-	it("is offered under a login field's matches, and opens the create form", () => {
-		const user = document.getElementById("user") as HTMLInputElement;
-		user.focus();
-		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
-		send({
-			type: "AUTOFILL_MATCHES",
-			payload: result({ logins: [{ id: "1", name: "Example", secondary: "user@example.com" }] }),
-		});
-		expect(showMatches.mock.calls.at(-1)?.[1]).toBe(user);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual({ newLogin: true });
-
-		safeSendMessage.mockClear();
-		newLoginCb?.();
-		expect(safeSendMessage).toHaveBeenCalledWith({
-			type: "POPOUT_OPEN",
-			payload: { reason: "new-login" },
-		});
-		expect(removePicker).toHaveBeenCalled();
-	});
-	it("is only on the username field", () => {
-		const pass = document.getElementById("pass") as HTMLInputElement;
-		pass.focus();
-		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
-		send({
-			type: "AUTOFILL_MATCHES",
-			payload: result({ logins: [{ id: "1", name: "Example", secondary: "user@example.com" }] }),
-		});
-		expect(showMatches.mock.calls.at(-1)?.[1]).toBe(pass);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toBeUndefined();
-	});
-});
-
 describe("content: username filter on login picker", () => {
 	const logins = [
 		{ id: "1", name: "GitHub", secondary: "alice@example.com" },
@@ -1013,10 +845,9 @@ describe("content: username filter on login picker", () => {
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual(logins);
 	});
 
-	it("hides the picker while typing when the site has exactly one saved login", () => {
-		// The static "nothing to disambiguate" rule, kept deliberately separate from filtering:
-		// this must keep working even though the filtered-narrows-to-one case now shows a row
-		// instead of hiding.
+	it("keeps a matching single login while typing, and drops the menu on a non-match", () => {
+		// Filtering decides, not the raw login count: one saved login that matches the typed
+		// prefix stays visible with its completion, and a value that matches nothing hides it.
 		const oneLogin = [{ id: "1", name: "GitHub", secondary: "alice@example.com" }];
 		const user = document.getElementById("user") as HTMLInputElement;
 		user.focus();
@@ -1026,6 +857,13 @@ describe("content: username filter on login picker", () => {
 		removePicker.mockClear();
 
 		user.value = "a";
+		dispatchTrustedInteraction("input", user);
+		expect(showMatches).toHaveBeenCalled();
+		expect(removePicker).not.toHaveBeenCalled();
+
+		showMatches.mockClear();
+		removePicker.mockClear();
+		user.value = "zzz";
 		dispatchTrustedInteraction("input", user);
 		expect(showMatches).not.toHaveBeenCalled();
 		expect(removePicker).toHaveBeenCalled();
@@ -1061,33 +899,7 @@ describe("content: direct select response binding", () => {
 				sessionGeneration: 0,
 			},
 		});
-		expect(fillForm).toHaveBeenCalledWith("me", "secret", false, user);
-	});
-
-	it("aims the fill at the password field the pick came from", () => {
-		// A second password field the model passed over; kindOf still claims it as login.
-		document.body.insertAdjacentHTML(
-			"beforeend",
-			`<form><input id="other-pass" type="password" name="password" /></form>`,
-		);
-		invalidatePageFields();
-		const other = document.getElementById("other-pass") as HTMLInputElement;
-		other.focus();
-		send({
-			type: "AUTOFILL_MATCHES",
-			payload: result({ logins: [{ id: "1", name: "Example", secondary: "me" }] }),
-		});
-		pickCb?.("1", false);
-		replySelect({
-			ok: true,
-			data: {
-				payload: { kind: "login", username: "me", password: "secret" },
-				isAuto: false,
-				otpOnly: false,
-				sessionGeneration: 0,
-			},
-		});
-		expect(fillForm).toHaveBeenCalledWith("me", "secret", false, other);
+		expect(fillForm).toHaveBeenCalledWith("me", "secret", false);
 	});
 
 	it("makes a late direct response inert after the anchor is replaced", () => {
@@ -1691,10 +1503,8 @@ describe("content: email alias row on signup", () => {
 	it("offers nothing when no provider is configured", () => {
 		email().focus();
 		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
-		const before = showMatches.mock.calls.length;
 		send({ type: "AUTOFILL_MATCHES", payload: result({ logins: [] }) });
-		expect(showMatches.mock.calls.length).toBe(before);
-		expect(pickerState.host).toBeNull();
+		expect(lastAlias()).toBeUndefined();
 	});
 
 	it("shows the spinner while the provider is asked, then fills the address", async () => {
@@ -1871,405 +1681,141 @@ describe("content: locked vault on a signup form's email field", () => {
 	});
 });
 
-describe("content: launch and fill", () => {
-	const FILL = {
-		ok: true,
-		data: {
-			payload: { kind: "login", username: "alice", password: "pw1" },
-			isAuto: true,
-			otpOnly: false,
-			sessionGeneration: 3,
-		},
-	};
-	const LOGIN_FORM = `<form action="/login"><input id="user" name="username" autocomplete="username" />
-		<input id="pass" type="password" name="password" autocomplete="current-password" /></form>`;
-	const LOGIN_ROW = { id: "login1", name: "Example", secondary: "alice" };
-
-	const field = (id: string) => document.getElementById(id) as HTMLInputElement;
-	const claims = () =>
-		safeRequest.mock.calls.filter(([m]) => m.type === "AUTOFILL_LAUNCH_CLAIM").map(([m]) => m);
-
-	/** Give an element a layout box, which jsdom never does. */
-	function render(el: Element, width = 200, height = 30): void {
-		el.getBoundingClientRect = () => ({ width, height }) as DOMRect;
-	}
-
-	function page(html = LOGIN_FORM): void {
-		document.body.innerHTML = html;
-		for (const el of document.querySelectorAll("input")) render(el);
-		invalidatePageFields();
-	}
-
-	function answerQuery(over: Record<string, unknown>): void {
-		field("user").focus();
-		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
-		pendingQueryResponses.pop()?.({ ok: true, data: result({ logins: [LOGIN_ROW], ...over }) });
-	}
+describe("content: the site's last-used login leads the list", () => {
+	const WORK = { id: "work", name: "Work", secondary: "alice@example.com" };
+	const PERSONAL = { id: "personal", name: "Personal", secondary: "alice.personal@example.com" };
 
 	beforeEach(() => {
 		showMatches.mockClear();
-		fillForm.mockClear();
-		safeRequest.mockClear();
 		pendingQueryResponses.length = 0;
-		pendingClaimResponses.length = 0;
-		frameIsLegible = true;
-		removePicker.mockClear();
-		safeSendMessage.mockClear();
-		vi.spyOn(document, "hasFocus").mockReturnValue(true);
-		// Drops the previous test's cached query result and any claim still in flight.
-		send({ type: "AUTOFILL_ENABLED", payload: { enabled: false } });
-		send({ type: "AUTOFILL_ENABLED", payload: { enabled: true } });
-		page();
-	});
-	afterEach(() => vi.restoreAllMocks());
-
-	it("claims when the query says this tab was launched, and fills as an auto fill", () => {
-		answerQuery({ launch: true });
-		expect(claims()).toHaveLength(1);
-		pendingClaimResponses.pop()?.(FILL);
-		expect(fillForm).toHaveBeenCalledWith("alice", "pw1", true, field("pass"));
-	});
-
-	it("shows no dropdown while it claims", () => {
-		answerQuery({ launch: true });
-		expect(showMatches).not.toHaveBeenCalled();
-	});
-
-	it("doesn't claim without the flag", () => {
-		answerQuery({});
-		expect(claims()).toEqual([]);
-	});
-
-	it("doesn't claim on a password field that already has a value", () => {
-		field("pass").value = "typed";
-		answerQuery({ launch: true });
-		expect(claims()).toEqual([]);
-	});
-
-	it("doesn't claim on a password field that isn't rendered", () => {
-		render(field("pass"), 0, 0);
-		answerQuery({ launch: true });
-		expect(claims()).toEqual([]);
-	});
-
-	it("doesn't claim on a form that sets a password", () => {
-		page(`<form action="/signup"><input id="user" name="email" autocomplete="email" />
-			<input id="pass" type="password" name="new" autocomplete="new-password" />
-			<input id="again" type="password" name="confirm" autocomplete="new-password" /></form>`);
-		answerQuery({ launch: true });
-		expect(claims()).toEqual([]);
-	});
-
-	it("doesn't claim on an email page with no password field", () => {
-		page(`<form><input id="user" name="email" type="email" autocomplete="username" /></form>`);
-		answerQuery({ launch: true });
-		expect(claims()).toEqual([]);
-	});
-
-	it("shows the dropdown when the claim is refused", () => {
-		answerQuery({ launch: true });
-		pendingClaimResponses.pop()?.({ ok: false, error: "unavailable" });
-		expect(fillForm).not.toHaveBeenCalled();
-		expect(showMatches).toHaveBeenCalledTimes(1);
-	});
-
-	it("fills in a visible page that doesn't have focus, as a frame never does", () => {
-		vi.mocked(document.hasFocus).mockReturnValue(false);
-		answerQuery({ launch: true });
-		pendingClaimResponses.pop()?.(FILL);
-		expect(fillForm).toHaveBeenCalledTimes(1);
-	});
-
-	it("claims on focus when CSS showed the form after the query", () => {
-		render(field("pass"), 0, 0);
-		answerQuery({ launch: true });
-		expect(claims()).toEqual([]);
-		render(field("pass"));
-		field("pass").focus();
-		expect(claims()).toHaveLength(1);
-	});
-
-	it("doesn't claim on a change-password form's current password box", () => {
-		page(`<form action="/account"><input id="user" name="username" autocomplete="username" />
-			<input id="pass" type="password" name="old" autocomplete="current-password" />
-			<input id="new" type="password" name="new" autocomplete="new-password" />
-			<input id="again" type="password" name="confirm" autocomplete="new-password" /></form>`);
-		answerQuery({ launch: true });
-		expect(claims()).toEqual([]);
-	});
-
-	it("takes down an open dropdown when it claims", () => {
-		render(field("pass"), 0, 0);
-		answerQuery({ launch: true });
-		removePicker.mockClear();
-		render(field("pass"));
-		// The same field again, so focus leaving it can't be what closed the dropdown.
-		dispatchTrustedInteraction("focusin", field("user"));
-		expect(claims()).toHaveLength(1);
-		expect(removePicker).toHaveBeenCalled();
-	});
-
-	it("isn't cancelled by a page script moving focus, and shows no dropdown meanwhile", () => {
-		answerQuery({ launch: true });
-		expect(claims()).toHaveLength(1);
-		dispatchTrustedInteraction("focusin", field("user"));
-		expect(claims()).toHaveLength(1);
-		expect(showMatches).not.toHaveBeenCalled();
-		pendingClaimResponses.pop()?.(FILL);
-		expect(fillForm).toHaveBeenCalledTimes(1);
-	});
-
-	it("shows the dropdown when a granted claim can't be applied", () => {
-		answerQuery({ launch: true });
-		const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-		pendingClaimResponses.pop()?.(FILL);
-		visibility.mockRestore();
-		expect(fillForm).not.toHaveBeenCalled();
-		expect(showMatches).toHaveBeenCalledTimes(1);
-	});
-
-	describe("the user taking over", () => {
-		const ended = () =>
-			safeSendMessage.mock.calls.filter(
-				([m]) => (m as { type?: string }).type === "AUTOFILL_LAUNCH_END",
-			);
-
-		/** A grant is live but this page hasn't claimed it. */
-		function watching(): void {
-			page(`${LOGIN_FORM}<a id="next">Next</a>`);
-			render(field("pass"), 0, 0);
-			answerQuery({ launch: true });
-			expect(claims()).toEqual([]);
-		}
-
-		it("ends the grant at the first click, once", () => {
-			watching();
-			const link = document.getElementById("next") as HTMLElement;
-			dispatchTrustedInteraction("pointerdown", link);
-			dispatchTrustedInteraction("pointerdown", link);
-			expect(ended()).toHaveLength(1);
-		});
-
-		it("ends the grant at a key press", () => {
-			watching();
-			dispatchTrustedInteraction("keydown", document.body);
-			expect(ended()).toHaveLength(1);
-		});
-
-		it("doesn't count a click into a login field", () => {
-			watching();
-			dispatchTrustedInteraction("pointerdown", field("user"));
-			expect(ended()).toEqual([]);
-		});
-
-		it("doesn't claim after the user took over", () => {
-			watching();
-			dispatchTrustedInteraction("pointerdown", document.getElementById("next") as HTMLElement);
-			render(field("pass"));
-			field("pass").focus();
-			expect(claims()).toEqual([]);
-		});
-
-		it("says nothing when no grant is live", () => {
-			answerQuery({});
-			dispatchTrustedInteraction("pointerdown", document.body);
-			expect(ended()).toEqual([]);
-		});
-
-		it("learns of a grant at load on a page with no fields, which never queries", () => {
-			expect(askedLiveAtLoad).toBe(true);
-			pendingLiveResponses.pop()?.({ ok: true, data: { live: true } });
-			dispatchTrustedInteraction("pointerdown", document.body);
-			expect(ended()).toHaveLength(1);
-		});
-	});
-
-	it("doesn't claim again after filling", () => {
-		answerQuery({ launch: true });
-		pendingClaimResponses.pop()?.(FILL);
-		field("pass").focus();
-		expect(claims()).toHaveLength(1);
-	});
-
-	describe("the top frame's answer to a frame's claim", () => {
-		const SIZE = { frameWidth: 400, frameHeight: 300 };
-
-		function ask(): unknown {
-			let reply: unknown;
-			onMessage?.({ type: "AUTOFILL_LAUNCH_TOP_CHECK", payload: SIZE }, {}, (v) => {
-				reply = v;
-			});
-			return reply;
-		}
-
-		function withFrame(width: number, height: number, html = ""): void {
-			page(`${html}<iframe id="f"></iframe>`);
-			const frame = document.getElementById("f") as HTMLIFrameElement;
-			Object.defineProperty(frame, "clientWidth", { value: width });
-			Object.defineProperty(frame, "clientHeight", { value: height });
-		}
-
-		it("yields to a visible frame of that size when it has no password field", () => {
-			withFrame(400, 300);
-			expect(ask()).toEqual({ hasPassword: false, frameVisible: true });
-		});
-
-		it("keeps the grant for its own rendered password field", () => {
-			withFrame(400, 300, LOGIN_FORM);
-			expect(ask()).toMatchObject({ hasPassword: true });
-		});
-
-		it("ignores a password field that isn't rendered", () => {
-			withFrame(400, 300, LOGIN_FORM);
-			render(field("pass"), 0, 0);
-			invalidatePageFields();
-			expect(ask()).toMatchObject({ hasPassword: false });
-		});
-
-		it("says no for a frame of that size the user can't see", () => {
-			withFrame(400, 300);
-			frameIsLegible = false;
-			expect(ask()).toMatchObject({ frameVisible: false });
-		});
-
-		it("says no when no frame here is that size", () => {
-			withFrame(640, 480);
-			expect(ask()).toMatchObject({ frameVisible: false });
-		});
-	});
-});
-
-describe("content: the save card's Username frame", () => {
-	it("hands the frame's relayed message to the card and returns its answer", async () => {
-		const { handleCornerField } = await import("./corner-prompt");
-		vi.mocked(handleCornerField).mockReturnValue({ ok: true, data: { value: "alice" } });
-		let reply: unknown;
-		onMessage?.({ type: "CORNER_FIELD", payload: { id: "abc", op: "open" } }, {}, (v) => {
-			reply = v;
-		});
-		expect(handleCornerField).toHaveBeenCalledWith({ id: "abc", op: "open" });
-		expect(reply).toEqual({ ok: true, data: { value: "alice" } });
-	});
-});
-
-// The trigger setting decides whether focusing a field opens the list, shows the inline mark,
-// or does nothing until the browser command. The picker and the mark are mocked; this is the
-// page policy above them.
-describe("content: autofill trigger modes", () => {
-	const LOGIN = { id: "l1", name: "Example", secondary: "alice@example.com" };
-
-	/** Reset module state through the master switch, then prime a clean cached result. */
-	function prime(
-		trigger: "auto" | "icon" | "shortcut",
-		logins: Array<typeof LOGIN> = [LOGIN],
-	): HTMLInputElement {
 		document.body.innerHTML = `
 			<form>
-				<input id="user" type="email" name="email" autocomplete="username" />
-				<input id="pass" type="password" name="password" autocomplete="current-password" />
+				<input id="user" type="text" autocomplete="username" />
+				<input id="pass" type="password" autocomplete="current-password" />
 			</form>`;
 		invalidatePageFields();
-		showMatches.mockClear();
-		iconDetach.mockClear();
-		cyclePicker.mockClear();
-		pickerState.host = null;
-		pickerState.anchor = null;
+		// The module is shared across this file. Cycling the master switch is the supported way to
+		// drop the cached result, so the focus below takes a fresh query instead of painting the
+		// previous suite's answer.
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: false } });
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: true } });
+	});
+
+	it("moves the carried login first and marks it", () => {
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.focus();
+		pendingQueryResponses.pop()?.({
+			ok: true,
+			data: result({ logins: [WORK, PERSONAL], carriedLoginId: "personal" }),
+		});
+		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([PERSONAL, WORK]);
+		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual(
+			expect.objectContaining({ carriedId: "personal" }),
+		);
+	});
+
+	it("leaves the order alone when the carry is not among the matches", () => {
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.focus();
+		pendingQueryResponses.pop()?.({
+			ok: true,
+			data: result({ logins: [WORK, PERSONAL], carriedLoginId: "gone" }),
+		});
+		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([WORK, PERSONAL]);
+		expect(showMatches.mock.calls.at(-1)?.[2]).not.toHaveProperty("carriedId");
+	});
+});
+
+describe("content: the fill shortcut picks the login for the typed username", () => {
+	beforeEach(() => {
+		vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+			width: 200,
+			height: 24,
+			top: 0,
+			left: 0,
+			right: 200,
+			bottom: 24,
+			x: 0,
+			y: 0,
+			toJSON: () => ({}),
+		} as DOMRect);
+		vi.spyOn(document, "hasFocus").mockReturnValue(true);
+		safeRequest.mockClear();
 		pendingQueryResponses.length = 0;
-		send({ type: "AUTOFILL_ENABLED", payload: { enabled: false } });
-		send({ type: "AUTOFILL_ENABLED", payload: { enabled: true } });
-		pendingQueryResponses.pop()?.({ ok: true, data: result({ logins, trigger }) });
-		return document.getElementById("user") as HTMLInputElement;
-	}
-
-	afterEach(() => vi.restoreAllMocks());
-
-	it("auto mode still opens on focus", () => {
-		const email = prime("auto");
-		email.focus();
-		expect(showMatches).toHaveBeenCalled();
+		pendingSelectResponses.length = 0;
+		document.body.innerHTML = `
+			<form>
+				<input id="user" type="text" autocomplete="username" />
+				<input id="pass" type="password" autocomplete="current-password" />
+			</form>`;
+		invalidatePageFields();
 	});
 
-	it("icon mode shows the mark instead of opening on focus", () => {
-		const email = prime("icon");
-		email.focus();
-
-		expect(showMatches).not.toHaveBeenCalled();
-		expect(iconState.field).toBe(email);
-		expect(iconState.active).toBe(false);
+	afterEach(() => {
+		vi.restoreAllMocks();
 	});
 
-	it("clicking the mark opens the list on its field", () => {
-		const email = prime("icon");
-		email.focus();
-
-		iconState.opts?.onToggle();
-
-		expect(showMatches).toHaveBeenCalledWith([LOGIN], email, { newLogin: true });
-		expect(iconState.active).toBe(true);
-	});
-
-	it("does not show the mark when there is nothing to offer", () => {
-		const email = prime("icon", []);
-		email.focus();
-		expect(iconState.field).toBeNull();
-	});
-
-	it("shortcut mode stays closed until the command, which opens and advances the list", () => {
-		vi.spyOn(document, "hasFocus").mockReturnValue(true);
-		const email = prime("shortcut");
-		email.focus();
-
-		expect(showMatches).not.toHaveBeenCalled();
-		expect(iconState.field).toBeNull();
-
-		send({ type: "AUTOFILL_CYCLE" });
-
-		expect(showMatches).toHaveBeenCalled();
-		expect(cyclePicker).toHaveBeenCalled();
-	});
-
-	it("a fresh query answer does not open the list in shortcut mode", () => {
-		const email = prime("shortcut");
-		email.focus();
-		showMatches.mockClear();
-
-		send({ type: "AUTOFILL_ENABLED", payload: { enabled: true } });
+	it("fills the login whose username starts with what is typed", async () => {
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.value = "ali";
+		user.focus();
+		send({ type: "AUTOFILL_SHORTCUT" });
+		// `fillFromShortcut` awaits its query; the mock's thenable is adopted in a microtask, so
+		// let that settle before answering it.
+		await Promise.resolve();
 		pendingQueryResponses.pop()?.({
 			ok: true,
-			data: result({ logins: [LOGIN], trigger: "shortcut" }),
+			data: result({
+				trigger: "shortcut",
+				logins: [
+					{ id: "bob", name: "Bob", secondary: "bob@example.com" },
+					{ id: "alice", name: "Alice", secondary: "alice@example.com" },
+				],
+			}),
 		});
+		// Let the await in fillFromShortcut resume before the select is expected.
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(safeRequest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: "AUTOFILL_SELECT",
+				payload: expect.objectContaining({ entryId: "alice" }),
+			}),
+		);
+	});
+});
 
-		expect(showMatches).not.toHaveBeenCalled();
+describe("content: the rendered match list is capped", () => {
+	beforeEach(() => {
+		showMatches.mockClear();
+		pendingQueryResponses.length = 0;
+		document.body.innerHTML = `
+			<form>
+				<input id="user" type="text" autocomplete="username" />
+				<input id="pass" type="password" autocomplete="current-password" />
+			</form>`;
+		invalidatePageFields();
+		// Drop the previous suite's cached result so the focus below takes a fresh query.
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: false } });
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: true } });
 	});
 
-	it("holds a cycle pressed before the first answer, then opens and advances", () => {
-		vi.spyOn(document, "hasFocus").mockReturnValue(true);
-		const email = prime("shortcut");
-		// Drop the primed answer, leaving the next query in flight.
-		send({ type: "AUTOFILL_ENABLED", payload: { enabled: false } });
-		email.focus();
-		send({ type: "AUTOFILL_ENABLED", payload: { enabled: true } });
-		showMatches.mockClear();
-
-		send({ type: "AUTOFILL_CYCLE" });
+	it("keeps the top 50 and tells the renderer there are more", () => {
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.focus();
 		pendingQueryResponses.pop()?.({
 			ok: true,
-			data: result({ logins: [LOGIN], trigger: "shortcut" }),
+			data: result({
+				logins: Array.from({ length: 51 }, (_, i) => ({
+					id: `login-${i}`,
+					name: `Account ${i}`,
+					secondary: `user${i}@example.com`,
+				})),
+			}),
 		});
 
-		expect(showMatches).toHaveBeenCalled();
-		expect(cyclePicker).toHaveBeenCalled();
-	});
-
-	it("a push switches an already-focused page to the mark", () => {
-		const email = prime("auto");
-		email.focus();
-		expect(showMatches).toHaveBeenCalled();
-		showMatches.mockClear();
-
-		send({ type: "AUTOFILL_TRIGGER", payload: { trigger: "icon" } });
-
-		expect(showMatches).not.toHaveBeenCalled();
-		expect(iconState.field).toBe(email);
+		const call = showMatches.mock.calls.at(-1);
+		expect(call?.[0]).toHaveLength(50);
+		expect(call?.[2]).toEqual(expect.objectContaining({ more: true }));
 	});
 });

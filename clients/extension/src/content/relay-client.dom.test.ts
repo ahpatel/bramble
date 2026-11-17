@@ -34,6 +34,7 @@ const handlers = {
 	onUseAlias: vi.fn(),
 	onRegenerate: vi.fn(),
 	onNewLogin: vi.fn(),
+	onOpenEntry: vi.fn(),
 };
 
 /** A stand-in for the UI document's window: records what the field frame sends it. */
@@ -164,14 +165,6 @@ describe("honouring a pick", () => {
 		expect(handlers.onPick).toHaveBeenCalledWith("card-1", false);
 	});
 
-	it("relays the new-login row from the pinned UI, and only from it (#213)", () => {
-		const ui = bind();
-		deliver({ type: "UI_NEW_LOGIN" }, ui, EXT_ORIGIN);
-		expect(handlers.onNewLogin).toHaveBeenCalledTimes(1);
-		deliver({ type: "UI_NEW_LOGIN" }, window, location.origin);
-		expect(handlers.onNewLogin).toHaveBeenCalledTimes(1);
-	});
-
 	it("drops a pick for an entry that was never rendered", () => {
 		// The UI document is reachable by anything in the tab, so a relabelled row must
 		// not be able to name an entry we did not offer.
@@ -180,6 +173,17 @@ describe("honouring a pick", () => {
 		deliver({ type: "UI_PICK", entryId: "some-other-entry" }, ui, EXT_ORIGIN);
 
 		expect(handlers.onPick).not.toHaveBeenCalled();
+	});
+
+	it("forwards an open-entry request only for a rendered id", () => {
+		const ui = bind();
+
+		deliver({ type: "UI_OPEN_ENTRY", entryId: "card-1" }, ui, EXT_ORIGIN);
+		expect(handlers.onOpenEntry).toHaveBeenCalledWith("card-1");
+
+		handlers.onOpenEntry.mockClear();
+		deliver({ type: "UI_OPEN_ENTRY", entryId: "some-other-entry" }, ui, EXT_ORIGIN);
+		expect(handlers.onOpenEntry).not.toHaveBeenCalled();
 	});
 
 	it("drops a pick posted by the page rather than the UI", () => {

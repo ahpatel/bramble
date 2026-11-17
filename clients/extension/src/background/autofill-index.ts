@@ -13,6 +13,7 @@ type BrowserIndexEntry = Exclude<IndexEntry, { type: "unlock-key" }>;
 
 import { AliasError } from "@core/aliases";
 import { decodeEntriesPayload } from "@core/sync";
+import { type AutofillTrigger, isAutofillTrigger } from "@core/util/autofill-trigger";
 import { parseTotp, totpAt } from "@core/util/totp";
 import { loginHosts } from "@core/vault/autofill-index";
 import { normalizeEntryData } from "@core/vault/entry-normalize";
@@ -45,7 +46,12 @@ import {
 } from "./launch-fill";
 import { sendToOffscreen } from "./offscreen-client";
 import { generateSuggestion } from "./password-gen";
-import { getAutofillEnabled, getAutofillTrigger } from "./prefs";
+import {
+	getAutofillEnabled,
+	getAutofillIconHintSeen,
+	getAutofillTrigger,
+	markAutofillIconHintSeen,
+} from "./prefs";
 import { extensionOnly, type MessageEnvelope, on } from "./router";
 import {
 	type AutofillSessionCapability,
@@ -148,6 +154,80 @@ function watchCardCarry(): void {
 }
 watchCardCarry();
 
+/** The login last filled on a site, so the next visit's list leads with it. Memory-only, opaque
+ *  id only, cleared on lock. */
+type LoginCarry = Readonly<{
+	vaultId: string;
+	entryId: string;
+	at: number;
+}>;
+const LOGIN_CARRY_KEY = "autofill.loginCarry";
+const loginCarry = new Map<string, LoginCarry>();
+const LOGIN_CARRY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_LOGIN_CARRIES = 100;
+
+let loginCarryHydrated: Promise<void> | null = null;
+/** Load the session-backed map once. A stored entry never replaces one this worker already wrote. */
+function hydrateLoginCarry(): Promise<void> {
+	if (loginCarryHydrated) return loginCarryHydrated;
+	loginCarryHydrated = (async () => {
+		try {
+			const stored = (await api.storage.session.get(LOGIN_CARRY_KEY))[LOGIN_CARRY_KEY];
+			if (!stored || typeof stored !== "object") return;
+			for (const [site, value] of Object.entries(stored as Record<string, unknown>)) {
+				if (!site || !value || typeof value !== "object") continue;
+				const { vaultId, entryId, at } = value as Partial<LoginCarry>;
+				if (typeof vaultId !== "string" || typeof entryId !== "string" || typeof at !== "number") {
+					continue;
+				}
+				if (!loginCarry.has(site)) loginCarry.set(site, { vaultId, entryId, at });
+			}
+		} catch {}
+	})();
+	return loginCarryHydrated;
+}
+void hydrateLoginCarry();
+
+async function persistLoginCarry(): Promise<void> {
+	try {
+		await hydrateLoginCarry();
+		await api.storage.session.set({ [LOGIN_CARRY_KEY]: Object.fromEntries(loginCarry) });
+	} catch {}
+}
+
+/** Remember a login fill for its registrable domain, evicting the least recently written site. */
+function rememberLoginCarry(kind: FillPayload["kind"], entryId: string, hostname: string): void {
+	if (kind !== "login") return;
+	const owner = autofillSessionOwner();
+	if (!owner) return;
+	const site = registrableDomain(hostname);
+	if (!site) return;
+	// Delete-then-set moves the site to the tail, so the cap evicts the site written longest ago.
+	loginCarry.delete(site);
+	loginCarry.set(site, { vaultId: owner.vaultId, entryId, at: Date.now() });
+	while (loginCarry.size > MAX_LOGIN_CARRIES) {
+		const oldest = loginCarry.keys().next().value;
+		if (oldest === undefined) break;
+		loginCarry.delete(oldest);
+	}
+	void persistLoginCarry();
+}
+
+/** The carried login for `hostname`, dropping one from another vault or past its TTL. */
+async function carriedLoginId(hostname: string): Promise<string | null> {
+	await hydrateLoginCarry();
+	const site = registrableDomain(hostname);
+	if (!site) return null;
+	const carry = loginCarry.get(site);
+	if (!carry) return null;
+	const owner = autofillSessionOwner();
+	if (!owner || owner.vaultId !== carry.vaultId || Date.now() - carry.at > LOGIN_CARRY_TTL_MS) {
+		loginCarry.delete(site);
+		return null;
+	}
+	return carry.entryId;
+}
+
 function rememberHostname(hostname: string): void {
 	// Delete-then-add de-dupes and moves this hostname to the tail, so among writes it is the
 	// most-recently-written that survives longest. Not a visit-based LRU: readers never call
@@ -220,6 +300,8 @@ export function clearIndex(): void {
 	autofillIndex = null;
 	cacheRevision++;
 	cardCarry = null;
+	loginCarry.clear();
+	void Promise.resolve(api.storage.session?.remove?.(LOGIN_CARRY_KEY)).catch(() => {});
 }
 
 /** The index entry for `id`, or undefined when the index is absent/missing it. */
@@ -264,7 +346,7 @@ function cardSecondary(entry: Extract<BrowserIndexEntry, { type: "card" }>): str
 
 /** What a page is told while the autofill switch is off: nothing to show, and don't ask again.
  * Deliberately not `locked`, which would put the "unlock to autofill" row back on screen. */
-function disabledResult(trigger: "auto" | "icon" | "shortcut"): QueryResult {
+function disabledResult(trigger: AutofillTrigger): QueryResult {
 	return {
 		logins: [],
 		cards: [],
@@ -742,11 +824,21 @@ async function autofillQuery(
 		// How the list is asked for rides on the same answer, so the content script never has to
 		// make a second storage-shaped request to draw the right affordance.
 		result.trigger = trigger;
+		result.hint = !(await getAutofillIconHintSeen());
 		if (hasCard && !result.locked) {
 			// Only ever an id this very response already carries, so the page learns nothing it
 			// could not read off `cards` itself.
 			const carried = carriedCardId(sender.tab?.id);
 			if (carried && result.cards.some((c) => c.id === carried)) result.carriedCardId = carried;
+		}
+		// The login last used on this site leads its list, under the same "already in the response"
+		// rule as the card carry. Keyed by registrable domain, so a login used on login.example.com
+		// is still the default on www.example.com when it matches both.
+		if (hasLogin && !result.locked) {
+			const carried = await carriedLoginId(page.hostname);
+			if (carried && result.logins.some((l) => l.id === carried)) {
+				result.carriedLoginId = carried;
+			}
 		}
 		// Ride along on the query the page already makes: the signup suggestion is drawn the
 		// moment this response lands, so a separate request for it would race the paint and lose.
@@ -799,6 +891,7 @@ async function autofillSelect(
 		authorizeFill(message.payload.entryId, page.hostname, effectivePort(page));
 		const payload = fetchFill(message.payload.entryId);
 		rememberCardCarry(payload.kind, message.payload.entryId, sender.tab?.id);
+		rememberLoginCarry(payload.kind, message.payload.entryId, page.hostname);
 		spendShortcutGrant(sender.tab?.id);
 		// The user chose for this tab, so a launch must not fill over it later.
 		if (payload.kind === "login" && !message.payload.otpOnly && sender.tab?.id !== undefined) {
@@ -1151,13 +1244,21 @@ on(
 	"AUTOFILL_SET_TRIGGER",
 	extensionOnly(async (message) => {
 		const { trigger } = (message.payload ?? {}) as { trigger?: unknown };
-		if (trigger !== "auto" && trigger !== "icon" && trigger !== "shortcut") {
+		if (!isAutofillTrigger(trigger)) {
 			return { ok: false, error: "invalid_request" };
 		}
 		await broadcastAutofillTrigger(trigger);
 		return { ok: true, data: null };
 	}),
 );
+
+// The one-time hint was shown on a page. Stored here rather than read by the content script so
+// the pref has one writer, and a page that never shows the hint cannot make it vanish elsewhere.
+on("AUTOFILL_HINT_SEEN", async (_message, sender) => {
+	if (!pageSenderHostname(sender)) return { ok: false, error: "forbidden" };
+	await markAutofillIconHintSeen();
+	return { ok: true, data: null };
+});
 
 /**
  * The `autofill-cycle` browser command. This is the only page-fill path that does not begin

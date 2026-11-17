@@ -8,12 +8,8 @@
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
 	"cmdAutofillCycle": {
-		"message": "Mit Bramble ausfüllen",
-		"description": "Keyboard-shortcut command label shown in the browser's extension shortcuts page."
-	},
-	"autofillOpen": {
-		"message": "Bramble-Autofill öffnen",
-		"description": "Accessible label for the small Bramble button inside a username or password field."
+		"message": "Nächste gespeicherte Anmeldung ausfüllen",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
 	"cmdFillLogin": {
 		"message": "Login ausfüllen",
@@ -190,5 +186,61 @@
 	"cardUsedHere": {
 		"message": "Hier verwendet",
 		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	},
+	"cmdAutofillCycleBack": {
+		"message": "Vorherige gespeicherte Anmeldung ausfüllen",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
+	"autofillOpenMenu": {
+		"message": "Bramble: aus dem Tresor ausfüllen",
+		"description": "Accessible name for the small Bramble mark inside a login field."
+	},
+	"hintLogins": {
+		"message": "Gespeicherte Anmeldungen für diese Website",
+		"description": "One-time hint beside the in-field Bramble mark when the site has saved logins."
+	},
+	"hintLocked": {
+		"message": "Gesperrt: klicken zum Entsperren und Ausfüllen",
+		"description": "One-time hint beside the in-field Bramble mark while the vault is locked."
+	},
+	"hintCards": {
+		"message": "Gespeicherte Karten für den Checkout",
+		"description": "One-time hint beside the in-field Bramble mark on a payment form."
+	},
+	"hintOtp": {
+		"message": "Gespeicherte Einmalcodes",
+		"description": "One-time hint beside the in-field Bramble mark on a one-time-code field."
+	},
+	"hintGeneratedPassword": {
+		"message": "Ein starkes Passwort ist bereit",
+		"description": "One-time hint beside the in-field Bramble mark on a signup password field."
+	},
+	"hintAlias": {
+		"message": "E-Mail-Alias erstellen",
+		"description": "One-time hint beside the in-field Bramble mark on a signup email field."
+	},
+	"savedLogin": {
+		"message": "Gespeicherte Anmeldung",
+		"description": "Primary label for an entry with no name and no username, e.g. from an import."
+	},
+	"menuMore": {
+		"message": "Weitertippen, um die Liste einzugrenzen",
+		"description": "Note at the end of the picker when only the first 50 matches are rendered."
+	},
+	"enterKey": {
+		"message": "Enter",
+		"description": "Label on the keycap that accepts the inline username completion."
+	},
+	"usedHere": {
+		"message": "Hier verwendet",
+		"description": "Badge on the picker row for the card or login already used on this site. A card carry is per tab; a login carry is per registrable domain."
+	},
+	"openEntryDetails": {
+		"message": "In Bramble öffnen",
+		"description": "Row action that opens the entry's details in a Bramble window."
+	},
+	"hudFillRefused": {
+		"message": "Ausfüllen nicht möglich",
+		"description": "HUD shown when a keyboard pick cannot fill, such as when the vault is locked or the site no longer matches."
 	}
 }

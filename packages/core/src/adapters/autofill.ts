@@ -1,16 +1,7 @@
 import type { PasskeyCredential } from "../hooks/useVault";
+import type { AutofillTrigger } from "../util/autofill-trigger";
 
 export type SubdomainMatchMode = "etld1" | "exact" | "subdomain";
-
-/**
- * How the in-page autofill list is triggered (extension only).
- *
- * - `auto`: focusing a username/password/card/OTP field opens it (the original behavior).
- * - `icon`: a small Bramble mark inside the field opens it; focusing does nothing.
- * - `shortcut`: nothing opens on its own; the browser command does. The command also works
- *   in the other modes, as an accelerator.
- */
-export type AutofillTrigger = "auto" | "icon" | "shortcut";
 
 /**
  * A custom field's autofillable content. The `key` (the user's field name)
@@ -102,6 +93,10 @@ export interface QueryResult {
 	 * that lands there is then the same card rather than whatever heads the list. Extension
 	 * only; always an id the same response already carries. */
 	carriedCardId?: string;
+	/** The login last filled on this site, when it is still one of `logins`. The content script
+	 * moves it to the head of the list and marks it; it is always an id the same response already
+	 * carries, so ordering never widens what a page is offered. Extension only. */
+	carriedLoginId?: string;
 	/** Hostname-matched logins carrying a TOTP key, offered when the page has a one-time-code field. */
 	otps: MatchSummary[];
 	locked: boolean;
@@ -112,6 +107,9 @@ export interface QueryResult {
 	disabled?: boolean;
 	/** How the in-page list is opened on this install (Settings -> General). Extension only. */
 	trigger?: AutofillTrigger;
+	/** Show the one-time "what is this mark?" hint. Sent until the page reports it was shown,
+	 * then never again. Extension only. */
+	hint?: boolean;
 	/** A password shaped by the user's generator settings, for a signup form's suggestion. Sent
 	 * with the query itself so the suggestion has one to draw the moment it paints. Extension
 	 * only; absent when the page has no login field. */

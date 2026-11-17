@@ -43,7 +43,7 @@ export function dropdownAlias(row: AliasRowState): string {
 		// The provider's own words go through the escaper like any other page-bound string, and
 		// are rendered as text: one measured provider answers with a URL inside its message.
 		return html`
-		<div class="tp-item tp-alias tp-alias-error" data-tp-alias="1" role="option">
+		<div class="tp-item tp-alias tp-alias-error" data-tp-alias="1" role="option" aria-selected="false">
 			<div class="tp-avatar tp-avatar-alias">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>
 			</div>
@@ -55,7 +55,7 @@ export function dropdownAlias(row: AliasRowState): string {
 	`;
 	}
 	return html`
-		<div class="tp-item tp-alias" data-tp-alias="1" role="option">
+		<div class="tp-item tp-alias" data-tp-alias="1" role="option" aria-selected="false">
 			<div class="tp-avatar tp-avatar-alias">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"></path></svg>
 			</div>

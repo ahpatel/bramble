@@ -2,9 +2,14 @@ import { html } from "../template";
 
 // Colours reference the local --tp-* tokens defined below, never literals. The tokens mirror the
 // @vault/theme scale (packages/theme/theme.css); the on-page UI has no Bramble app shell to read a
-// `.dark` class, so light/dark follows the OS via prefers-color-scheme until the anchor field's
-// own skin (set inline on .tp-dropdown) overrides it. A square field gets a square menu; a dark
-// field gets a dark menu. Keep the defaults in sync with the iframe renderer (autofill-ui.ts).
+// `.dark` class, so light/dark follows the OS via prefers-color-scheme. Keep values in sync with
+// theme.css. The iframe renderer (autofill-ui.ts) carries a byte-identical copy for its flat bundle.
+//
+// The picker also takes a skin from the anchor field (content/skin.ts): --tp-radius, --tp-surface,
+// --tp-foreground, --tp-border and --tp-font are overwritten per render so a square bank login and
+// a pill-shaped SaaS sign-in each get a menu that belongs to them. The surface is the field's
+// surface lifted toward the popover, not the field's fill: a menu painted in the field's own grey
+// reads as another form control rather than something floating above it.
 export const dropdownStyles = html`
 		<style>
 			:host {
@@ -12,16 +17,12 @@ export const dropdownStyles = html`
 				color-scheme: light dark;
 				--tp-surface: #ffffff; /* --popover */
 				--tp-foreground: oklch(20.5% 0 0); /* --popover-foreground */
-				--tp-muted: oklch(52% 0 0); /* --muted-foreground */
+				--tp-muted: oklch(55.6% 0 0); /* --muted-foreground */
 				--tp-border: oklch(87% 0 0); /* --border */
 				--tp-primary: oklch(20.5% 0 0); /* --primary */
 				--tp-on-primary: #ffffff; /* --primary-foreground */
-				--tp-radius: 12px;
-				--tp-row-radius: 8px;
-				--tp-font-family:
-					-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-				--tp-font-size: 13px;
-				--tp-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+				--tp-radius: 16px;
+				--tp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 			}
 			@media (prefers-color-scheme: dark) {
 				:host {
@@ -31,78 +32,83 @@ export const dropdownStyles = html`
 					--tp-border: oklch(37.1% 0 0);
 					--tp-primary: oklch(97% 0 0);
 					--tp-on-primary: oklch(20.5% 0 0);
-					--tp-shadow:
-						0 16px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
 				}
 			}
 			.tp-dropdown {
+				container-type: inline-size;
 				background: var(--tp-surface);
 				border: 1px solid var(--tp-border);
 				border-radius: var(--tp-radius);
-				box-shadow: var(--tp-shadow);
-				font-family: var(--tp-font-family);
-				font-size: var(--tp-font-size);
+				box-shadow:
+					0 20px 48px -22px rgba(0, 0, 0, 0.38),
+					0 3px 10px rgba(0, 0, 0, 0.06);
+				font-family: var(--tp-font);
+				font-size: 13px;
 				color: var(--tp-foreground);
 				text-align: left;
 				letter-spacing: normal;
 				text-transform: none;
 				font-style: normal;
 				text-indent: 0;
-				max-height: 320px;
+				/* The content script lowers this to the larger viewport gap; 380px is the design cap
+				   and the value used when no position has been written yet. */
+				max-height: var(--tp-max-height, 380px);
 				overflow-y: auto;
 				margin: 0;
-				padding: 4px;
+				padding: 6px;
 				box-sizing: border-box;
-			}
-			.tp-dropdown.tp-enter {
-				animation: tp-enter 150ms cubic-bezier(0.2, 0, 0, 1);
 				transform-origin: top center;
 			}
-			@keyframes tp-enter {
-				from {
-					opacity: 0;
-					transform: translateY(-4px) scale(0.985);
-				}
+			.tp-dropdown.tp-dark {
+				box-shadow:
+					0 24px 56px -20px rgba(0, 0, 0, 0.72),
+					0 3px 10px rgba(0, 0, 0, 0.28);
+			}
+			.tp-dropdown.tp-animate {
+				animation: tp-unfold 0.16s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+			}
+			:host(.tp-above) .tp-dropdown {
+				transform-origin: bottom center;
+			}
+			:host(.tp-above) .tp-dropdown.tp-animate {
+				animation-name: tp-unfold-up;
 			}
 			.tp-item {
-				padding: 8px 10px;
+				box-sizing: border-box;
+				padding: 10px 12px;
 				cursor: pointer !important;
 				display: flex;
 				align-items: center;
-				gap: 10px;
-				border-radius: var(--tp-row-radius);
-				transition: background 0.12s ease;
+				gap: 12px;
+				border-radius: max(0px, calc(var(--tp-radius) - 4px));
+				transition: background 0.1s ease;
 			}
-			.tp-item:hover,
-			.tp-item.tp-active {
-				background: color-mix(in oklab, var(--tp-foreground) 8%, transparent);
-			}
-			.tp-item.tp-active {
-				background: color-mix(in oklab, var(--tp-foreground) 12%, transparent);
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 7%, transparent);
+				}
 			}
 			.tp-avatar {
-				width: 30px;
-				height: 30px;
-				border-radius: 8px;
+				width: 40px;
+				height: 40px;
+				border-radius: 11px;
 				display: flex;
 				align-items: center;
 				justify-content: center;
-				font-size: 12px;
+				font-size: 15px;
 				font-weight: 700;
 				color: #fff;
 				flex-shrink: 0;
 				letter-spacing: 0.3px;
-				box-shadow:
-					inset 0 1px 0 rgba(255, 255, 255, 0.18),
-					inset 0 -1px 0 rgba(0, 0, 0, 0.14);
+				box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.14);
 			}
 			.tp-avatar-locked {
 				background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
 				color: var(--tp-muted);
 			}
 			.tp-avatar-locked svg {
-				width: 18px;
-				height: 18px;
+				width: 20px;
+				height: 20px;
 			}
 			.tp-text {
 				display: flex;
@@ -112,76 +118,48 @@ export const dropdownStyles = html`
 			}
 			.tp-name {
 				font-weight: 600;
-				font-size: calc(var(--tp-font-size) + 1px);
+				font-size: 15px;
 				white-space: nowrap;
 				overflow: hidden;
 				text-overflow: ellipsis;
 				color: var(--tp-foreground);
 				line-height: 1.3;
+				unicode-bidi: plaintext;
 			}
 			.tp-user {
 				color: var(--tp-muted);
-				font-size: var(--tp-font-size);
+				font-size: 13px;
 				white-space: nowrap;
 				overflow: hidden;
 				text-overflow: ellipsis;
-				margin-top: 1px;
+				margin-top: 2px;
 				line-height: 1.3;
+				unicode-bidi: plaintext;
 			}
 			.tp-badge {
 				margin-left: auto;
 				flex-shrink: 0;
-				font-size: 10px;
+				font-size: 11px;
 				font-weight: 600;
 				letter-spacing: 0.2px;
-				padding: 2px 7px;
+				padding: 3px 8px;
 				border-radius: 999px;
-				color: var(--tp-muted);
+				color: var(--tp-foreground);
 				background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
 			}
-			.tp-launch {
-				margin-left: auto;
-				flex-shrink: 0;
-				display: flex;
-				align-items: center;
-				color: var(--tp-muted);
-				transition: color 0.12s ease;
+			/* Compact rows are one line: a text badge ("Hier verwendet", 102px) leaves the name
+			   almost nothing at 320px. A dot keeps the meaning (and the title/accessible text)
+			   without stealing the width; normal rows keep the words. */
+			.tp-item-compact .tp-badge {
+				width: 8px;
+				height: 8px;
+				padding: 0;
+				border-radius: 999px;
+				font-size: 0;
+				color: transparent;
+				background: var(--tp-muted);
 			}
-			.tp-item:hover .tp-launch {
-				color: var(--tp-foreground);
-			}
-			.tp-new-login {
-				display: flex;
-				align-items: center;
-				gap: 6px;
-				width: 100%;
-				padding: 6px 12px;
-				border: 0;
-				border-top: 1px solid var(--tp-border);
-				background: none;
-				color: var(--tp-muted);
-				font: inherit;
-				font-size: 12px;
-				text-align: left;
-				cursor: pointer;
-			}
-			.tp-new-login:hover {
-				color: var(--tp-foreground);
-			}
-			.tp-avatar-suggest {
-				background: var(--tp-primary);
-				color: var(--tp-on-primary);
-			}
-			.tp-avatar-suggest svg {
-				width: 18px;
-				height: 18px;
-			}
-			.tp-suggest-pw {
-				font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-				font-size: calc(var(--tp-font-size) + 1px);
-				letter-spacing: 0.4px;
-			}
-			.tp-regenerate {
+			.tp-open {
 				margin-left: auto;
 				flex-shrink: 0;
 				display: flex;
@@ -195,20 +173,183 @@ export const dropdownStyles = html`
 				background: transparent;
 				color: var(--tp-muted);
 				cursor: pointer !important;
-				transition: background 0.12s ease, color 0.12s ease;
+				opacity: 1;
+				transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 			}
-			.tp-regenerate:hover {
-				background: color-mix(in oklab, var(--tp-foreground) 12%, transparent);
+			.tp-open:focus-visible {
+				opacity: 1;
 				color: var(--tp-foreground);
 			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover .tp-open {
+					opacity: 1;
+					color: var(--tp-foreground);
+				}
+				.tp-open:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
+				}
+			}
+			.tp-open svg {
+				width: 15px;
+				height: 15px;
+			}
+			.tp-badge + .tp-open {
+				margin-left: 4px;
+			}
+			.tp-launch {
+				margin-left: auto;
+				flex-shrink: 0;
+				display: flex;
+				align-items: center;
+				color: var(--tp-muted);
+				transition: color 0.12s ease;
+			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover .tp-launch {
+					color: var(--tp-foreground);
+				}
+			}
+			.tp-avatar-suggest {
+				background: var(--tp-primary);
+				color: var(--tp-on-primary);
+			}
+			.tp-avatar-suggest svg {
+				width: 20px;
+				height: 20px;
+			}
+			.tp-suggest-pw {
+				font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+				font-size: 14px;
+				letter-spacing: 0.5px;
+			}
+			/* The note under a capped list. Not a row: no hover, no key target. */
+			.tp-more {
+				padding: 8px 12px 6px;
+				text-align: center;
+				font-size: 11px;
+				line-height: 1.3;
+				color: var(--tp-muted);
+			}
+			.tp-regenerate {
+				margin-left: auto;
+				flex-shrink: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				width: 32px;
+				height: 32px;
+				padding: 0;
+				border: 0;
+				border-radius: 8px;
+				background: transparent;
+				color: var(--tp-muted);
+				cursor: pointer !important;
+				transition: background 0.12s ease, color 0.12s ease;
+			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-regenerate:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 12%, transparent);
+					color: var(--tp-foreground);
+				}
+			}
+			/* Compact: one line per entry, with a small monogram so the row still reads as Bramble.
+			   The old avatar-less version was faster to scan but felt like a debug list. */
+			.tp-item-compact {
+				padding: 11px 12px;
+				gap: 10px;
+				min-height: 62px;
+			}
+			.tp-avatar-compact {
+				width: 30px;
+				height: 30px;
+				font-size: 11px;
+				border-radius: clamp(6px, calc(var(--tp-radius) - 2px), 10px);
+			}
+			.tp-text-compact {
+				flex-direction: row;
+				align-items: baseline;
+				gap: 0;
+			}
+			.tp-text-compact .tp-name {
+				font-size: 13.5px;
+			}
+			.tp-text-compact .tp-user {
+				font-size: 12px;
+				margin: 0;
+				min-width: 0;
+			}
+			.tp-text-compact .tp-user::before {
+				content: "·";
+				margin: 0 6px;
+				opacity: 0.55;
+			}
+			.tp-text-compact .tp-user:empty::before {
+				content: none;
+			}
+			.tp-compact .tp-item-compact + .tp-item-compact {
+				margin-top: 2px;
+			}
+			@keyframes tp-unfold {
+				from {
+					opacity: 0;
+					transform: translateY(-6px) scale(0.985);
+				}
+				to {
+					opacity: 1;
+					transform: none;
+				}
+			}
+			@keyframes tp-unfold-up {
+				from {
+					opacity: 0;
+					transform: translateY(6px) scale(0.985);
+				}
+				to {
+					opacity: 1;
+					transform: none;
+				}
+			}
 			@media (prefers-reduced-motion: reduce) {
-				.tp-dropdown.tp-enter {
+				.tp-dropdown.tp-animate {
 					animation: none;
 				}
-				.tp-item,
-				.tp-regenerate {
-					transition: none;
+			}
+			@media (forced-colors: active) {
+				.tp-dropdown {
+					background: Canvas;
+					border-color: CanvasText;
+					box-shadow: none;
 				}
+				.tp-item { color: CanvasText; }
+				.tp-item.tp-active { outline: 2px solid Highlight; outline-offset: -2px; }
+				.tp-badge {
+					--tp-badge-dot-bg: CanvasText;
+					background: Canvas;
+					color: CanvasText;
+					border: 1px solid CanvasText;
+				}
+			}
+			/* The menu can be as narrow as 152px at 200% zoom on a 320px screen. The avatar and
+			   the text badge are the first things to go: the entry name is the identifier. */
+			@container (max-width: 320px) {
+				.tp-badge {
+					width: 8px;
+					height: 8px;
+					padding: 0;
+					border-radius: 999px;
+					font-size: 0;
+					color: transparent;
+					background: var(--tp-badge-dot-bg, var(--tp-muted));
+				}
+			}
+			@container (max-width: 260px) {
+				.tp-text-compact { flex-direction: column; align-items: stretch; }
+				.tp-text-compact .tp-user { margin-top: 2px; }
+				.tp-text-compact .tp-user::before { content: none; }
+			}
+			@container (max-width: 220px) {
+				.tp-item { padding: 9px 8px; gap: 8px; }
+				.tp-avatar { display: none; }
 			}
 		</style>
 	`;

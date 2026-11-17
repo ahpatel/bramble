@@ -1,4 +1,9 @@
 /// <reference types="chrome" />
+import {
+	type AutofillTrigger,
+	DEFAULT_AUTOFILL_TRIGGER,
+	normalizeAutofillTrigger,
+} from "@core/util/autofill-trigger";
 import { type GeneratorSettings, normalizeGeneratorSettings } from "@core/util/password-gen";
 import { api } from "../platform-api";
 
@@ -9,6 +14,7 @@ const PREF_CLIPBOARD_SECONDS = "pref.clipboardClearSeconds";
 const PREF_OFFER_TO_SAVE = "pref.offerToSave";
 const PREF_AUTOFILL_ENABLED = "pref.autofillEnabled";
 const PREF_AUTOFILL_TRIGGER = "pref.autofillTrigger";
+const PREF_AUTOFILL_ICON_HINT = "pref.autofillIconHintSeen";
 const PREF_NEVER_SAVE_SITES = "pref.neverSaveSites";
 export const PREF_PASSKEY_PROVIDER = "pref.passkeyProviderEnabled";
 export const PREF_LOCK_ON_SCREEN_LOCK = "pref.lockOnScreenLock";
@@ -20,9 +26,6 @@ const DEFAULT_CLIPBOARD_SECONDS = 30;
 const DEFAULT_OFFER_TO_SAVE = true;
 // On by default: filling pages is what the extension is for. Off means no in-page dropdown at all.
 const DEFAULT_AUTOFILL_ENABLED = true;
-// Keep the behavior existing users know; the icon and shortcut modes are opt-in.
-const DEFAULT_AUTOFILL_TRIGGER = "auto";
-export type AutofillTrigger = "auto" | "icon" | "shortcut";
 // On by default: an OS screen-lock is a reasonable security floor. Off = stay unlocked across
 // screen-locks (what "Never" users on a trusted device want). See issue #6.
 const DEFAULT_LOCK_ON_SCREEN_LOCK = true;
@@ -87,15 +90,29 @@ export async function getPasskeyConfirmOncePerUnlock(): Promise<boolean> {
 	return false;
 }
 
-/** How the in-page list is opened. Read per query alongside the master switch, so a page that
- * was already focused when the setting changed picks it up on its next query. */
+/** What a click into a login field does. Read per query, like the master switch: a stale copy in
+ *  a woken service worker would keep opening the list after the user chose the quiet mode. */
 export async function getAutofillTrigger(): Promise<AutofillTrigger> {
 	try {
 		const r = await api.storage.local.get(PREF_AUTOFILL_TRIGGER);
-		const v = r[PREF_AUTOFILL_TRIGGER];
-		if (v === "auto" || v === "icon" || v === "shortcut") return v;
+		return normalizeAutofillTrigger(r[PREF_AUTOFILL_TRIGGER]);
 	} catch {}
 	return DEFAULT_AUTOFILL_TRIGGER;
+}
+
+/** Whether the one-time "what is this mark?" hint has already been shown. */
+export async function getAutofillIconHintSeen(): Promise<boolean> {
+	try {
+		const r = await api.storage.local.get(PREF_AUTOFILL_ICON_HINT);
+		return r[PREF_AUTOFILL_ICON_HINT] === true;
+	} catch {}
+	return false;
+}
+
+export async function markAutofillIconHintSeen(): Promise<void> {
+	try {
+		await api.storage.local.set({ [PREF_AUTOFILL_ICON_HINT]: true });
+	} catch {}
 }
 
 export async function getPasskeyProviderEnabled(): Promise<boolean> {
