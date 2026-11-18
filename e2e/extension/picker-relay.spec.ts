@@ -236,12 +236,13 @@ test("the merchant page cannot forge a pick into the card frame", async ({
 	await expect(cardFrame(page).locator("#verification_value")).toHaveValue("");
 });
 
-test("a card frame with room still renders the picker locally", async ({
+test("a card frame with room still relays the picker to the top page", async ({
 	context,
 	extensionId,
 }) => {
-	// The shipped path must be untouched: when the field's own frame can display the dropdown, it
-	// does, and nothing is relayed to the top frame.
+	// A card picker in a frame is always hosted by the top page. Drawn in the frame it is subject
+	// to whatever the embedding page does around it (fading or filtering the frame costs it its
+	// clicks) and cannot hear a click on the merchant page. Room in the frame does not change that.
 	await setUp(context, extensionId);
 	const page = await context.newPage();
 	await serve(page, { cardFrameHtml: TALL_FRAME });
@@ -252,9 +253,9 @@ test("a card frame with room still renders the picker locally", async ({
 
 	const ui = await openPicker(page);
 
-	expect(ui.parentFrame()).toBe(cardFrame(page));
-	expect(await hostCount(cardFrame(page))).toBe(1);
-	expect(await hostCount(page)).toBe(0);
+	expect(ui.parentFrame()).toBe(page.mainFrame());
+	expect(await hostCount(page)).toBe(1);
+	expect(await hostCount(cardFrame(page))).toBe(0);
 
 	await waitOutPickerClickGuard(page);
 	await ui.locator("[data-entry-id]").click();

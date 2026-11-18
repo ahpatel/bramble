@@ -49,6 +49,7 @@ import {
 	closeRelayed,
 	installRelayClient,
 	keyToRelayed,
+	relayedPickerIsLive,
 	relayedPickerIsOpen,
 	repositionRelayed,
 	showRelayed,
@@ -192,8 +193,42 @@ function rectOf(field: HTMLInputElement): RelayRect {
 	};
 }
 
-function shouldRelay(field: HTMLInputElement): boolean {
-	return !frameRelay.isTop() && frameRelay.needsRelay(rectOf(field));
+// The top page never brought a relayed picker up (COEP blocks the UI there, or no content script
+// runs there), so this frame stops asking it for the rest of the page's life.
+let relayUnavailable = false;
+const RELAY_READY_MS = 2000;
+let relayReadyTimer: ReturnType<typeof setTimeout> | null = null;
+// Re-draws the latest relayed render here, should the relay never come up.
+let relayFallback: (() => void) | null = null;
+
+/**
+ * Where a picker for `field` is drawn. In a frame, a card picker is always hosted by the top page:
+ * drawn here it is subject to whatever the embedding page does around this frame (fading or
+ * filtering it costs it its clicks) and never hears a click on that page. A login picker is
+ * hosted there only for a same-site frame, because the top page can read a picker it hosts off
+ * its own DOM. See docs/autofill.md.
+ */
+function placement(field: HTMLInputElement): "relay" | "local" | "none" {
+	if (frameRelay.isTop()) return "local";
+	const card = kindOf(getPageFields(), field) === "card";
+	if (!card && cachedResult?.sameSiteAsTop !== true) return "local";
+	if (!relayUnavailable) return "relay";
+	// Nowhere upstairs: draw here if there is room. A dropdown clipped to nothing helps no one.
+	return frameRelay.needsRelay(rectOf(field)) ? "none" : "local";
+}
+
+/** Give the top page a moment to bring the relayed picker up; if it never does, draw it here. */
+function armRelayFallback(redraw: () => void): void {
+	relayFallback = redraw;
+	if (relayReadyTimer !== null || relayedPickerIsLive()) return;
+	relayReadyTimer = setTimeout(() => {
+		relayReadyTimer = null;
+		if (relayedPickerIsLive() || !relayedField) return;
+		relayUnavailable = true;
+		const fallback = relayFallback;
+		dropRelayed();
+		fallback?.();
+	}, RELAY_READY_MS);
 }
 
 /** The field the visible picker belongs to, whichever renderer is showing it. */
@@ -204,6 +239,7 @@ function anchorField(): HTMLInputElement | null {
 function dropRelayed(collapse = false): void {
 	relayedField = null;
 	relayedHighlight = false;
+	relayFallback = null;
 	if (relayedPickerIsOpen()) {
 		closeRelayed(collapse);
 		affordance.setExpanded(false);
@@ -297,11 +333,12 @@ function showMatchesFor(
 			(more ? 24 : 0) +
 			14,
 	);
-	// A hosted picker lets the top page read its presence and height, so only a same-site frame
-	// may relay a login or one-time-code list there. Cards are site-agnostic by design.
-	const mayRelay =
-		kindOf(getPageFields(), field) === "card" || cachedResult?.sameSiteAsTop === true;
-	if (!shouldRelay(field) || !mayRelay) {
+	const where = placement(field);
+	if (where === "none") {
+		removePicker();
+		return;
+	}
+	if (where === "local") {
 		dropRelayed();
 		affordance.setExpanded(true);
 		picker.showMatches(shown, field, { ...opts, skin, more, estimatedHeight });
@@ -321,6 +358,7 @@ function showMatchesFor(
 		more,
 		newLogin: opts?.newLogin === true,
 	});
+	armRelayFallback(() => showMatchesFor(matches, field, opts));
 }
 
 /**
@@ -371,9 +409,12 @@ function handleRelayedKey(e: KeyboardEvent): boolean {
 function showLockedFor(field: HTMLInputElement): void {
 	const skin = skinFor(field);
 	affordance.clearPreview();
-	const mayRelay =
-		kindOf(getPageFields(), field) === "card" || cachedResult?.sameSiteAsTop === true;
-	if (!shouldRelay(field) || !mayRelay) {
+	const where = placement(field);
+	if (where === "none") {
+		removePicker();
+		return;
+	}
+	if (where === "local") {
 		dropRelayed();
 		affordance.setExpanded(true);
 		picker.showLocked(field, skin, 76);
@@ -383,6 +424,7 @@ function showLockedFor(field: HTMLInputElement): void {
 	relayedField = field;
 	affordance.setExpanded(true);
 	showRelayed(rectOf(field), { kind: "locked", skin });
+	armRelayFallback(() => showLockedFor(field));
 }
 
 function currentTargetKind(target: HTMLInputElement): TargetKind | null {

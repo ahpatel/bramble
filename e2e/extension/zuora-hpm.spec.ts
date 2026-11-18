@@ -244,10 +244,7 @@ for (const [effect, style] of [
 	["fades", "opacity: 0.99"],
 	["filters", "filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2))"],
 ] as const) {
-	// The relayed picker's host sits outside the filtered section, but the card fill is refused
-	// in this upstream-only HPM fixture. The feature's fork suite does not carry the fixture;
-	// keep the case visible rather than weakening the relay visibility check.
-	test.fixme(`a click fills even when the merchant ${effect} the payment section`, async ({
+	test(`a click fills even when the merchant ${effect} the payment section`, async ({
 		context,
 		extensionId,
 	}) => {
