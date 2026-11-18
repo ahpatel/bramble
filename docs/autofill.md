@@ -241,7 +241,11 @@ one branch: the mark opens the unlock pop-out directly instead of drawing the lo
 the focus-mode path. `pointer-events: none`
 on the host and `auto` on the 26px button keeps the rest of the field clickable. Chromium paints
 its own key/eye icons at the inline end, so the mark is inset 30px there; Firefox has no in-field
-icon and uses 8px.
+icon and uses 8px. A site can add its own clear or reveal-password control at that same spot once
+the field has a value. The mark hit-tests its centre and steps left in 26px increments until the
+spot belongs to the field or to our own host, and the 26px click zone follows the same inset. A
+control sitting under the mark would otherwise take the click, which is what made the second pick
+on a filled field do nothing.
 
 The mark is the Bramble berry drawn in the field's own ink, not a fixed black: it stays legible on
 a light or a dark field. Its centre carries the number of entries the field would list (cards or
