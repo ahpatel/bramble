@@ -912,6 +912,12 @@ function dismissTo(target: DOMRect | null): void {
 		);
 	}
 	exitAnim.onfinish = () => {
+		// A finished fill:forwards animation keeps applying its collapsed end state to the
+		// host, and the host is reused for the next open: without this cancel the next menu
+		// opens as a scale(0.02) sliver that renders rows nobody can see. Cancelling in the
+		// finish handler releases the fill; the instant removeActiveUi() below hides the
+		// host anyway, so nothing flashes back to full size.
+		exitAnim?.cancel();
 		exitAnim = null;
 		exiting = false;
 		host.style.transformOrigin = "";

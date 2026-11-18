@@ -1012,6 +1012,18 @@ test("the marks keep reopening across alternating password and username picks", 
 		}).toPass({ timeout: 20_000 });
 		const frame = pickerFrame(page)!;
 		await expect(frame.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+		// The host must open full-width. A finished collapse animation used to leave its
+		// scale(0.02) fill-forwards end state on the reused host, so every menu after the
+		// first pick opened as an invisible ~7x2 sliver: rendered, clickable by coordinate,
+		// and invisible to a human.
+		const hostWidth = await page.evaluate(() => {
+			const hosts = document.querySelectorAll('div[id^="tp-"]');
+			const host = hosts[hosts.length - 1];
+			return host ? host.getBoundingClientRect().width : 0;
+		});
+		expect(hostWidth, "the menu host opened full-width, not a collapse sliver").toBeGreaterThan(
+			100,
+		);
 		await waitOutPickerClickGuard(page);
 		await frame.locator(".tp-item-compact").first().click();
 		// The pick releases the native autocomplete at once, not after the collapse: the next
@@ -1019,6 +1031,11 @@ test("the marks keep reopening across alternating password and username picks", 
 		const declared = selector === "#pass" ? "current-password" : "username";
 		expect(await page.locator(selector).getAttribute("autocomplete")).toBe(declared);
 		await expect(page.locator(selector)).toHaveValue(expected, { timeout: 10_000 });
+		// Let the pick's collapse animation FINISH before the next open. The animation ends
+		// through its onfinish path here, not the cancel path a fast reopen takes; a menu
+		// opened after a finished collapse used to inherit its scale(0.02) end state and
+		// open as an invisible sliver.
+		await page.waitForTimeout(500);
 	}
 });
 

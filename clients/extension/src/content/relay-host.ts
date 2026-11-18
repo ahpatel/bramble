@@ -200,6 +200,10 @@ export function closeRelayHost(relayId: string, collapse = false): void {
 		);
 	}
 	relayExit.onfinish = () => {
+		// Same as picker.ts: release the fill-forwards end state. The host element is removed
+		// below so today the stuck fill dies with it, but cancel anyway so a future reuse of
+		// the host cannot inherit a collapsed animation.
+		relayExit?.cancel();
 		relayExit = null;
 		destroyRelayHost();
 	};
