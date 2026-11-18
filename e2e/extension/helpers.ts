@@ -219,8 +219,20 @@ async function withCornerNode<T>(
 export async function clickCornerElement(page: Page, selector: string) {
 	await withCornerNode(page, selector, async (cdp, nodeId) => {
 		if (!nodeId) throw new Error(`corner prompt has no ${selector}`);
-		const { quads } = await cdp.send("DOM.getContentQuads", { nodeId });
-		const q = quads[0];
+		// A freshly rendered card can have layout (a box model) before the compositor has a
+		// quad for it, and getContentQuads then comes back empty. Retry instead of failing on
+		// that first frame.
+		let q: number[] | undefined;
+		await expect
+			.poll(
+				async () => {
+					const { quads } = await cdp.send("DOM.getContentQuads", { nodeId });
+					q = quads[0];
+					return !!q;
+				},
+				{ timeout: 5_000, message: `${selector} has no clickable quad` },
+			)
+			.toBe(true);
 		if (!q) throw new Error(`${selector} is not rendered`);
 		await page.mouse.click((q[0]! + q[4]!) / 2, (q[1]! + q[5]!) / 2);
 	});
