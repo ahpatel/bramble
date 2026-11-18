@@ -935,3 +935,39 @@ test("the username mark reopens after a pick from its menu", async ({ context, e
 		timeout: 10_000,
 	});
 });
+
+test("the marks keep reopening across alternating password and username picks", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+
+	for (const [selector, expected] of [
+		["#pass", "s3cr3t-pw-01"],
+		["#user", "alice@example.com"],
+		["#pass", "s3cr3t-pw-01"],
+		["#user", "alice@example.com"],
+	] as const) {
+		await clickMarkIn(page, selector);
+		await expect(async () => {
+			expect(pickerFrame(page)).toBeDefined();
+		}).toPass({ timeout: 20_000 });
+		const frame = pickerFrame(page)!;
+		await expect(frame.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+		await waitOutPickerClickGuard(page);
+		await frame.locator(".tp-item-compact").first().click();
+		// The pick releases the native autocomplete at once, not after the collapse: the next
+		// mark click must see the token the page declared.
+		const declared = selector === "#pass" ? "current-password" : "username";
+		expect(await page.locator(selector).getAttribute("autocomplete")).toBe(declared);
+		await expect(page.locator(selector)).toHaveValue(expected, { timeout: 10_000 });
+	}
+});

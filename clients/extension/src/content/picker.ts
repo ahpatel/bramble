@@ -96,6 +96,16 @@ let anchorField: HTMLInputElement | null = null;
 let suppressedField: HTMLInputElement | null = null;
 let suppressedAutocomplete: string | null = null;
 
+/** Put the anchor's own autocomplete back. Called when the picker lets go of the field, and as
+ *  soon as a pick starts collapsing, so the next mark click sees the field the page declared. */
+function releaseAutocomplete(): void {
+	if (!suppressedField) return;
+	if (suppressedAutocomplete === null) suppressedField.removeAttribute("autocomplete");
+	else suppressedField.setAttribute("autocomplete", suppressedAutocomplete);
+	suppressedField = null;
+	suppressedAutocomplete = null;
+}
+
 // Tokens we would blind ourselves by overwriting. `one-time-code` is the strongest rung of OTP
 // detection, and on a segmented widget it is often the ONLY thing marking the boxes; `cc-*` is
 // the first rung of card detection and on a hosted-fields frame the field's name is frequently
@@ -127,12 +137,7 @@ function setAnchorField(field: HTMLInputElement | null): void {
 	// A new anchor is reachable until its own hit test says otherwise.
 	lastHitTest = Number.NaN;
 	anchorUnreachable = false;
-	if (suppressedField && suppressedField !== field) {
-		if (suppressedAutocomplete === null) suppressedField.removeAttribute("autocomplete");
-		else suppressedField.setAttribute("autocomplete", suppressedAutocomplete);
-		suppressedField = null;
-		suppressedAutocomplete = null;
-	}
+	if (suppressedField && suppressedField !== field) releaseAutocomplete();
 	if (field && field !== suppressedField) {
 		const declared = field.getAttribute("autocomplete");
 		// Nothing to gain and everything to lose: a browser has no stored one-time code to
@@ -864,6 +869,10 @@ function cancelExit(): void {
 /** Collapse the open menu into `target` (the mark's viewport rect), then remove it. Falls back to
  *  an instant close when there is no mark, no host, no WAAPI, or reduced motion is requested. */
 function dismissTo(target: DOMRect | null): void {
+	// A pick is the field being used, not held. Release the native autocomplete now rather than
+	// after the collapse: a second mark click during the animation must see the page's own token,
+	// or the field model can stop recognising the field and the next menu has nothing to offer.
+	releaseAutocomplete();
 	const host = activeHost();
 	const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
 	if (!host || !target || typeof host.animate !== "function") {
