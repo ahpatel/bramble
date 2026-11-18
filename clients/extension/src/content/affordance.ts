@@ -43,6 +43,44 @@ const BERRY_SVG = `<svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="cu
 /** More than this and the mark shows "9+"; a wider label would not fit the berry. */
 const COUNT_MAX = 9;
 
+// Right-edge insets tried in order. The first clears the browser's own key/eye icon; the next
+// two step left past a site's reveal-password eye or clear button that appears once the field has
+// a value. A site control under the mark would eat the click, which is what made the second pick
+// on a filled Wells Fargo field do nothing.
+const MARK_INSETS = [MARK_INSET, MARK_INSET + 26, MARK_INSET + 52];
+const INSET_CHECK_MS = 150;
+let insetCache: { field: HTMLInputElement; inset: number; at: number } | null = null;
+
+/** The first inner-right spot that is not the site's own control. */
+function chooseInset(target: HTMLInputElement, rect: DOMRect): number {
+	const root = target.getRootNode() as (Node & Partial<DocumentOrShadowRoot>) | undefined;
+	if (!root || typeof root.elementFromPoint !== "function") return MARK_INSET;
+	const y = rect.top + rect.height / 2;
+	for (const inset of MARK_INSETS) {
+		const x = rect.right - inset - 13;
+		if (x < rect.left + 4 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) continue;
+		const top = root.elementFromPoint(x, y);
+		// The field itself, our own host, or a transparent wrapper around the field is free.
+		if (!top || top === target || top === host) return inset;
+		if (top instanceof Element && top.contains(target)) return inset;
+	}
+	return MARK_INSET;
+}
+
+function insetFor(target: HTMLInputElement, rect: DOMRect, refresh = true): number {
+	const now = performance.now();
+	if (
+		insetCache &&
+		insetCache.field === target &&
+		(!refresh || now - insetCache.at < INSET_CHECK_MS)
+	) {
+		return insetCache.inset;
+	}
+	const inset = chooseInset(target, rect);
+	insetCache = { field: target, inset, at: now };
+	return inset;
+}
+
 const STYLE = `
 	:host {
 		all: initial;
@@ -350,6 +388,10 @@ function position(rectOverride?: DOMRect, liveKnown = false): boolean {
 	if (host.style.transform !== transform) host.style.transform = transform;
 	if (host.style.width !== width) host.style.width = width;
 	if (host.style.height !== height) host.style.height = height;
+	const markInset = `${insetFor(field, rect)}px`;
+	if (host.style.getPropertyValue("--mark-inset") !== markInset) {
+		host.style.setProperty("--mark-inset", markInset);
+	}
 	host.classList.toggle("above", rect.bottom + 64 > window.innerHeight);
 	return true;
 }
@@ -522,7 +564,8 @@ function setExpanded(open: boolean): void {
 function isMarkZone(target: HTMLInputElement, x: number, y: number): boolean {
 	const rect = target.getBoundingClientRect();
 	const rtl = getComputedStyle(target).direction === "rtl";
-	const edge = rtl ? rect.left + MARK_INSET : rect.right - MARK_INSET;
+	const inset = insetFor(target, rect);
+	const edge = rtl ? rect.left + inset : rect.right - inset;
 	const centerY = rect.top + rect.height / 2;
 	const inX = rtl ? x >= edge && x <= edge + 26 : x >= edge - 26 && x <= edge;
 	return inX && y >= centerY - 13 && y <= centerY + 13;
@@ -534,7 +577,10 @@ function isMarkZone(target: HTMLInputElement, x: number, y: number): boolean {
 function isMarkSwitchZone(target: HTMLInputElement, x: number, y: number): boolean {
 	const rect = target.getBoundingClientRect();
 	const rtl = getComputedStyle(target).direction === "rtl";
-	const edge = rtl ? rect.left + MARK_INSET : rect.right - MARK_INSET;
+	// The menu covers the field here; reuse the inset the mark was last drawn at rather than
+	// hit-testing through the menu.
+	const inset = insetFor(target, rect, false);
+	const edge = rtl ? rect.left + inset : rect.right - inset;
 	const centerY = rect.top + rect.height / 2;
 	// The half of the mark away from the row's open button, which sits at the same inline end.
 	const inX = rtl ? x >= edge + 12 && x <= edge + 26 : x >= edge - 26 && x <= edge - 12;

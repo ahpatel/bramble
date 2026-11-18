@@ -26,6 +26,42 @@ const SQUARE_LOGIN = `<!doctype html><html><head><title>login</title><style>
 	</form>
 </body></html>`;
 
+const CLEARABLE_LOGIN = `<!doctype html><html><head><title>login</title><style>
+	body { margin: 40px; background: #eef0f3; }
+	form { width: 340px; }
+	.wrap { position: relative; margin-top: 12px; }
+	input {
+		display: block; width: 100%; height: 42px; box-sizing: border-box;
+		border: 1px solid rgb(185, 192, 201); border-radius: 0;
+		padding: 0 80px 0 11px;
+		font: 14px Georgia, "Times New Roman", serif;
+		color: rgb(23, 32, 43); background: rgb(255, 255, 255);
+	}
+	.clear {
+		position: absolute; right: 30px; top: 50%; transform: translateY(-50%);
+		width: 26px; height: 26px; display: none; border: 0;
+		background: rgb(238, 240, 243); color: rgb(23, 32, 43);
+		font: 16px sans-serif; cursor: pointer;
+	}
+	.wrap.has-value .clear { display: block; }
+</style></head><body>
+	<form>
+		<div class="wrap" id="user-wrap">
+			<input id="user" name="username" type="text" autocomplete="username" />
+			<button type="button" class="clear" aria-label="Clear">x</button>
+		</div>
+		<div class="wrap">
+			<input id="pass" name="password" type="password" autocomplete="current-password" />
+		</div>
+		<button type="submit">Sign in</button>
+	</form>
+	<script>
+		const user = document.querySelector("#user");
+		const wrap = document.querySelector("#user-wrap");
+		user.addEventListener("input", () => wrap.classList.toggle("has-value", !!user.value));
+	</script>
+</body></html>`;
+
 const ROUNDED_LOGIN = `<!doctype html><html><head><title>login</title><style>
 	body { margin: 40px; background: #f7f6fd; }
 	form { width: 340px; }
@@ -81,6 +117,20 @@ async function clickMarkIn(page: Page, selector: string): Promise<void> {
 	const box = await field.boundingBox();
 	expect(box).not.toBeNull();
 	await page.mouse.click(box!.x + box!.width - 30 - 13, box!.y + box!.height / 2);
+}
+
+/** Click the mark at the inset it was actually drawn at, after a site control may have moved it. */
+async function clickMarkAt(page: Page, selector: string): Promise<void> {
+	const field = page.locator(selector);
+	await field.click();
+	await field.hover();
+	await expect(markHost(page)).toHaveCount(1, { timeout: 10_000 });
+	const box = await field.boundingBox();
+	expect(box).not.toBeNull();
+	const inset = await markHost(page).evaluate(
+		(el) => Number.parseFloat(getComputedStyle(el).getPropertyValue("--mark-inset")) || 30,
+	);
+	await page.mouse.click(box!.x + box!.width - inset - 13, box!.y + box!.height / 2);
 }
 
 async function setTrigger(popup: Page, trigger: "icon" | "focus" | "shortcut"): Promise<void> {
@@ -970,4 +1020,42 @@ test("the marks keep reopening across alternating password and username picks", 
 		expect(await page.locator(selector).getAttribute("autocomplete")).toBe(declared);
 		await expect(page.locator(selector)).toHaveValue(expected, { timeout: 10_000 });
 	}
+});
+
+test("the mark steps left of a site's clear control and keeps reopening", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, CLEARABLE_LOGIN);
+	await page.goto("https://example.com/");
+
+	// First open: the field is empty, so the clear control is absent and the mark sits at the
+	// base inset.
+	await clickMarkAt(page, "#user");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const first = pickerFrame(page)!;
+	await expect(first.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+	await waitOutPickerClickGuard(page);
+	await first.locator(".tp-item-compact").first().click();
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+
+	// The fill gives the field a value, so the page's clear control now covers the base spot.
+	// The next open must step left of it, or the click lands on the clear button and the menu
+	// never opens.
+	await clickMarkAt(page, "#user");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
+		timeout: 10_000,
+	});
 });
