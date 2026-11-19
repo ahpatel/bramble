@@ -176,10 +176,12 @@ function anchorIsReachable(field: HTMLInputElement, rect: DOMRect): boolean {
 	const top = root.elementFromPoint(x, y);
 	if (!top) return false;
 	// elementFromPoint answers with the DEEPEST element at the point, so a field that is
-	// really there answers with itself, or with an icon painted inside it. An ANCESTOR coming
-	// back means the point fell through to whatever is behind: `<body>` contains the field
+	// really there answers with itself, or with an icon painted inside it. Our own in-field mark
+	// is one of those icons: on a narrow field its 26px button covers the field's centre, and
+	// rejecting the mark would tear the open menu down a frame after it appeared. An ANCESTOR
+	// coming back means the point fell through to whatever is behind: `<body>` contains the field
 	// too, so accepting ancestors here would accept every clipped-away field there is.
-	return top === field || field.contains(top);
+	return top === field || field.contains(top) || affordance.ownsNode(top);
 }
 
 function matchesKey(matches: MatchSummary[]): string {
@@ -648,9 +650,27 @@ let iframeNavRows = 0;
 // Ids last sent to the iframe. A pick naming anything else is dropped, as in relay-client.ts.
 let iframeRenderedIds = new Set<string>();
 
+/**
+ * Load the iframe while the mark is up, so the first click is not a cold iframe start. On a slow
+ * page the first open used to sit in the `probe` state for seconds; the menu only appeared on the
+ * second click, after the UI had connected. The host stays hidden until a render shows it.
+ */
+function preloadUi(): void {
+	if (uiMode === "shadow" || !AUTOFILL_UI_URL) return;
+	if (iframeHostEl && iframeHostEl.style.display !== "none") return;
+	ensureIframeHost();
+	if (!iframeHostEl) return;
+	iframeHostEl.style.display = "none";
+	armReadinessTimeout();
+}
+
 /** Hide the iframe host (kept alive for reuse). */
 function hideIframe(): void {
 	affordance.setExpanded(false);
+	// The UI dedupes height reports; clear its last value so the next open reports its height
+	// again. Without this, a dismissed menu reopened at the same height never reports it, and the
+	// host can come back at zero height with the rows rendered but invisible.
+	postToUi({ type: "UI_HIDDEN" });
 	if (iframeHostEl) {
 		iframeHostEl.style.display = "none";
 		// Drop a mid-scroll hide with it: the next show starts a fresh tracking loop,
@@ -1202,6 +1222,8 @@ onTeardown(() => {
 export const picker = {
 	showMatches: showMatchesUi,
 	showLocked: showLockedUi,
+	/** Warm the iframe while the mark is up, so the first click is not a cold start. */
+	preload: preloadUi,
 	reposition: repositionActive,
 	remove: removeActiveUi,
 	/** Collapse the open menu into the in-field mark, then remove it. */

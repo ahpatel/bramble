@@ -55,6 +55,7 @@ type Inbound =
 			maxHeight?: number;
 	  }
 	| { type: "UI_MAX_HEIGHT"; maxHeight?: number }
+	| { type: "UI_HIDDEN" }
 	| { type: "UI_KEY"; key: string; open?: boolean };
 
 // Page origin (from the iframe src): READY is pinned to it, and only the content script's
@@ -208,7 +209,7 @@ const STYLE = `
 				max-height: 380px;
 				overflow-y: auto;
 				margin: 0;
-				padding: 6px;
+				padding: 4px;
 				box-sizing: border-box;
 				transform-origin: top center;
 			}
@@ -222,11 +223,11 @@ const STYLE = `
 			}
 			.tp-item {
 				box-sizing: border-box;
-				padding: 10px 12px;
+				padding: 8px 10px;
 				cursor: pointer !important;
 				display: flex;
 				align-items: center;
-				gap: 12px;
+				gap: 10px;
 				border-radius: max(0px, calc(var(--tp-radius) - 4px));
 				transition: background 0.1s ease;
 			}
@@ -371,7 +372,7 @@ const STYLE = `
 			}
 			/* The note under a capped list. Not a row: no hover, no key target. */
 			.tp-more {
-				padding: 8px 12px 6px;
+				padding: 6px 10px 4px;
 				text-align: center;
 				font-size: 11px;
 				line-height: 1.3;
@@ -420,9 +421,9 @@ const STYLE = `
 			/* Compact: one line per entry, with a small monogram so the row still reads as Bramble.
 			   The old avatar-less version was faster to scan but felt like a debug list. */
 			.tp-item-compact {
-				padding: 11px 12px;
-				gap: 10px;
-				min-height: 62px;
+				padding: 8px 10px;
+				gap: 8px;
+				min-height: 54px;
 			}
 			.tp-avatar-compact {
 				width: 30px;
@@ -503,7 +504,7 @@ const STYLE = `
 				.tp-text-compact .tp-user::before { content: none; }
 			}
 			@container (max-width: 220px) {
-				.tp-item { padding: 9px 8px; gap: 8px; }
+				.tp-item { padding: 8px; gap: 8px; }
 				.tp-avatar { display: none; }
 			}
 		`;
@@ -743,15 +744,18 @@ function render(
 const BOTTOM_INSET = 2;
 let lastReportedHeight = -1;
 function reportHeight(): void {
-	requestAnimationFrame(() => {
+	// A timer, not rAF: the iframe is 0px tall until this first report, and a zero-height frame
+	// can have its animation frames throttled, so the report that gives it a height would never
+	// run. A 0ms timer runs after layout and gives the frame its first height.
+	setTimeout(() => {
 		const list = document.body.querySelector(".tp-list");
 		const height = list ? Math.ceil(list.getBoundingClientRect().height) + BOTTOM_INSET : 0;
 		// The host re-posts its gap cap on every height report. Without this dedupe that becomes
-		// cap -> report -> cap, a rAF loop for as long as the menu is open.
+		// cap -> report -> cap, a loop for as long as the menu is open.
 		if (height === lastReportedHeight) return;
 		lastReportedHeight = height;
 		postHeight(height);
-	});
+	}, 0);
 }
 
 // Chromium can vouch that this frame is unobscured and unfiltered on screen (IntersectionObserver
@@ -961,6 +965,11 @@ function handleInbound(msg: Inbound | undefined): void {
 			}
 			break;
 		}
+		case "UI_HIDDEN":
+			// The host hid the menu. Forget the last reported height: the next open must report it
+			// again, even when the list happens to be the same height as before.
+			lastReportedHeight = -1;
+			break;
 		case "UI_KEY":
 			if (msg.key === "ArrowDown") moveHighlight(1);
 			else if (msg.key === "ArrowUp") moveHighlight(-1);

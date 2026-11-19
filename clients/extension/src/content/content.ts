@@ -325,7 +325,7 @@ function showMatchesFor(
 	const skin = autofillTrigger === "icon" ? { ...base, compact: true } : base;
 	// A first-paint height so a low field opens above the caret rather than flashing below. The
 	// UI's real height replaces it on the resize.
-	const rowHeight = skin.compact ? 64 : 60;
+	const rowHeight = skin.compact ? 54 : 56;
 	const estimatedHeight = Math.min(
 		380,
 		shown.length * rowHeight +
@@ -1209,6 +1209,10 @@ function updateAffordance(field: HTMLInputElement): void {
 	// the mark is the only thing on screen. In focus mode the panel already announced itself.
 	const hint = autofillHintDue && autofillTrigger === "icon" ? offer.hint : undefined;
 	affordance.show(field, { hint, count: offer.count });
+	// The mark is the entry point; warm the iframe now so its first click does not wait on a cold
+	// UI load (the `probe` state). A field whose picker will be relayed has no local iframe to
+	// warm, and creating one here would race the relay.
+	if (placement(field) === "local") picker.preload();
 }
 
 /**

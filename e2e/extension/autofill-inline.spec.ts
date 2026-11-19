@@ -243,8 +243,15 @@ test("quiet mode: Enter fills the suggested login, Tab keeps its native focus mo
 	expect(markBox!.x).toBeCloseTo(fieldBox!.x, 0);
 	expect(markBox!.width).toBeCloseTo(fieldBox!.width, 0);
 
-	// Nothing opened on focus: the quiet mode draws no panel.
-	expect(pickerFrame(page)).toBeUndefined();
+	// Nothing opened on focus: the quiet mode draws no panel. The picker iframe is preloaded
+	// while the mark is up, so it exists but must stay hidden.
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() => document.querySelector<HTMLElement>('div[id^="tp-"]')?.style.display ?? "gone",
+			),
+		)
+		.not.toBe("block");
 
 	// Tab is the browser's: it moves focus to the password field and fills nothing.
 	await page.locator("#user").fill("ali");

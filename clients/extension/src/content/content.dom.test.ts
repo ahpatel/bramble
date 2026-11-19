@@ -64,6 +64,7 @@ vi.mock("./picker", () => ({
 		dismissTo,
 		isExiting: () => false,
 		removeDropdown,
+		preload: vi.fn(),
 		reposition: vi.fn(),
 		activeHost: () => pickerState.host,
 		anchorField: () => pickerState.anchor,
