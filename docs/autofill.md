@@ -395,6 +395,14 @@ is larger, in which case it flips above; the entrance animation follows the dire
 frame uses an estimated height (the row count and the compact/normal row height), so a field near
 the bottom does not flash below and then jump.
 
+The mark and picker hosts are `position: absolute` children of `<body>`, so their translate counts
+from their containing block's origin, not the viewport. Usually that is the document origin minus
+the scroll offset, but a page that positions `<html>` or `<body>` (a dialog scroll lock, a fixed
+body, a transformed wrapper) moves it. `host-offset.ts` probes the origin with an untranslated 0x0
+box beside the host, and the mark, the local picker and the relay host all place themselves through
+it. Without the probe, USPS's scroll-locked login page drew the menu about 120px to the right of
+the fields.
+
 The menu is also capped to the larger of the two gaps, not just the design's 380px. A menu taller
 than both the space above and below used to stay below at its full height and clip against the
 window edge; now it draws at the cap and scrolls inside itself, so the bottom border and the last

@@ -2,6 +2,7 @@
 // shadow root pinned to the field. The mark opens the list; it never fills.
 
 import { anchorIsLive } from "./detection";
+import { hostOffset } from "./host-offset";
 import { t } from "./i18n";
 import { onTeardown } from "./lifecycle";
 import { MARK_INSET } from "./mark";
@@ -398,7 +399,8 @@ function position(rectOverride?: DOMRect, liveKnown = false): boolean {
 		hide();
 		return false;
 	}
-	const transform = `translate3d(${rect.left + window.scrollX}px, ${rect.top + window.scrollY}px, 0)`;
+	const offset = hostOffset(host);
+	const transform = `translate3d(${rect.left + offset.x}px, ${rect.top + offset.y}px, 0)`;
 	const width = `${rect.width}px`;
 	const height = `${rect.height}px`;
 	if (host.style.transform !== transform) host.style.transform = transform;

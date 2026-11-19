@@ -3,6 +3,7 @@
 import { affordance } from "./affordance";
 import { api } from "./content-api";
 import { anchorIsLive } from "./detection";
+import { hostOffset } from "./host-offset";
 import { type AliasRowState, dropdownAlias } from "./html/dropdown-alias";
 import { dropdownItem } from "./html/dropdown-item";
 import { dropdownLocked } from "./html/dropdown-locked";
@@ -221,13 +222,16 @@ let pickerMaxHeight = 0;
 function computePlacement(
 	rect: DOMRect,
 	height: number,
+	offset: { x: number; y: number } = { x: window.scrollX, y: window.scrollY },
 ): { x: number; y: number; width: number; above: boolean; maxHeight: number } {
 	const width = pickerWidth(rect.width, pickerCompact, window.innerWidth);
 	// Keep the menu inside the viewport even when the field itself is wider (200% zoom on a
-	// narrow screen): clamp the left edge after the width is known.
+	// narrow screen): clamp the left edge after the width is known. `offset` maps a viewport
+	// point to the host's containing block (host-offset.ts), which is not the document when the
+	// page positions <html> or <body>.
 	const x = Math.max(
-		window.scrollX,
-		Math.min(rect.left + window.scrollX, window.scrollX + window.innerWidth - width),
+		offset.x,
+		Math.min(rect.left + offset.x, offset.x + window.innerWidth - width),
 	);
 	const spaceBelow = window.innerHeight - rect.bottom;
 	const spaceAbove = rect.top;
@@ -235,7 +239,7 @@ function computePlacement(
 	// to the larger gap and scrolling inside itself.
 	const above = height > 0 && spaceBelow < height + 8 && spaceAbove > spaceBelow;
 	const maxHeight = maxMenuHeight(spaceBelow, spaceAbove);
-	const y = above ? rect.top - height - 2 + window.scrollY : rect.bottom + window.scrollY + 2;
+	const y = above ? rect.top - height - 2 + offset.y : rect.bottom + offset.y + 2;
 	return { x, y, width, above, maxHeight };
 }
 
@@ -268,7 +272,7 @@ function positionHostElement(el: HTMLElement, field: HTMLInputElement): void {
 	// The iframe's height is 0 until the UI reports its content; the shadow menu already has one.
 	// The estimate bridges that first frame so a low field does not flash below then jump above.
 	pickerHeight = el.getBoundingClientRect().height || pickerEstimate;
-	applyPlacement(el, computePlacement(rect, pickerHeight), true);
+	applyPlacement(el, computePlacement(rect, pickerHeight, hostOffset(el)), true);
 }
 
 // A page that can open or move the picker can put it under a click the user is already making
@@ -341,7 +345,7 @@ function startPositionTracking(): void {
 			removeActiveUi();
 			return;
 		}
-		const placement = computePlacement(rect, pickerHeight || pickerEstimate);
+		const placement = computePlacement(rect, pickerHeight || pickerEstimate, hostOffset(host));
 		const changed = placement.x !== lastX || placement.y !== lastY || placement.width !== lastWidth;
 		applyPlacement(host, placement, changed);
 		// New field or first frame: re-baseline without treating it as a scroll.

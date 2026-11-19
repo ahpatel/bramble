@@ -1306,3 +1306,50 @@ test("the mark steps right of a site's clear control in an RTL field", async ({
 		timeout: 10_000,
 	});
 });
+
+const OFFSET_BODY_LOGIN = `<!doctype html><html><head><title>Sign in</title><style>
+	html, body { margin: 0; }
+	body { position: fixed; top: -37px; left: 120px; right: 0; bottom: 0; }
+	form { width: 340px; margin: 80px; }
+	input { display: block; width: 300px; height: 40px; box-sizing: border-box; }
+</style></head><body>
+	<form>
+		<input id="user" name="username" type="text" autocomplete="username" />
+		<input id="pass" name="password" type="password" autocomplete="current-password" />
+	</form>
+</body></html>`;
+
+test("the mark and menu align on a page that positions the body", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, OFFSET_BODY_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await expect(markHost(page)).toHaveCount(1, { timeout: 10_000 });
+	const field = await page.locator("#user").boundingBox();
+	const mark = await markHost(page).boundingBox();
+	expect(mark).not.toBeNull();
+	expect(field).not.toBeNull();
+	// The body is fixed at left 120px / top -37px. The hosts translate from the body's origin,
+	// so without the containing-block probe both would sit 120px right and 37px up.
+	expect(Math.abs(mark!.x - field!.x)).toBeLessThan(2);
+	expect(Math.abs(mark!.y - field!.y)).toBeLessThan(2);
+
+	await clickMarkAt(page, "#user");
+	await expect.poll(() => pickerFrame(page), { timeout: 10_000 }).toBeDefined();
+	const picker = await page.locator('div[id^="tp-"]').boundingBox();
+	expect(picker).not.toBeNull();
+	expect(Math.abs(picker!.x - field!.x)).toBeLessThan(2);
+	expect(Math.abs(picker!.y - (field!.y + field!.height + 2))).toBeLessThan(3);
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
+		timeout: 10_000,
+	});
+});

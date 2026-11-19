@@ -6,6 +6,7 @@
 import { api } from "./content-api";
 import { isExtensionOrigin } from "./ext-origin";
 import type { RelayedAnchor, RelayRect } from "./frame-relay";
+import { hostOffset } from "./host-offset";
 import { hostIsTrustworthy } from "./legibility";
 import { onTeardown } from "./lifecycle";
 import { MARK_INSET } from "./mark";
@@ -43,19 +44,15 @@ let relayExit: Animation | null = null;
  */
 function position(h: Hosted): void {
 	const width = relayWidth(h.rect.width, window.innerWidth);
-	const x = Math.max(
-		window.scrollX,
-		Math.min(h.rect.x + window.scrollX, window.scrollX + window.innerWidth - width),
-	);
+	const offset = hostOffset(h.host);
+	const x = Math.max(offset.x, Math.min(h.rect.x + offset.x, offset.x + window.innerWidth - width));
 	// The iframe is 0 tall until the UI reports; once it has a height, place it above when the
 	// space below the field is too small. A relayed field often sits low in a checkout form.
 	const height = h.frame.getBoundingClientRect().height;
 	const spaceBelow = window.innerHeight - (h.rect.y + h.rect.height);
 	const spaceAbove = h.rect.y;
 	const above = height > 0 && spaceBelow < height + 8 && spaceAbove > spaceBelow;
-	const y = above
-		? h.rect.y - height - 2 + window.scrollY
-		: h.rect.y + h.rect.height + 2 + window.scrollY;
+	const y = above ? h.rect.y - height - 2 + offset.y : h.rect.y + h.rect.height + 2 + offset.y;
 	const transform = `translate3d(${x}px, ${y}px, 0)`;
 	if (h.host.style.transform !== transform) {
 		h.host.style.transform = transform;

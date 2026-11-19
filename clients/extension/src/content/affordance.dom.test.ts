@@ -68,6 +68,21 @@ beforeEach(async () => {
 	// the completion fits inside the field.
 	vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
 		if (this.tagName === "INPUT") return FIELD_BOX;
+		// host-offset.ts's 0x0 probe sits on the containing block's origin, so it answers 0,0.
+		const el = this as HTMLElement;
+		if (el.style?.position === "absolute" && el.style.width === "0px") {
+			return {
+				x: 0,
+				y: 0,
+				top: 0,
+				left: 0,
+				right: 0,
+				bottom: 0,
+				width: 0,
+				height: 0,
+				toJSON: () => ({}),
+			} as DOMRect;
+		}
 		return { ...FIELD_BOX, width: 20, right: 30, toJSON: () => ({}) } as DOMRect;
 	});
 	vi.stubGlobal("requestAnimationFrame", () => 1);
