@@ -1194,6 +1194,77 @@ test("the mark shows on a short identifier-first field", async ({ context, exten
 	});
 });
 
+const IDENTIFIER_FIRST = `<!doctype html><html><head><title>Sign in</title></head><body>
+	<form id="f">
+		<input id="user" name="username" type="text" autocomplete="username" />
+		<button type="submit">Next</button>
+	</form>
+	<script>
+		document.getElementById("f").addEventListener("submit", (e) => {
+			e.preventDefault();
+			window.__submitted = true;
+		});
+	</script>
+</body></html>`;
+
+test("Enter fills the username and submits on an identifier-first page", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, IDENTIFIER_FIRST);
+	await page.goto("https://example.com/");
+	await page.locator("#user").fill("al");
+	await expect(markHost(page)).toHaveCount(1, { timeout: 10_000 });
+	await page.keyboard.press("Enter");
+
+	// The username completes and the page's own Enter submit runs; there is no password on this
+	// step, so the whole-login fill would race the page's navigation and be refused.
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+	await expect
+		.poll(() => page.evaluate(() => (window as { __submitted?: boolean }).__submitted))
+		.toBe(true);
+});
+
+const NARROW_LOGIN = `<!doctype html><html><head><title>Sign in</title><style>
+	body { margin: 40px; }
+	input { height: 24px; font: 14px Georgia, serif; }
+	#user { width: 40px; }
+</style></head><body>
+	<form>
+		<input id="user" name="username" type="text" autocomplete="username" />
+		<input id="pass" name="password" type="password" autocomplete="current-password" />
+	</form>
+</body></html>`;
+
+test("the mark shows on a narrow field and overlaps the text", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, NARROW_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	// The field is 40px wide, under the old 88px floor. The mark overlaps the text instead of
+	// disappearing, and its small inset keeps the 26px button inside the field.
+	await expect(markHost(page)).toBeVisible({ timeout: 10_000 });
+
+	await clickMarkAt(page, "#user");
+	await expect.poll(() => pickerFrame(page), { timeout: 10_000 }).toBeDefined();
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
+		timeout: 10_000,
+	});
+});
+
 test("the mark steps right of a site's clear control in an RTL field", async ({
 	context,
 	extensionId,

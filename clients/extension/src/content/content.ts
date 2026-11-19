@@ -113,6 +113,8 @@ let inlineSuggestion: {
 	field: HTMLInputElement;
 	entryId: string;
 	name: string;
+	/** The login's full username, so an identifier-first page can take it without a round trip. */
+	username: string;
 } | null = null;
 // Set when the user explicitly closes the popover; suppresses redisplay from
 // re-queries until they re-engage (focus, type, or mousedown on a field).
@@ -1249,7 +1251,7 @@ function updateInlinePreview(field: HTMLInputElement | null): void {
 		clearInlineSuggestion();
 		return;
 	}
-	inlineSuggestion = { field, entryId: best.id, name: best.name };
+	inlineSuggestion = { field, entryId: best.id, name: best.name, username: best.secondary };
 	affordance.preview(field, best.secondary.slice(typed.length));
 }
 
@@ -1295,10 +1297,19 @@ function entryName(id: string): string | undefined {
  */
 function acceptInlineSuggestion(): boolean {
 	if (autofillTrigger !== "icon" || !inlineSuggestion) return false;
-	const { field, entryId, name } = inlineSuggestion;
+	const { field, entryId, name, username } = inlineSuggestion;
 	if (deepActiveElement() !== field || !field.isConnected) return false;
 	// Empty = the suggestion is the whole value; otherwise it must be the user's own typing.
 	if (field.value.trim() && !typedUsernameQuery.get(field)) return false;
+	// Identifier-first pages (Google, Yahoo) have no visible password on this step. Fill the
+	// username and let Enter submit so the page can advance; the next step's mark fills the
+	// password. A whole-login round trip here races the page's navigation and comes back refused.
+	const password = getPageFields().login.password;
+	if (!password || !isRendered(password)) {
+		fillTextField(field, username);
+		clearInlineSuggestion();
+		return false;
+	}
 	clearInlineSuggestion();
 	fillAndReport(field, entryId, name);
 	return true;
@@ -1318,7 +1329,9 @@ function acceptTypedUsername(): boolean {
 	const field = fields.username;
 	if (!field || deepActiveElement() !== field || !field.isConnected) return false;
 	if (!typedUsernameQuery.get(field)) return false;
-	if (fields.password?.value) return false;
+	// Identifier-first: there is no password on this step, so Enter is the page's submit.
+	if (!fields.password || !isRendered(fields.password)) return false;
+	if (fields.password.value) return false;
 	const typed = field.value.trim().toLowerCase();
 	if (!typed) return false;
 	const match = loginRows(field, cachedResult.logins).matches.find(

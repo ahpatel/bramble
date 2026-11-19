@@ -45,9 +45,10 @@ const COUNT_MAX = 9;
 
 // Right-edge insets tried in order. The first clears the browser's own key/eye icon; the next
 // two step left past a site's reveal-password eye or clear button that appears once the field has
-// a value. A site control under the mark would eat the click, which is what made the second pick
-// on a filled Wells Fargo field do nothing.
-const MARK_INSETS = [MARK_INSET, MARK_INSET + 26, MARK_INSET + 52];
+// a value. The 4px fallback is for fields narrower than the normal inset, where overlapping the
+// text is better than hiding the mark. A site control under the mark would eat the click, which
+// is what made the second pick on a filled Wells Fargo field do nothing.
+const MARK_INSETS = [MARK_INSET, MARK_INSET + 26, MARK_INSET + 52, 4];
 const INSET_CHECK_MS = 150;
 let insetCache: { field: HTMLInputElement; inset: number; at: number } | null = null;
 
@@ -98,7 +99,7 @@ const STYLE = `
 		position: absolute;
 		top: 0;
 		left: 0;
-		z-index: 2147483646;
+		z-index: 2147483647;
 		pointer-events: none;
 		display: none;
 		contain: layout style;
@@ -391,8 +392,9 @@ function position(rectOverride?: DOMRect, liveKnown = false): boolean {
 	}
 	// The field's text box can be much shorter than its visual wrapper: Yahoo's is 17.5px inside a
 	// 42px control. The mark only needs enough room for its centre line, so use the same floor as
-	// `isRendered`, not the control's height.
-	if (!liveField || field.disabled || field.readOnly || rect.width < 88 || rect.height < 12) {
+	// `isRendered`, not the control's height. A narrow field (Spamgourmet's is under 88px) still
+	// gets the mark: the 26px button overlaps the text, and the user types to the left of it.
+	if (!liveField || field.disabled || field.readOnly || rect.width < 34 || rect.height < 12) {
 		hide();
 		return false;
 	}
