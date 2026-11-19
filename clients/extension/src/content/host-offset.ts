@@ -6,9 +6,16 @@ import { onTeardown } from "./lifecycle";
 // pins <html> at top:-scrollY while a dialog is open. See docs/autofill.md.
 
 let probe: HTMLElement | null = null;
+// The mark and picker trackers both ask on every frame; they share a containing block, so one
+// probe read per frame is enough. The cache is short (a frame) so a scroll lock that moves the
+// document is picked up on the next frame.
+let cached: { x: number; y: number } | null = null;
+let cachedAt = Number.NEGATIVE_INFINITY;
 
 /** What to add to a viewport point to get the translate that puts `host` there. */
 export function hostOffset(host: HTMLElement): { x: number; y: number } {
+	const now = performance.now();
+	if (cached && now - cachedAt < 16) return cached;
 	const parent = host.parentNode;
 	if (!parent) return { x: window.scrollX, y: window.scrollY };
 	// An untranslated box beside the host shares its containing block, so it sits on the origin.
@@ -19,10 +26,14 @@ export function hostOffset(host: HTMLElement): { x: number; y: number } {
 	}
 	if (probe.parentNode !== parent) parent.insertBefore(probe, host);
 	const origin = probe.getBoundingClientRect();
-	return { x: -origin.left, y: -origin.top };
+	cached = { x: -origin.left, y: -origin.top };
+	cachedAt = now;
+	return cached;
 }
 
 onTeardown(() => {
 	probe?.remove();
 	probe = null;
+	cached = null;
+	cachedAt = Number.NEGATIVE_INFINITY;
 });

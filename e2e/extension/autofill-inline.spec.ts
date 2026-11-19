@@ -1117,7 +1117,7 @@ test("the marks keep reopening across alternating password and username picks", 
 		// The pick releases the native autocomplete at once, not after the collapse: the next
 		// mark click must see the token the page declared.
 		const declared = selector === "#pass" ? "current-password" : "username";
-		expect(await page.locator(selector).getAttribute("autocomplete")).toBe(declared);
+		await expect(page.locator(selector)).toHaveAttribute("autocomplete", declared);
 		await expect(page.locator(selector)).toHaveValue(expected, { timeout: 10_000 });
 		// Let the pick's collapse animation FINISH before the next open. The animation ends
 		// through its onfinish path here, not the cancel path a fast reopen takes; a menu
