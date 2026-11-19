@@ -55,10 +55,21 @@ let insetCache: { field: HTMLInputElement; inset: number; at: number } | null = 
 function chooseInset(target: HTMLInputElement, rect: DOMRect): number {
 	const root = target.getRootNode() as (Node & Partial<DocumentOrShadowRoot>) | undefined;
 	if (!root || typeof root.elementFromPoint !== "function") return MARK_INSET;
+	const rtl = getComputedStyle(target).direction === "rtl";
 	const y = rect.top + rect.height / 2;
 	for (const inset of MARK_INSETS) {
-		const x = rect.right - inset - 13;
-		if (x < rect.left + 4 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) continue;
+		// The mark sits at the inline end, which is the left edge in an RTL field. Step inward
+		// from that edge, not from the physical right one.
+		const x = rtl ? rect.left + inset + 13 : rect.right - inset - 13;
+		if (
+			(rtl ? x > rect.right - 4 : x < rect.left + 4) ||
+			y < 0 ||
+			x < 0 ||
+			x >= window.innerWidth ||
+			y >= window.innerHeight
+		) {
+			continue;
+		}
 		const top = root.elementFromPoint(x, y);
 		// The field itself, our own host, or a transparent wrapper around the field is free.
 		if (!top || top === target || top === host) return inset;
@@ -561,14 +572,32 @@ function setExpanded(open: boolean): void {
 /** True when a page click at viewport (x, y) lands inside the mark's 26px button on `target`.
  *  The host is the click target when it is there; this covers the moment it is not (a menu is
  *  collapsing, or the pointer just arrived on the field), where the click reaches the input. */
+/** The 26px mark zone, or its half away from the row's open button when the menu covers it. */
+function markZoneAt(
+	rect: DOMRect,
+	rtl: boolean,
+	x: number,
+	y: number,
+	inset: number,
+	half: "full" | "switch",
+): boolean {
+	const edge = rtl ? rect.left + inset : rect.right - inset;
+	const centerY = rect.top + rect.height / 2;
+	const inX =
+		half === "full"
+			? rtl
+				? x >= edge && x <= edge + 26
+				: x >= edge - 26 && x <= edge
+			: rtl
+				? x >= edge + 12 && x <= edge + 26
+				: x >= edge - 26 && x <= edge - 12;
+	return inX && y >= centerY - 13 && y <= centerY + 13;
+}
+
 function isMarkZone(target: HTMLInputElement, x: number, y: number): boolean {
 	const rect = target.getBoundingClientRect();
 	const rtl = getComputedStyle(target).direction === "rtl";
-	const inset = insetFor(target, rect);
-	const edge = rtl ? rect.left + inset : rect.right - inset;
-	const centerY = rect.top + rect.height / 2;
-	const inX = rtl ? x >= edge && x <= edge + 26 : x >= edge - 26 && x <= edge;
-	return inX && y >= centerY - 13 && y <= centerY + 13;
+	return markZoneAt(rect, rtl, x, y, insetFor(target, rect), "full");
 }
 
 /** The left half of the mark button. Used when the menu covers the field: the row's own open
@@ -579,12 +608,7 @@ function isMarkSwitchZone(target: HTMLInputElement, x: number, y: number): boole
 	const rtl = getComputedStyle(target).direction === "rtl";
 	// The menu covers the field here; reuse the inset the mark was last drawn at rather than
 	// hit-testing through the menu.
-	const inset = insetFor(target, rect, false);
-	const edge = rtl ? rect.left + inset : rect.right - inset;
-	const centerY = rect.top + rect.height / 2;
-	// The half of the mark away from the row's open button, which sits at the same inline end.
-	const inX = rtl ? x >= edge + 12 && x <= edge + 26 : x >= edge - 26 && x <= edge - 12;
-	return inX && y >= centerY - 13 && y <= centerY + 13;
+	return markZoneAt(rect, rtl, x, y, insetFor(target, rect, false), "switch");
 }
 
 /** Attach the host to `next` and start tracking it. Shared by the mark, the pick chip and the

@@ -62,6 +62,42 @@ const CLEARABLE_LOGIN = `<!doctype html><html><head><title>login</title><style>
 	</script>
 </body></html>`;
 
+const CLEARABLE_RTL_LOGIN = `<!doctype html><html dir="rtl"><head><title>login</title><style>
+	body { margin: 40px; background: #eef0f3; }
+	form { width: 340px; }
+	.wrap { position: relative; margin-top: 12px; }
+	input {
+		display: block; width: 100%; height: 42px; box-sizing: border-box;
+		border: 1px solid rgb(185, 192, 201); border-radius: 0;
+		padding: 0 11px 0 80px;
+		font: 14px Georgia, "Times New Roman", serif;
+		color: rgb(23, 32, 43); background: rgb(255, 255, 255);
+	}
+	.clear {
+		position: absolute; left: 30px; top: 50%; transform: translateY(-50%);
+		width: 26px; height: 26px; display: none; border: 0;
+		background: rgb(238, 240, 243); color: rgb(23, 32, 43);
+		font: 16px sans-serif; cursor: pointer;
+	}
+	.wrap.has-value .clear { display: block; }
+</style></head><body>
+	<form>
+		<div class="wrap" id="user-wrap">
+			<input id="user" name="username" type="text" autocomplete="username" />
+			<button type="button" class="clear" aria-label="Clear">x</button>
+		</div>
+		<div class="wrap">
+			<input id="pass" name="password" type="password" autocomplete="current-password" />
+		</div>
+		<button type="submit">Sign in</button>
+	</form>
+	<script>
+		const user = document.querySelector("#user");
+		const wrap = document.querySelector("#user-wrap");
+		user.addEventListener("input", () => wrap.classList.toggle("has-value", !!user.value));
+	</script>
+</body></html>`;
+
 const ROUNDED_LOGIN = `<!doctype html><html><head><title>login</title><style>
 	body { margin: 40px; background: #f7f6fd; }
 	form { width: 340px; }
@@ -109,8 +145,6 @@ async function clickMark(page: Page): Promise<void> {
 	await page.mouse.click(box!.x + box!.width - 30 - 13, box!.y + box!.height / 2);
 }
 
-/** The pref the background reads per query; the shared fixture starts every other spec in focus. */
-
 /** Click the mark inside an arbitrary field (the password field after a fill, for example). */
 async function clickMarkIn(page: Page, selector: string): Promise<void> {
 	const field = page.locator(selector);
@@ -130,9 +164,12 @@ async function clickMarkAt(page: Page, selector: string): Promise<void> {
 	const inset = await markHost(page).evaluate(
 		(el) => Number.parseFloat(getComputedStyle(el).getPropertyValue("--mark-inset")) || 30,
 	);
-	await page.mouse.click(box!.x + box!.width - inset - 13, box!.y + box!.height / 2);
+	const rtl = await field.evaluate((el) => getComputedStyle(el).direction === "rtl");
+	const x = rtl ? box!.x + inset + 13 : box!.x + box!.width - inset - 13;
+	await page.mouse.click(x, box!.y + box!.height / 2);
 }
 
+/** The pref the background reads per query; the shared fixture starts every other spec in focus. */
 async function setTrigger(popup: Page, trigger: "icon" | "focus" | "shortcut"): Promise<void> {
 	await popup.evaluate(
 		(next) => chrome.storage.local.set({ "pref.autofillTrigger": next }),
@@ -446,6 +483,44 @@ test("Settings exposes the click behaviour and the bound shortcut", async ({
 			),
 		)
 		.toBe("icon");
+});
+
+test("changing the click behaviour updates an open page without a reload", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await expect.poll(() => pickerFrame(page), { timeout: 10_000 }).toBeDefined();
+
+	// Change the mode through the real Settings control, not storage: the background must push
+	// the new mode to the tab that is already open.
+	await popup.getByRole("button", { name: "Settings" }).click();
+	await popup.getByRole("button", { name: "General", exact: true }).click();
+	await popup.getByRole("combobox", { name: "Show" }).selectOption("icon");
+
+	// The iframe host is kept for reuse, so the menu is closed when its host is hidden, not when
+	// the frame disappears.
+	await expect
+		.poll(
+			() =>
+				page.evaluate(() => {
+					const host = document.querySelector<HTMLElement>('div[id^="tp-"]');
+					return host ? host.style.display : "gone";
+				}),
+			{ timeout: 10_000 },
+		)
+		.toBe("none");
+	await page.bringToFront();
+	await page.locator("#user").click();
+	await expect(markHost(page)).toHaveCount(1);
 });
 
 test("the login last used on the site leads the next menu", async ({ context, extensionId }) => {
@@ -1068,6 +1143,41 @@ test("the mark steps left of a site's clear control and keeps reopening", async 
 	// The fill gives the field a value, so the page's clear control now covers the base spot.
 	// The next open must step left of it, or the click lands on the clear button and the menu
 	// never opens.
+	await clickMarkAt(page, "#user");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
+		timeout: 10_000,
+	});
+});
+
+test("the mark steps right of a site's clear control in an RTL field", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, CLEARABLE_RTL_LOGIN);
+	await page.goto("https://example.com/");
+
+	await clickMarkAt(page, "#user");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const first = pickerFrame(page)!;
+	await expect(first.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+	await waitOutPickerClickGuard(page);
+	await first.locator(".tp-item-compact").first().click();
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+
+	// The clear control now sits at the inline end (the left, in RTL). The mark must step right
+	// of it, the mirrored move of the LTR case above.
 	await clickMarkAt(page, "#user");
 	await expect(async () => {
 		expect(pickerFrame(page)).toBeDefined();

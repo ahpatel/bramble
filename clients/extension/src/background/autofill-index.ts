@@ -1217,7 +1217,7 @@ async function broadcastAutofillEnabled(enabled: boolean): Promise<void> {
 
 /** Push a new trigger mode to every tab, so a page focused before the setting changed swaps
  * its affordance without a reload. Best-effort, like the switch push above. */
-async function broadcastAutofillTrigger(trigger: string): Promise<void> {
+async function broadcastAutofillTrigger(trigger: AutofillTrigger): Promise<void> {
 	try {
 		const tabs = await api.tabs.query({});
 		for (const tab of tabs) {
@@ -1259,22 +1259,6 @@ on("AUTOFILL_HINT_SEEN", async (_message, sender) => {
 	await markAutofillIconHintSeen();
 	return { ok: true, data: null };
 });
-
-/**
- * The `autofill-cycle` browser command. This is the only page-fill path that does not begin
- * with a DOM event, so its trust comes from the browser: `commands.onCommand` fires only for a
- * real shortcut press, and a page cannot synthesize it. The command is forwarded to the active
- * tab only; each frame then requires the focused element to be a candidate field of its own, so
- * at most one frame acts and nothing is filled on a page the user is not looking at.
- */
-export async function cycleAutofillInActiveTab(): Promise<void> {
-	try {
-		if (!(await getAutofillEnabled())) return;
-		const [tab] = await api.tabs.query({ active: true, currentWindow: true });
-		if (tab?.id === undefined) return;
-		await api.tabs.sendMessage(tab.id, { type: "AUTOFILL_CYCLE" }).catch(() => {});
-	} catch {}
-}
 
 /** Create one alias for the page the sender is on. The site comes from the VERIFIED sender, not
  * from the message: it reaches the provider and lands in the user's dashboard, and a page must

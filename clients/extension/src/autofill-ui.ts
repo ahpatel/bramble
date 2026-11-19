@@ -55,7 +55,7 @@ type Inbound =
 			maxHeight?: number;
 	  }
 	| { type: "UI_MAX_HEIGHT"; maxHeight?: number }
-	| { type: "UI_KEY"; key: string };
+	| { type: "UI_KEY"; key: string; open?: boolean };
 
 // Page origin (from the iframe src): READY is pinned to it, and only the content script's
 // UI_CONNECT is taken from it. The page shares that window, so everything after rides the port.
@@ -741,10 +741,16 @@ function render(
  *  list's own border: a viewport sized exactly to the border-box clips that last pixel at some
  *  device pixel ratios, which reads as a missing bottom border. */
 const BOTTOM_INSET = 2;
+let lastReportedHeight = -1;
 function reportHeight(): void {
 	requestAnimationFrame(() => {
 		const list = document.body.querySelector(".tp-list");
-		postHeight(list ? Math.ceil(list.getBoundingClientRect().height) + BOTTOM_INSET : 0);
+		const height = list ? Math.ceil(list.getBoundingClientRect().height) + BOTTOM_INSET : 0;
+		// The host re-posts its gap cap on every height report. Without this dedupe that becomes
+		// cap -> report -> cap, a rAF loop for as long as the menu is open.
+		if (height === lastReportedHeight) return;
+		lastReportedHeight = height;
+		postHeight(height);
 	});
 }
 
@@ -887,8 +893,12 @@ window.addEventListener("message", (e) => {
 		// post here, so this binding is not a trust decision: the peer re-checks our
 		// origin, our source, and that a picked id is one it actually rendered.
 		const type = (e.data as { type?: string } | undefined)?.type;
-		if (type === "UI_MOVED" && e.source === window.parent) {
-			settledAt = performance.now();
+		// The host frame (our parent) sends only geometry: a move resets the click guard, and the
+		// gap cap limits the list. Neither may become the peer, or picks would go to the host
+		// instead of the frame that owns the field.
+		if (e.source === window.parent && (type === "UI_MOVED" || type === "UI_MAX_HEIGHT")) {
+			if (type === "UI_MOVED") settledAt = performance.now();
+			else handleInbound(e.data as Inbound | undefined);
 			return;
 		}
 		if (!e.source || !type || !CONTENT_TYPES.has(type)) return;
@@ -954,7 +964,15 @@ function handleInbound(msg: Inbound | undefined): void {
 		case "UI_KEY":
 			if (msg.key === "ArrowDown") moveHighlight(1);
 			else if (msg.key === "ArrowUp") moveHighlight(-1);
-			else if (msg.key === "Enter" && highlight >= 0) activate(highlight);
+			else if (msg.key === "Enter" && highlight >= 0) {
+				const row = rows[highlight];
+				// Ctrl/Cmd+Enter is the row's secondary action: open the entry, never fill it.
+				if (msg.open === true && row?.kind === "match") {
+					post({ type: "UI_OPEN_ENTRY", entryId: row.id });
+				} else {
+					activate(highlight);
+				}
+			}
 			break;
 	}
 }

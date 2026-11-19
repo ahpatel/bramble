@@ -881,6 +881,12 @@ frame cannot impersonate. **Only geometry and an opaque relay id travel this way
 every hop is a `message` event on a window the page shares with us, so summaries,
 entry ids and secrets must never ride it.
 
+The relayed rect is bounded but **not clamped to the child's box**: a picker for a
+47px frame has to extend outside it. Ownership is the boundary instead. The UI
+announces its relay id to every frame in the tab, so the relay chain records which
+frame opened each id and rejects an anchor or withdrawal from any other frame; a
+sibling that learns the id cannot move or close another frame's picker.
+
 The **UI announces itself** and the field's frame **pins the announcement whose
 `event.origin` is one of our own extension origins**. That check is the whole trust
 boundary, so it must never be relaxed to a bare `chrome-extension://` scheme test,

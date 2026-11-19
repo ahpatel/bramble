@@ -288,6 +288,27 @@ test("keyboard nav drives the relayed picker without moving focus off the field"
 	});
 });
 
+test("Ctrl+Enter opens the relayed highlighted row instead of filling", async ({
+	context,
+	extensionId,
+}) => {
+	await setUp(context, extensionId);
+	const page = await context.newPage();
+	await serve(page);
+	await page.goto(`${MERCHANT}/`);
+
+	const ui = await openPicker(page);
+	await page.keyboard.press("ArrowDown");
+	await expect(ui.locator("[data-entry-id]")).toHaveClass(/tp-active/, { timeout: 10_000 });
+
+	// The secondary action crosses the relay too: it opens the entry, and the card stays empty.
+	const opened = context.waitForEvent("page");
+	await page.keyboard.press("Control+Enter");
+	const details = await opened;
+	await expect(details).toHaveURL(/popup\.html\?detached=1/);
+	await expect(cardFrame(page).locator("#number")).toHaveValue("");
+});
+
 test("dismisses the relayed picker when the field's frame scrolls it away", async ({
 	context,
 	extensionId,

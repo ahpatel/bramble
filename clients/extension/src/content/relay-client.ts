@@ -149,9 +149,9 @@ export function closeRelayed(collapse = false): void {
 	renderedIds = new Set();
 }
 
-/** Forward a navigation key to the relayed UI. */
-export function keyToRelayed(key: string): void {
-	if (relayedPickerIsLive()) post({ type: "UI_KEY", key });
+/** Forward a navigation key to the relayed UI. `open` is Ctrl/Cmd+Enter: open, don't fill. */
+export function keyToRelayed(key: string, open = false): void {
+	if (relayedPickerIsLive()) post({ type: "UI_KEY", key, open: open || undefined });
 }
 
 function handleMessage(e: MessageEvent): void {

@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({ legible: true, sent: [] as unknown[] }));
 
-vi.mock("./legibility", () => ({ EARLY_CLICK_MS: 500, isLegible: () => h.legible }));
+vi.mock("./legibility", () => ({
+	EARLY_CLICK_MS: 500,
+	hostIsTrustworthy: () => h.legible,
+}));
 vi.mock("./lifecycle", () => ({
 	isExtensionAlive: () => true,
 	markExtensionDead: vi.fn(),

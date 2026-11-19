@@ -47,6 +47,3 @@ export function hostIsTrustworthy(host: HTMLElement | null): boolean {
 	if (!top) return false;
 	return top === host || host.contains(top) || top.contains(host);
 }
-
-/** Backwards-compatible name for the corner prompt's trust check. */
-export const isLegible = hostIsTrustworthy;

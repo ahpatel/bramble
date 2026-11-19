@@ -37,7 +37,7 @@ import {
 import { installFrameRelay, type RelayRect } from "./frame-relay";
 import type { AliasRowState } from "./html/dropdown-alias";
 import { t } from "./i18n";
-import { isLegible } from "./legibility";
+import { hostIsTrustworthy } from "./legibility";
 import { onTeardown, safeRequest, safeSendMessage } from "./lifecycle";
 import {
 	holdGeneratedPassword,
@@ -63,14 +63,6 @@ import {
 	signupPasswordFields,
 } from "./signup-detect";
 import { type DropdownSkin, dropdownSkin } from "./skin";
-
-/** The entries a field's kind would show, before the typed-login filter and the card carry. */
-function entriesForKind(result: QueryResult, kind: ReturnType<typeof kindOf>): MatchSummary[] {
-	if (kind === "card") return result.cards;
-	if (kind === "otp") return result.otps ?? [];
-	return result.logins;
-}
-
 import type {
 	AliasCreateResponse,
 	AutofillQueryResponse,
@@ -81,6 +73,13 @@ import type {
 	MatchSummary,
 	QueryResult,
 } from "./types";
+
+/** The entries a field's kind would show, before the typed-login filter and the card carry. */
+function entriesForKind(result: QueryResult, kind: ReturnType<typeof kindOf>): MatchSummary[] {
+	if (kind === "card") return result.cards;
+	if (kind === "otp") return result.otps ?? [];
+	return result.logins;
+}
 
 let mutationObserver: MutationObserver | null = null;
 
@@ -395,6 +394,13 @@ function handleRelayedKey(e: KeyboardEvent): boolean {
 		e.preventDefault();
 		silenceAutoOpen = true;
 		dropRelayed();
+		return true;
+	}
+	// Ctrl/Cmd+Enter opens the highlighted row's details, the same secondary action the local
+	// picker offers. It must not fall through to the plain Enter fill below.
+	if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && relayedHighlight) {
+		e.preventDefault();
+		keyToRelayed("Enter", true);
 		return true;
 	}
 	// Enter only picks when a row is highlighted; otherwise the form submits normally.
@@ -1071,7 +1077,7 @@ function launchTopCheck(size: { frameWidth: number; frameHeight: number }): {
 			(frame) =>
 				Math.abs(frame.clientWidth - size.frameWidth) <= 2 &&
 				Math.abs(frame.clientHeight - size.frameHeight) <= 2 &&
-				isLegible(frame),
+				hostIsTrustworthy(frame),
 		),
 	};
 }
@@ -1144,6 +1150,224 @@ async function fillFromShortcut(): Promise<void> {
 	if (pick) fillAndReport(into, pick.id, pick.name);
 }
 
+/** What the in-field mark would offer here: the one-time hint and the number of entries behind it. */
+type FieldOffer = { hint: string; count: number };
+
+/**
+ * The same conditions the panel uses, reduced to "is there anything behind this field?".
+ *
+ * The mark has to appear for every case the panel can serve - matches, cards, one-time codes, a
+ * generated password, an alias, the locked unlock row - or a quiet mode would hide a feature the
+ * user configured. It must also not appear where the panel would refuse to draw: a signup form's
+ * email box with no alias provider is the main one.
+ *
+ * Locked and unlocked differ only in what "has a login" means: locked, the page only knows
+ * `hasPotentialMatch`; unlocked, the hint is drawn only for a login the field can actually offer.
+ * The count is the entries this field would list; a suggestion or an alias is not an entry, and a
+ * locked vault does not know how many there are.
+ */
+function offerFor(field: HTMLInputElement): FieldOffer | null {
+	if (!cachedResult) return null;
+	const locked = cachedResult.locked;
+	if (!locked) {
+		const kind = kindOf(getPageFields(), field);
+		if (kind === "card") {
+			const n = cachedResult.cards.length;
+			return n > 0 ? { hint: t("hintCards"), count: n } : null;
+		}
+		if (kind === "otp") {
+			const n = (cachedResult.otps ?? []).length;
+			return n > 0 ? { hint: t("hintOtp"), count: n } : null;
+		}
+	}
+	const anyLogins = locked ? cachedResult.hasPotentialMatch : cachedResult.logins.length > 0;
+	const suggestion = maySuggestPassword(field, anyLogins);
+	if (suggestion) return { hint: t("hintGeneratedPassword"), count: 0 };
+	const alias = cachedResult.aliasReady === true && shouldSuggestAlias(field);
+	if (isCreationField(field) && !alias) return null;
+	if (locked) return anyLogins || alias ? { hint: t("hintLocked"), count: 0 } : null;
+	const visible = visibleLoginsForField(field, cachedResult.logins);
+	if (visible.length > 0) return { hint: t("hintLogins"), count: visible.length };
+	return alias ? { hint: t("hintAlias"), count: 0 } : null;
+}
+
+/** Show or hide the mark for `field` according to the mode and what it can offer. */
+function updateAffordance(field: HTMLInputElement): void {
+	if (autofillDisabled || autofillTrigger === "shortcut") {
+		affordance.hide();
+		return;
+	}
+	if (isFilling() || !isKnownCandidate(field)) return;
+	const offer = offerFor(field);
+	if (!offer) {
+		affordance.hide();
+		return;
+	}
+	// The hint is a one-time introduction to a quiet affordance, so it belongs in the mode where
+	// the mark is the only thing on screen. In focus mode the panel already announced itself.
+	const hint = autofillHintDue && autofillTrigger === "icon" ? offer.hint : undefined;
+	affordance.show(field, { hint, count: offer.count });
+}
+
+/**
+ * Paint the best match's username as ghost text after what the user has typed. On an empty field
+ * the whole username is the suggestion, so the quiet mode has something to accept from the start.
+ *
+ * Username field only, never a password: a completion there would reveal a password's length and
+ * characters. The preview lives in the affordance's closed shadow root, so the page cannot read
+ * the account it is suggesting.
+ */
+function updateInlinePreview(field: HTMLInputElement | null): void {
+	if (
+		autofillDisabled ||
+		autofillTrigger !== "icon" ||
+		!field ||
+		!cachedResult ||
+		cachedResult.locked
+	) {
+		clearInlineSuggestion();
+		return;
+	}
+	const username = getPageFields().login.username;
+	if (field !== username || isCreationField(field) || deepActiveElement() !== field) {
+		clearInlineSuggestion();
+		return;
+	}
+	// Only at the end of what was typed: a completion in the middle of a value would move the
+	// caret and overwrite text the user meant to edit.
+	if (field.selectionStart !== null && field.selectionStart !== field.value.length) {
+		clearInlineSuggestion();
+		return;
+	}
+	const typed = field.value;
+	const best = loginRows(field, cachedResult.logins).matches.find(
+		(m) =>
+			m.secondary.length > typed.length &&
+			m.secondary.toLowerCase().startsWith(typed.toLowerCase()),
+	);
+	if (!best) {
+		clearInlineSuggestion();
+		return;
+	}
+	inlineSuggestion = { field, entryId: best.id, name: best.name };
+	affordance.preview(field, best.secondary.slice(typed.length));
+}
+
+function clearInlineSuggestion(): void {
+	inlineSuggestion = null;
+	affordance.clearPreview();
+}
+
+/**
+ * Fill `entryId` into `field` and show the entry name as the mark's extension. A refused fill
+ * (locked, origin no longer authorized) must not leave the keypress looking like it did nothing.
+ */
+function fillAndReport(
+	field: HTMLInputElement,
+	entryId: string,
+	name: string,
+	opts?: { otpOnly?: boolean },
+): void {
+	void selectMatch(entryId, false, opts?.otpOnly === true, field).then((filled) => {
+		if (filled) affordance.flash(field, name);
+		else if (field.isConnected) affordance.flash(field, t("hudFillRefused"));
+	});
+}
+
+/** The name of the entry a picker row named. The id came from the same query response. */
+function entryName(id: string): string | undefined {
+	if (!cachedResult) return undefined;
+	const all = [...cachedResult.logins, ...cachedResult.cards, ...(cachedResult.otps ?? [])];
+	return all.find((match) => match.id === id)?.name;
+}
+
+/**
+ * Accept the completion with Enter.
+ *
+ * The completion is a selection of a Bramble credential, so it fills the whole login through the
+ * same authorized path as a click, not just the username. (Filling the username alone read as a
+ * half-done pick: the user had chosen the entry and still had to fetch the password.)
+ *
+ * An empty field is the other case: the ghost is the whole suggested username, so Enter accepts it
+ * too. A non-empty value must have come from the user's own typing; a page-prefilled value (or a
+ * browser autofill) must not turn the submit key into a Bramble fill. Tab is deliberately not
+ * involved; it keeps its native focus move.
+ */
+function acceptInlineSuggestion(): boolean {
+	if (autofillTrigger !== "icon" || !inlineSuggestion) return false;
+	const { field, entryId, name } = inlineSuggestion;
+	if (deepActiveElement() !== field || !field.isConnected) return false;
+	// Empty = the suggestion is the whole value; otherwise it must be the user's own typing.
+	if (field.value.trim() && !typedUsernameQuery.get(field)) return false;
+	clearInlineSuggestion();
+	fillAndReport(field, entryId, name);
+	return true;
+}
+
+/**
+ * Enter with a full username typed and the menu closed.
+ *
+ * The ghost only appears while the typed text is a strict prefix, so a fully typed username has no
+ * completion to accept. It is still a selection of that saved login: if the value matches exactly
+ * and the password field is still empty, Enter fills the password instead of submitting. A typed
+ * password (or a browser-filled one) keeps Enter as the submit key, so nothing is overwritten.
+ */
+function acceptTypedUsername(): boolean {
+	if (autofillTrigger !== "icon" || !cachedResult || cachedResult.locked) return false;
+	const fields = getPageFields().login;
+	const field = fields.username;
+	if (!field || deepActiveElement() !== field || !field.isConnected) return false;
+	if (!typedUsernameQuery.get(field)) return false;
+	if (fields.password?.value) return false;
+	const typed = field.value.trim().toLowerCase();
+	if (!typed) return false;
+	const match = loginRows(field, cachedResult.logins).matches.find(
+		(m) => m.secondary.trim().toLowerCase() === typed,
+	);
+	if (!match) return false;
+	clearInlineSuggestion();
+	fillAndReport(field, match.id, match.name);
+	return true;
+}
+
+/**
+ * Enter takes the top filtered login when the user has typed a username into the anchored field
+ * and the filtered menu is open. That fills both fields, like a click on the row; an empty or
+ * pre-filled field keeps Enter as the form's submit.
+ */
+function pickTopForTypedQuery(): boolean {
+	if (!cachedResult || cachedResult.locked || !pickerIsOpen()) return false;
+	const field = anchorField();
+	if (!field || field !== getPageFields().login.username) return false;
+	if (deepActiveElement() !== field) return false;
+	if (!typedUsernameQuery.get(field)) return false;
+	const top = loginRows(field, cachedResult.logins).matches[0];
+	if (!top) return false;
+	fillAndReport(field, top.id, top.name);
+	return true;
+}
+
+/** Apply the click-behaviour mode. Never opens a panel by itself; the caller decides what the
+ *  change should show on the field already in front of the user. */
+function applyAutofillTrigger(trigger: AutofillTrigger): void {
+	// A re-query repeats the same answer on every DOM mutation. Acting on it each time would close
+	// a panel the user had just opened with the mark, so only a real change moves anything.
+	if (autofillTrigger === trigger) return;
+	autofillTrigger = trigger;
+	affordance.setMarkAllowed(trigger !== "shortcut");
+	if (autofillDisabled) return;
+	if (trigger !== "focus") removePicker();
+	if (trigger === "shortcut") {
+		affordance.hide();
+		clearInlineSuggestion();
+		return;
+	}
+	const focused = focusedCandidate();
+	if (focused) updateAffordance(focused);
+	if (trigger === "icon") updateInlinePreview(focused);
+	else clearInlineSuggestion();
+}
+
 /**
  * Fill the login the user chose in Bramble's own window for this page (#215). Top frame only, like
  * a desktop fill. The page has no focus while that window is in front, so a visible page will do,
@@ -1162,6 +1386,18 @@ function focusedCandidate(): HTMLInputElement | null {
 	return focused instanceof HTMLInputElement && isCandidate(getPageFields(), focused)
 		? focused
 		: null;
+}
+
+/** A settings push that changes the trigger mode, applied to a page that is already open. */
+function pushAutofillTrigger(trigger: unknown): void {
+	if (!isAutofillTrigger(trigger)) return;
+	applyAutofillTrigger(trigger);
+	// Turning "open on focus" on while the user is already in a field should show it now, not on
+	// the next focus. The other modes need no action beyond the mark `applyAutofillTrigger` set.
+	if (trigger === "focus") {
+		const focused = focusedCandidate();
+		if (focused) openPickerFor(focused);
+	}
 }
 
 function isQueryResult(v: unknown): v is QueryResult {
@@ -1515,8 +1751,9 @@ picker.onUseSuggested(() => {
 picker.onUseAlias(() => {
 	cancelOperations();
 	const field = anchorField();
-	if (!field) return; // A click on the busy row is impossible by construction (it carries no hook), but a stale
+	// A click on the busy row is impossible by construction (it carries no hook), but a stale
 	// keyboard activation could still arrive; one gesture must not buy two aliases.
+	if (!field) return;
 	if (aliasStateFor.get(field)?.state === "busy") return;
 
 	aliasStateFor.set(field, { state: "busy" });
@@ -1781,16 +2018,16 @@ try {
 			const payload = message.payload as { enabled?: boolean; trigger?: string } | undefined;
 			const enabled = payload?.enabled !== false;
 			if (enabled === autofillDisabled) applyAutofillEnabled(enabled);
-			const trigger = payload?.trigger;
-			if (isAutofillTrigger(trigger)) {
-				applyAutofillTrigger(trigger);
-				// Turning "open on focus" on while the user is already in a field should show it now,
-				// not on the next focus. The other modes need no action beyond the mark above.
-				if (trigger === "focus") {
-					const focused = focusedCandidate();
-					if (focused) openPickerFor(focused);
-				}
-			}
+			pushAutofillTrigger(payload?.trigger);
+			sendResponse({ ok: true });
+			return false;
+		}
+
+		if (message?.type === "AUTOFILL_TRIGGER") {
+			// The trigger-only push from Settings. It must not touch the enabled switch: an
+			// `AUTOFILL_ENABLED` without a trigger would default `enabled` to true and turn
+			// autofill back on.
+			pushAutofillTrigger((message.payload as { trigger?: unknown } | undefined)?.trigger);
 			sendResponse({ ok: true });
 			return false;
 		}

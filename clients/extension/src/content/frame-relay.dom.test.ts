@@ -212,6 +212,48 @@ describe("shopify checkout - card fields in a cross-origin iframe", () => {
 	});
 });
 
+describe("a relay belongs to the frame that opened it", () => {
+	// The picker UI announces its relay id to every frame in the tab, so any of them can learn
+	// it. Only the frame that opened the relay may move it or withdraw it.
+	let relay: FrameRelay;
+	let ownerEl: HTMLIFrameElement;
+	let otherEl: HTMLIFrameElement;
+	const RECT: RelayRect = { x: 0, y: 0, width: 100, height: 20 };
+
+	beforeEach(() => {
+		document.body.innerHTML = "<iframe id='owner'></iframe><iframe id='other'></iframe>";
+		ownerEl = document.querySelector<HTMLIFrameElement>("#owner")!;
+		otherEl = document.querySelector<HTMLIFrameElement>("#other")!;
+		for (const el of [ownerEl, otherEl]) el.style.border = "0";
+		stubRect(ownerEl, { x: 0, y: 0, width: 300, height: 150 });
+		stubRect(otherEl, { x: 0, y: 200, width: 300, height: 150 });
+		relay = installFrameRelay({ window, document });
+	});
+
+	it("ignores another frame's anchor for a relay it does not own", () => {
+		const seen = vi.fn();
+		relay.onAnchor(seen);
+
+		deliver(window, { __tp: "tp-relay-anchor", relayId: "r", rect: RECT }, ownerEl.contentWindow);
+		deliver(window, { __tp: "tp-relay-anchor", relayId: "r", rect: RECT }, otherEl.contentWindow);
+
+		expect(seen).toHaveBeenCalledTimes(1);
+		expect(seen.mock.calls[0]![0].rect.y).toBe(0);
+	});
+
+	it("ignores another frame's withdrawal of a relay it does not own", () => {
+		const closed = vi.fn();
+		relay.onClose(closed);
+
+		deliver(window, { __tp: "tp-relay-anchor", relayId: "r", rect: RECT }, ownerEl.contentWindow);
+		deliver(window, { __tp: "tp-relay-close", relayId: "r" }, otherEl.contentWindow);
+		expect(closed).not.toHaveBeenCalled();
+
+		deliver(window, { __tp: "tp-relay-close", relayId: "r" }, ownerEl.contentWindow);
+		expect(closed).toHaveBeenCalledWith("r", false);
+	});
+});
+
 describe("relay accumulates offsets across nested frames", () => {
 	it("adds every hop's frame offset on the way up", async () => {
 		document.body.innerHTML = "<div id='host'></div>";

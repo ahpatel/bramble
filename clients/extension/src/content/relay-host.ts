@@ -9,7 +9,7 @@ import type { RelayedAnchor, RelayRect } from "./frame-relay";
 import { hostIsTrustworthy } from "./legibility";
 import { onTeardown } from "./lifecycle";
 import { MARK_INSET } from "./mark";
-import { MENU_COLLAPSE_MS, MENU_FADE_MS, relayWidth } from "./placement";
+import { MENU_COLLAPSE_MS, MENU_FADE_MS, maxMenuHeight, relayWidth } from "./placement";
 
 const AUTOFILL_UI_URL = (() => {
 	try {
@@ -26,6 +26,8 @@ type Hosted = {
 	host: HTMLElement;
 	frame: HTMLIFrameElement;
 	rect: RelayRect;
+	/** The larger of the two gaps around the field, so the UI can cap its list. */
+	cap?: number;
 };
 
 let hosted: Hosted | null = null;
@@ -54,9 +56,20 @@ function position(h: Hosted): void {
 	const y = above
 		? h.rect.y - height - 2 + window.scrollY
 		: h.rect.y + h.rect.height + 2 + window.scrollY;
-	h.host.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+	const transform = `translate3d(${x}px, ${y}px, 0)`;
+	if (h.host.style.transform !== transform) {
+		h.host.style.transform = transform;
+		// The UI cannot see the host move; reset its early-click guard so a click aimed at where
+		// the card used to be cannot fill.
+		h.frame.contentWindow?.postMessage({ type: "UI_MOVED" }, "*");
+	}
 	h.host.style.width = `${width}px`;
 	h.host.classList.toggle("tp-above", above);
+	// The UI cannot see this frame's viewport, so it cannot cap the list to the gap around the
+	// field by itself. Post the cap; the first post can land before the UI is ready, so the
+	// UI_RESIZE handler posts it again once the document exists.
+	h.cap = maxMenuHeight(spaceBelow, spaceAbove);
+	h.frame.contentWindow?.postMessage({ type: "UI_MAX_HEIGHT", maxHeight: h.cap }, "*");
 }
 
 function stopWatchdog(): void {
@@ -220,7 +233,8 @@ window.addEventListener("message", (e) => {
 	const height = Math.max(0, Math.min(MAX_HEIGHT, Number(msg.height) || 0));
 	hosted.frame.style.height = `${height}px`;
 	// The first placement ran while the frame was 0 tall; now that the menu has a height, choose
-	// above/below again so a field near the bottom does not leave the card cut off.
+	// above/below again so a field near the bottom does not leave the card cut off. This also
+	// re-posts the gap cap once the UI document exists to receive it.
 	position(hosted);
 });
 

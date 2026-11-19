@@ -34,16 +34,10 @@ function frameOf(): HTMLIFrameElement {
 }
 
 /** Run the rAF watchdog one tick, past the 150ms trust-check throttle. */
-function tick(): Promise<void> {
+/** Wait `ms` (160 by default; 170 clears the watchdog's ~150ms trust-check interval). */
+function tick(ms = 160): Promise<void> {
 	return new Promise((resolve) =>
-		setTimeout(() => requestAnimationFrame(() => setTimeout(resolve, 0)), 160),
-	);
-}
-
-/** Wait past the watchdog's ~150ms trust-check interval, then run one tick. */
-function tickAfterTrustCheck(): Promise<void> {
-	return new Promise((resolve) =>
-		setTimeout(() => requestAnimationFrame(() => setTimeout(resolve, 0)), 170),
+		setTimeout(() => requestAnimationFrame(() => setTimeout(resolve, 0)), ms),
 	);
 }
 
@@ -206,7 +200,7 @@ describe("clickjacking watchdog", () => {
 	it("tears the host down when the page makes it transparent", async () => {
 		const host = await mountRendered();
 		host.style.opacity = "0.2";
-		await tickAfterTrustCheck();
+		await tick(170);
 
 		expect(hostEl()).toBeNull();
 	});
@@ -214,7 +208,7 @@ describe("clickjacking watchdog", () => {
 	it("tears the host down when the page hides it", async () => {
 		const host = await mountRendered();
 		host.style.visibility = "hidden";
-		await tickAfterTrustCheck();
+		await tick(170);
 
 		expect(hostEl()).toBeNull();
 	});
@@ -224,7 +218,7 @@ describe("clickjacking watchdog", () => {
 		const overlay = document.createElement("div");
 		document.body.appendChild(overlay);
 		document.elementFromPoint = () => overlay;
-		await tickAfterTrustCheck();
+		await tick(170);
 
 		expect(hostEl()).toBeNull();
 		expect(host.isConnected).toBe(false);
@@ -233,7 +227,7 @@ describe("clickjacking watchdog", () => {
 	it("tears the host down when the page shrinks it below legibility", async () => {
 		const host = await mountRendered();
 		stubRect(host, { x: 24, y: 354, width: 432, height: 4 });
-		await tickAfterTrustCheck();
+		await tick(170);
 
 		expect(hostEl()).toBeNull();
 	});
@@ -249,7 +243,7 @@ describe("clickjacking watchdog ancestors", () => {
 		document.elementFromPoint = () => host;
 		await tick();
 		document.body.style.opacity = "0.2";
-		await tickAfterTrustCheck();
+		await tick(170);
 		expect(hostEl()).toBeNull();
 	});
 });

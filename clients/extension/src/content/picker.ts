@@ -823,7 +823,6 @@ function iframeShow(field: HTMLInputElement, render: IframeRender): void {
 	else armReadinessTimeout();
 }
 
-/** Product of the `opacity()` functions in a computed filter (1 when there are none). */
 /** Gate for anything that fills: a click must also have waited out EARLY_CLICK_MS. */
 function pickAllowed(host: HTMLElement | null, pointer: unknown): boolean {
 	if (pointer === true && clickIsEarly()) return false;

@@ -169,3 +169,25 @@ Two consequences worth stating, because both have been got wrong:
   assembled code for the form and for OS-level code autofill. The model keeps all
   of them; `splitOtpFields` tells the boxes from the mirror at fill time, because
   they are written to differently (see docs/autofill.md).
+
+## Autofill UI
+
+- **Mark**: the in-field Bramble berry, with the number of entries the field would
+  list. It is one closed-shadow host (`content/affordance.ts`) that also carries the
+  username completion, the one-time hint and the pick chip. It has no fill path: a
+  click opens the list, and a fill still needs a trusted click in the picker or a
+  browser command.
+- **Affordance**: the module and host that own the mark, completion, hint and chip.
+  Use "mark" for the visible berry and "affordance" for the code seam.
+- **Pick chip**: the entry-name confirmation that grows from the mark. A pick holds
+  it for 2s and slides it into the berry over another 2s; a keyboard cycle holds it
+  for 800ms and fades over 160ms.
+- **Trigger mode**: `pref.autofillTrigger`, the Settings choice of how the list is
+  reached: `icon` draws the mark and nothing else, `focus` opens the list on focus,
+  and `shortcut` draws nothing and leaves the browser command as the only path.
+- **Skin**: the menu's sampled look (`content/skin.ts`): corner radius, surface,
+  ink, hairline and font, read from the anchor field.
+- **Carry**: the card or login this tab picked last, so the next field's menu leads
+  with the entry already used on the page.
+- **Cycle**: the `autofill-cycle` and `autofill-cycle-back` browser commands, which
+  fill the next saved login for the focused field and wrap at the end.

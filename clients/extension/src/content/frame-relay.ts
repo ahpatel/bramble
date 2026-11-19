@@ -34,7 +34,9 @@ const DISMISS = "tp-relay-dismiss";
 // Less room than this under the anchor and the dropdown gets clipped; relay instead.
 export const MIN_PICKER_SPACE = 160;
 
-// A relayed rect comes from a child frame, so it is clamped rather than trusted.
+// A relayed rect comes from a child frame, so it is bounded by MAX_COORD. It is not clamped to
+// the frame: the picker has to extend outside a frame shorter than the menu. Ownership below is
+// what stops one frame from moving another frame's relay.
 const MAX_COORD = 1_000_000;
 
 type AnchorMessage = { __tp: typeof ANCHOR; relayId: string; rect: RelayRect };
@@ -124,6 +126,8 @@ export function installFrameRelay(host: RelayHost): FrameRelay {
 	let anchorCb: ((anchor: RelayedAnchor) => void) | null = null;
 	let closeCb: ((relayId: string, collapse?: boolean) => void) | null = null;
 	let dismissCb: (() => void) | null = null;
+	// Relay id -> the child frame element that opened it.
+	const owners = new Map<string, HTMLElement>();
 
 	const isTop = (): boolean => view.parent === view;
 
@@ -157,13 +161,23 @@ export function installFrameRelay(host: RelayHost): FrameRelay {
 		// Drop anything that isn't from a real child frame (the page can post too).
 		const frameEl = frameElementFor(doc, e.source);
 		if (!frameEl) return;
+		// The UI announces relay ids to every frame in the tab, so only the frame that opened a
+		// relay may move or withdraw it.
+		const relayId = (anchor ?? close)!.relayId;
+		const owner = owners.get(relayId);
+		if (owner && owner !== frameEl) return;
 		if (close) {
-			if (isTop()) closeCb?.(close.relayId, close.collapse);
+			owners.delete(relayId);
+			if (isTop()) closeCb?.(relayId, close.collapse);
 			else postUp(close);
 			return;
 		}
 		if (!anchor) return;
 		const rect = translate(anchor.rect, frameEl, view);
+		if (!owner) {
+			for (const [id, el] of owners) if (!el.isConnected) owners.delete(id);
+			owners.set(relayId, frameEl);
+		}
 		if (isTop()) anchorCb?.({ relayId: anchor.relayId, rect });
 		else postUp({ __tp: ANCHOR, relayId: anchor.relayId, rect });
 	};
