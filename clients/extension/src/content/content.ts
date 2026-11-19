@@ -2219,8 +2219,14 @@ function bootstrap(): void {
 			silenceAutoOpen = false;
 			// Record what the user actually typed, as opposed to whatever the field merely
 			// holds (a pre-filled remembered value, an autofocus default): only a real
-			// keystroke here should narrow the login picker's filter.
-			if (target.value) typedUsernameQuery.set(target, target.value);
+			// keystroke here should narrow the login picker's filter. Chrome's password
+			// manager and the browser's own autocomplete fill a field with a trusted
+			// `insertReplacementText` input; that is the browser, not the user, and a
+			// browser-filled username that differs from the saved entry must not hide the
+			// site's mark.
+			const browserFilled = (e as InputEvent).inputType === "insertReplacementText";
+			if (browserFilled) typedUsernameQuery.delete(target);
+			else if (target.value) typedUsernameQuery.set(target, target.value);
 			else typedUsernameQuery.delete(target);
 			if (!cachedResult) {
 				queryAutofill();

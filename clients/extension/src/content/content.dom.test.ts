@@ -201,8 +201,16 @@ document.addEventListener = nativeAddEventListener;
 function dispatchTrustedInteraction(
 	type: "pointerdown" | "mousedown" | "input",
 	target: HTMLElement,
+	init?: { inputType?: string },
 ): void {
-	const nativeEvent = new MouseEvent(type, { bubbles: true, composed: true });
+	const nativeEvent =
+		type === "input"
+			? new InputEvent(type, {
+					bubbles: true,
+					composed: true,
+					inputType: init?.inputType ?? "insertText",
+				})
+			: new MouseEvent(type, { bubbles: true, composed: true });
 	const event = new Proxy(nativeEvent, {
 		get(inner, property) {
 			if (property === "isTrusted") return true;
@@ -833,6 +841,23 @@ describe("content: username filter on login picker", () => {
 		pass.value = "alice";
 		dispatchTrustedInteraction("input", pass);
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual(logins);
+	});
+
+	it("does not filter a value the browser autofilled", () => {
+		// Chrome's password manager replaces the value with a trusted
+		// `insertReplacementText` input. The browser filled the field, not the user, so the
+		// site's mark must keep offering every login even when the filled username differs.
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.focus();
+		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
+		send({ type: "AUTOFILL_MATCHES", payload: result({ logins }) });
+		showMatches.mockClear();
+		removePicker.mockClear();
+
+		user.value = "zzzz";
+		dispatchTrustedInteraction("input", user, { inputType: "insertReplacementText" });
+		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual(logins);
+		expect(removePicker).not.toHaveBeenCalled();
 	});
 
 	it("does not filter a pre-filled value the user never typed", () => {
