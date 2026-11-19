@@ -117,10 +117,10 @@ const ROUNDED_LOGIN = `<!doctype html><html><head><title>login</title><style>
 	</form>
 </body></html>`;
 
-async function serve(page: Page, html: string): Promise<void> {
+async function serve(page: Page, html: string, host = "example\\.com"): Promise<void> {
 	await page
 		.context()
-		.route(/example\.com/, (route) =>
+		.route(new RegExp(host), (route) =>
 			route.request().resourceType() === "document"
 				? route.fulfill({ body: html, headers: { "content-type": "text/html" } })
 				: route.fulfill({ status: 200, body: "" }),
@@ -177,12 +177,18 @@ async function setTrigger(popup: Page, trigger: "icon" | "focus" | "shortcut"): 
 	);
 }
 
-async function seedLogin(popup: Page, name: string, username: string, password: string) {
+async function seedLogin(
+	popup: Page,
+	name: string,
+	username: string,
+	password: string,
+	url = "https://example.com",
+) {
 	await popup.getByRole("button", { name: /Add New/i }).click();
 	await popup.getByRole("button", { name: /Add a new login/i }).click();
 	await popup.getByLabel("Name", { exact: true }).fill(name);
 	await popup.getByRole("button", { name: /Add URL/i }).click();
-	await popup.getByLabel("Website URL", { exact: true }).fill("https://example.com");
+	await popup.getByLabel("Website URL", { exact: true }).fill(url);
 	await popup.getByLabel("Username or email", { exact: true }).fill(username);
 	await popup.getByLabel("Password", { exact: true }).fill(password);
 	await popup.getByRole("button", { name: /Save Login/i }).click();
@@ -1147,6 +1153,42 @@ test("the mark steps left of a site's clear control and keeps reopening", async 
 	await expect(async () => {
 		expect(pickerFrame(page)).toBeDefined();
 	}).toPass({ timeout: 20_000 });
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
+		timeout: 10_000,
+	});
+});
+
+const SHORT_LOGIN = `<!doctype html><html><head><title>Sign in</title><style>
+	body { margin: 40px; }
+	form { width: 340px; }
+	input {
+		display: block; width: 244px; height: 17.5px; box-sizing: border-box;
+		padding: 0; border: 0; font: 14px Georgia, "Times New Roman", serif;
+	}
+</style></head><body>
+	<form id="challenge-form" method="post" autocomplete="on">
+		<label for="username">Username, email or phone number</label>
+		<input id="username" type="text" name="username" value="" autocomplete="" />
+		<button type="submit" name="signin">Next</button>
+	</form>
+</body></html>`;
+
+test("the mark shows on a short identifier-first field", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedLogin(popup, "Yahoo", "alice@yahoo.com", "s3cr3t-pw-01", "https://yahoo.com");
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SHORT_LOGIN, "login\\.yahoo\\.com");
+	await page.goto("https://login.yahoo.com/");
+	await page.locator("#username").click();
+	// Yahoo's input is 17.5px tall inside a taller control. The mark must still draw.
+	await expect(markHost(page)).toBeVisible({ timeout: 10_000 });
+
+	await clickMarkAt(page, "#username");
+	await expect.poll(() => pickerFrame(page), { timeout: 10_000 }).toBeDefined();
 	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
 		timeout: 10_000,
 	});

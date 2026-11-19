@@ -389,7 +389,10 @@ function position(rectOverride?: DOMRect, liveKnown = false): boolean {
 			liveField = anchorIsLive(field, rect);
 		}
 	}
-	if (!liveField || field.disabled || field.readOnly || rect.width < 88 || rect.height < 18) {
+	// The field's text box can be much shorter than its visual wrapper: Yahoo's is 17.5px inside a
+	// 42px control. The mark only needs enough room for its centre line, so use the same floor as
+	// `isRendered`, not the control's height.
+	if (!liveField || field.disabled || field.readOnly || rect.width < 88 || rect.height < 12) {
 		hide();
 		return false;
 	}
