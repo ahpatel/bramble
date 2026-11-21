@@ -146,23 +146,6 @@ function initials(name: string): string {
 	return graphemes(firstWord).slice(0, 2).join("").toUpperCase() || "??";
 }
 
-const AVATAR_COLORS = [
-	{ bg: "#7C3AED", ink: "#ffffff" },
-	{ bg: "#2563EB", ink: "#ffffff" },
-	{ bg: "#0891B2", ink: "#17202b" },
-	{ bg: "#059669", ink: "#17202b" },
-	{ bg: "#65A30D", ink: "#17202b" },
-	{ bg: "#CA8A04", ink: "#17202b" },
-	{ bg: "#EA580C", ink: "#17202b" },
-	{ bg: "#DC2626", ink: "#ffffff" },
-	{ bg: "#DB2777", ink: "#ffffff" },
-];
-function avatarFor(name: string): { bg: string; ink: string } {
-	let hash = 0;
-	for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-	return AVATAR_COLORS[hash % AVATAR_COLORS.length]!;
-}
-
 // Colours reference the local --tp-* tokens below, never literals. The tokens mirror the
 // @vault/theme scale (packages/theme/theme.css); this iframe has no Bramble app shell to read a
 // `.dark` class, so light/dark follows the OS via prefers-color-scheme. Byte-identical to the
@@ -175,8 +158,6 @@ const STYLE = `
 				--tp-foreground: oklch(20.5% 0 0); /* --popover-foreground */
 				--tp-muted: oklch(55.6% 0 0); /* --muted-foreground */
 				--tp-border: oklch(87% 0 0); /* --border */
-				--tp-primary: oklch(20.5% 0 0); /* --primary */
-				--tp-on-primary: #ffffff; /* --primary-foreground */
 				--tp-radius: 16px;
 				--tp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 			}
@@ -186,8 +167,6 @@ const STYLE = `
 					--tp-foreground: oklch(97% 0 0);
 					--tp-muted: oklch(70.8% 0 0);
 					--tp-border: oklch(37.1% 0 0);
-					--tp-primary: oklch(97% 0 0);
-					--tp-on-primary: oklch(20.5% 0 0);
 				}
 			}
 			.tp-list {
@@ -236,6 +215,9 @@ const STYLE = `
 					background: color-mix(in oklab, var(--tp-foreground) 7%, transparent);
 				}
 			}
+			/* One monogram treatment, tinted from the field's own ink: the avatar the vault list
+			   draws. A per-entry colour put nine fixed hues on a menu that otherwise borrows the
+			   site's palette, and the initials already identify the row. */
 			.tp-avatar {
 				width: 40px;
 				height: 40px;
@@ -245,14 +227,9 @@ const STYLE = `
 				justify-content: center;
 				font-size: 15px;
 				font-weight: 700;
-				color: #fff;
-				flex-shrink: 0;
-				letter-spacing: 0.3px;
-				box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.14);
-			}
-			.tp-avatar-locked {
-				background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
 				color: var(--tp-muted);
+				background: color-mix(in oklab, var(--tp-foreground) 8%, transparent);
+				flex-shrink: 0;
 			}
 			.tp-avatar-locked svg {
 				width: 20px;
@@ -285,15 +262,30 @@ const STYLE = `
 				unicode-bidi: plaintext;
 			}
 			.tp-badge {
-				margin-left: auto;
-				flex-shrink: 0;
 				font-size: 11px;
-				font-weight: 600;
+				font-weight: 500;
 				letter-spacing: 0.2px;
 				padding: 3px 8px;
 				border-radius: 999px;
 				color: var(--tp-foreground);
-				background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
+				background: color-mix(in oklab, var(--tp-foreground) 7%, transparent);
+				transition: opacity 0.08s ease;
+			}
+			/* The trailing slot. The carried badge and the open action share one cell and swap on
+			   hover or row highlight, the way the vault list's rows do, so the right edge never
+			   moves. Touch has no hover to swap on, so both stay visible there. */
+			.tp-trail {
+				margin-inline-start: auto;
+				flex-shrink: 0;
+				display: grid;
+				place-items: center end;
+			}
+			.tp-trail > * {
+				grid-area: 1 / 1;
+			}
+			.tp-item:hover .tp-badge,
+			.tp-item.tp-active .tp-badge {
+				opacity: 0;
 			}
 			/* Compact rows are one line: a text badge ("Hier verwendet", 102px) leaves the name
 			   almost nothing at 320px. A dot keeps the meaning (and the title/accessible text)
@@ -308,8 +300,6 @@ const STYLE = `
 				background: var(--tp-muted);
 			}
 			.tp-open {
-				margin-left: auto;
-				flex-shrink: 0;
 				display: flex;
 				align-items: center;
 				justify-content: center;
@@ -321,28 +311,46 @@ const STYLE = `
 				background: transparent;
 				color: var(--tp-muted);
 				cursor: pointer !important;
-				opacity: 1;
-				transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+				opacity: 0;
+				pointer-events: none;
+				transition: opacity 0.1s ease, background 0.12s ease, color 0.12s ease;
 			}
 			.tp-open:focus-visible {
 				opacity: 1;
+				pointer-events: auto;
 				color: var(--tp-foreground);
+			}
+			.tp-item:hover .tp-open,
+			.tp-item.tp-active .tp-open {
+				opacity: 1;
+				pointer-events: auto;
+				transition-delay: 0.04s;
 			}
 			@media (hover: hover) and (pointer: fine) {
 				.tp-item:hover .tp-open {
-					opacity: 1;
 					color: var(--tp-foreground);
 				}
 				.tp-open:hover {
 					background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
 				}
 			}
+			@media (hover: none) {
+				.tp-trail {
+					display: flex;
+					align-items: center;
+					gap: 4px;
+				}
+				.tp-badge,
+				.tp-open {
+					opacity: 1;
+				}
+				.tp-open {
+					pointer-events: auto;
+				}
+			}
 			.tp-open svg {
 				width: 15px;
 				height: 15px;
-			}
-			.tp-badge + .tp-open {
-				margin-left: 4px;
 			}
 			.tp-launch {
 				margin-left: auto;
@@ -358,8 +366,8 @@ const STYLE = `
 				}
 			}
 			.tp-avatar-suggest {
-				background: var(--tp-primary);
-				color: var(--tp-on-primary);
+				background: var(--tp-foreground);
+				color: var(--tp-surface);
 			}
 			.tp-avatar-suggest svg {
 				width: 20px;
@@ -514,31 +522,32 @@ function matchRow(m: MatchSummary, carried: boolean, compact: boolean): string {
 	// label covers the rare row with neither. Twin of content/html/dropdown-item.ts.
 	const primary = m.name || m.secondary || t("savedLogin");
 	const detail = m.name ? m.secondary : "";
-	const avatar = avatarFor(primary);
 	const badge = carried
 		? html`<span class="tp-badge" title="${t("usedHere")}">${t("usedHere")}</span>`
 		: "";
+	// Shares the trailing slot with the badge and appears on hover or row highlight, so the row
+	// reads as one thing until you reach for the escape hatch. Twin of content/html/dropdown-item.ts.
 	const open = html`<button class="tp-open" type="button" data-tp-open-entry="1" aria-label="${t("openEntryDetails")}" title="${t("openEntryDetails")}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg></button>`;
 	if (compact) {
 		return html`
 		<div class="tp-item tp-item-compact" data-entry-id="${m.id}" role="option" aria-selected="false">
-			<div class="tp-avatar tp-avatar-compact" style="background: ${avatar.bg}; color: ${avatar.ink};" aria-hidden="true">${initials(primary)}</div>
+			<div class="tp-avatar tp-avatar-compact" aria-hidden="true">${initials(primary)}</div>
 			<div class="tp-text tp-text-compact">
 				<span class="tp-name" title="${primary}">${primary}</span>
 				<span class="tp-user" title="${detail}">${detail}</span>
 			</div>
-			${[badge, open]}
+			<div class="tp-trail">${[badge, open]}</div>
 		</div>
 	`;
 	}
 	return html`
 		<div class="tp-item" data-entry-id="${m.id}" role="option" aria-selected="false">
-			<div class="tp-avatar" style="background: ${avatar.bg}; color: ${avatar.ink};" aria-hidden="true">${initials(primary)}</div>
+			<div class="tp-avatar" aria-hidden="true">${initials(primary)}</div>
 			<div class="tp-text">
 				<span class="tp-name" title="${primary}">${primary}</span>
 				<span class="tp-user" title="${detail}">${detail}</span>
 			</div>
-			${[badge, open]}
+			<div class="tp-trail">${[badge, open]}</div>
 		</div>
 	`;
 }

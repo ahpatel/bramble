@@ -19,8 +19,6 @@ export const dropdownStyles = html`
 				--tp-foreground: oklch(20.5% 0 0); /* --popover-foreground */
 				--tp-muted: oklch(55.6% 0 0); /* --muted-foreground */
 				--tp-border: oklch(87% 0 0); /* --border */
-				--tp-primary: oklch(20.5% 0 0); /* --primary */
-				--tp-on-primary: #ffffff; /* --primary-foreground */
 				--tp-radius: 16px;
 				--tp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 			}
@@ -30,8 +28,6 @@ export const dropdownStyles = html`
 					--tp-foreground: oklch(97% 0 0);
 					--tp-muted: oklch(70.8% 0 0);
 					--tp-border: oklch(37.1% 0 0);
-					--tp-primary: oklch(97% 0 0);
-					--tp-on-primary: oklch(20.5% 0 0);
 				}
 			}
 			.tp-dropdown {
@@ -88,6 +84,9 @@ export const dropdownStyles = html`
 					background: color-mix(in oklab, var(--tp-foreground) 7%, transparent);
 				}
 			}
+			/* One monogram treatment, tinted from the field's own ink: the avatar the vault list
+			   draws. A per-entry colour put nine fixed hues on a menu that otherwise borrows the
+			   site's palette, and the initials already identify the row. */
 			.tp-avatar {
 				width: 40px;
 				height: 40px;
@@ -97,14 +96,9 @@ export const dropdownStyles = html`
 				justify-content: center;
 				font-size: 15px;
 				font-weight: 700;
-				color: #fff;
-				flex-shrink: 0;
-				letter-spacing: 0.3px;
-				box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.14);
-			}
-			.tp-avatar-locked {
-				background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
 				color: var(--tp-muted);
+				background: color-mix(in oklab, var(--tp-foreground) 8%, transparent);
+				flex-shrink: 0;
 			}
 			.tp-avatar-locked svg {
 				width: 20px;
@@ -137,15 +131,30 @@ export const dropdownStyles = html`
 				unicode-bidi: plaintext;
 			}
 			.tp-badge {
-				margin-left: auto;
-				flex-shrink: 0;
 				font-size: 11px;
-				font-weight: 600;
+				font-weight: 500;
 				letter-spacing: 0.2px;
 				padding: 3px 8px;
 				border-radius: 999px;
 				color: var(--tp-foreground);
-				background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
+				background: color-mix(in oklab, var(--tp-foreground) 7%, transparent);
+				transition: opacity 0.08s ease;
+			}
+			/* The trailing slot. The carried badge and the open action share one cell and swap on
+			   hover or row highlight, the way the vault list's rows do, so the right edge never
+			   moves. Touch has no hover to swap on, so both stay visible there. */
+			.tp-trail {
+				margin-inline-start: auto;
+				flex-shrink: 0;
+				display: grid;
+				place-items: center end;
+			}
+			.tp-trail > * {
+				grid-area: 1 / 1;
+			}
+			.tp-item:hover .tp-badge,
+			.tp-item.tp-active .tp-badge {
+				opacity: 0;
 			}
 			/* Compact rows are one line: a text badge ("Hier verwendet", 102px) leaves the name
 			   almost nothing at 320px. A dot keeps the meaning (and the title/accessible text)
@@ -160,8 +169,6 @@ export const dropdownStyles = html`
 				background: var(--tp-muted);
 			}
 			.tp-open {
-				margin-left: auto;
-				flex-shrink: 0;
 				display: flex;
 				align-items: center;
 				justify-content: center;
@@ -173,28 +180,46 @@ export const dropdownStyles = html`
 				background: transparent;
 				color: var(--tp-muted);
 				cursor: pointer !important;
-				opacity: 1;
-				transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+				opacity: 0;
+				pointer-events: none;
+				transition: opacity 0.1s ease, background 0.12s ease, color 0.12s ease;
 			}
 			.tp-open:focus-visible {
 				opacity: 1;
+				pointer-events: auto;
 				color: var(--tp-foreground);
+			}
+			.tp-item:hover .tp-open,
+			.tp-item.tp-active .tp-open {
+				opacity: 1;
+				pointer-events: auto;
+				transition-delay: 0.04s;
 			}
 			@media (hover: hover) and (pointer: fine) {
 				.tp-item:hover .tp-open {
-					opacity: 1;
 					color: var(--tp-foreground);
 				}
 				.tp-open:hover {
 					background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
 				}
 			}
+			@media (hover: none) {
+				.tp-trail {
+					display: flex;
+					align-items: center;
+					gap: 4px;
+				}
+				.tp-badge,
+				.tp-open {
+					opacity: 1;
+				}
+				.tp-open {
+					pointer-events: auto;
+				}
+			}
 			.tp-open svg {
 				width: 15px;
 				height: 15px;
-			}
-			.tp-badge + .tp-open {
-				margin-left: 4px;
 			}
 			.tp-launch {
 				margin-left: auto;
@@ -210,8 +235,8 @@ export const dropdownStyles = html`
 				}
 			}
 			.tp-avatar-suggest {
-				background: var(--tp-primary);
-				color: var(--tp-on-primary);
+				background: var(--tp-foreground);
+				color: var(--tp-surface);
 			}
 			.tp-avatar-suggest svg {
 				width: 20px;

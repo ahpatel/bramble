@@ -344,6 +344,10 @@ style and returns a small `DropdownSkin`:
   cannot shrink or blow up the menu.
 - **dark / compact**: for shadow strength, `color-scheme` and row height.
 
+The monogram is one treatment, tinted from the field's own ink, the way the vault list draws its
+avatars. A per-entry colour palette put nine fixed hues on a menu that otherwise borrows the site's
+palette; the initials already identify the row, so colour only competed with the name.
+
 Every colour is parsed and re-serialized and every length is clamped before it reaches a
 declaration, so a page can make its own menu ugly but cannot inject CSS through it. `skinKey` is
 part of the render cache key, so a theme switch that changes the field repaints. The skin itself is
@@ -429,9 +433,13 @@ the sites whose form fonts load late. The relayed host re-places itself on the s
 ### Opening an entry from a row
 
 Each match row carries a small "Open in Bramble" action (an external-link glyph at its trailing
-edge). It is a navigation, not a fill: the click posts `UI_OPEN_ENTRY` over the picker's private
-channel, the content script checks the id against the rows it rendered and the picker's visibility,
-and then asks the background to open the full Bramble window on `/vault/<entryId>`.
+edge). It shares one trailing slot with the "Used here" badge: at rest the badge shows and the
+action stays out of sight; hovering the row, or moving the keyboard highlight onto it, swaps them.
+The slot is one grid cell, so the row's right edge never moves and the text column never reflows.
+A touch device has no hover to swap on, so both sit side by side there, always reachable. It is a
+navigation, not a fill: the click posts `UI_OPEN_ENTRY` over the picker's private channel, the
+content script checks the id against the rows it rendered and the picker's visibility, and then
+asks the background to open the full Bramble window on `/vault/<entryId>`.
 
 - The window is the existing pop-out (`popup.html?detached=1`) with a `POPOUT_OPEN` handoff path. If
   a pop-out is already open, the background focuses it and sends a `NAVIGATE` message instead of

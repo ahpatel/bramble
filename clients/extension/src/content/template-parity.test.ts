@@ -178,3 +178,24 @@ describe("the capped-list note is in both renderers", () => {
 		expect(stylesSource).toContain(".tp-more {");
 	});
 });
+
+// The carried badge and the open action share one trailing slot and swap on hover. Without the
+// slot in one renderer, that half stacks them side by side and the row's right edge moves.
+describe("the trailing slot is in both renderers", () => {
+	it("is drawn by the iframe renderer", () => {
+		expect(uiSource).toContain('class="tp-trail"');
+		expect(uiSource).toContain(".tp-trail {");
+	});
+
+	it("is drawn by the shadow renderer", () => {
+		expect(itemSource).toContain('class="tp-trail"');
+		expect(stylesSource).toContain(".tp-trail {");
+	});
+
+	it("keeps one monogram treatment rather than a per-entry palette", () => {
+		for (const src of [uiSource, itemSource]) {
+			expect(src).not.toContain("AVATAR_COLORS");
+			expect(src).not.toMatch(/style="background:/);
+		}
+	});
+});

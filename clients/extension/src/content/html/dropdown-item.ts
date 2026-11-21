@@ -41,26 +41,6 @@ function initials(name: string): string {
 	return graphemes(firstWord).slice(0, 2).join("").toUpperCase() || "??";
 }
 
-// Stable colour per entry: same name always lands on the same swatch. The ink is chosen per
-// swatch so white initials never sit below 4.5:1 on the lighter colours.
-const AVATAR_COLORS = [
-	{ bg: "#7C3AED", ink: "#ffffff" },
-	{ bg: "#2563EB", ink: "#ffffff" },
-	{ bg: "#0891B2", ink: "#17202b" },
-	{ bg: "#059669", ink: "#17202b" },
-	{ bg: "#65A30D", ink: "#17202b" },
-	{ bg: "#CA8A04", ink: "#17202b" },
-	{ bg: "#EA580C", ink: "#17202b" },
-	{ bg: "#DC2626", ink: "#ffffff" },
-	{ bg: "#DB2777", ink: "#ffffff" },
-];
-
-function avatarFor(name: string): { bg: string; ink: string } {
-	let hash = 0;
-	for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-	return AVATAR_COLORS[hash % AVATAR_COLORS.length]!;
-}
-
 export function dropdownItem({
 	id,
 	name,
@@ -81,37 +61,38 @@ export function dropdownItem({
 	// the only identifier it has; when that is empty too, a generic label beats a blank row.
 	const primary = name || secondary || t("savedLogin");
 	const detail = name ? secondary : "";
-	const avatar = avatarFor(primary);
 	const badge = carried
 		? html`<span class="tp-badge" title="${t("usedHere")}">${t("usedHere")}</span>`
 		: "";
 	// A row action, not a second fill target: the mousedown handler checks it before the row's
 	// entry id. It opens the full Bramble window on this entry, for fields the picker doesn't fill.
+	// It shares the trailing slot with the badge and appears on hover or row highlight, so the row
+	// reads as one thing until you reach for the escape hatch.
 	const open = html`<button class="tp-open" type="button" data-tp-open-entry="1" aria-label="${t("openEntryDetails")}" title="${t("openEntryDetails")}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg></button>`;
 	if (compact) {
 		return html`
 		<div class="tp-item tp-item-compact" data-entry-id="${id}" role="option" aria-selected="false">
-			<div class="tp-avatar tp-avatar-compact" style="background: ${avatar.bg}; color: ${avatar.ink};" aria-hidden="true">
+			<div class="tp-avatar tp-avatar-compact" aria-hidden="true">
 				${initials(primary)}
 			</div>
 			<div class="tp-text tp-text-compact">
 				<span class="tp-name" title="${primary}">${primary}</span>
 				<span class="tp-user" title="${detail}">${detail}</span>
 			</div>
-			${[badge, open]}
+			<div class="tp-trail">${[badge, open]}</div>
 		</div>
 	`;
 	}
 	return html`
 		<div class="tp-item" data-entry-id="${id}" role="option" aria-selected="false">
-			<div class="tp-avatar" style="background: ${avatar.bg}; color: ${avatar.ink};" aria-hidden="true">
+			<div class="tp-avatar" aria-hidden="true">
 				${initials(primary)}
 			</div>
 			<div class="tp-text">
 				<span class="tp-name" title="${primary}">${primary}</span>
 				<span class="tp-user" title="${detail}">${detail}</span>
 			</div>
-			${[badge, open]}
+			<div class="tp-trail">${[badge, open]}</div>
 		</div>
 	`;
 }

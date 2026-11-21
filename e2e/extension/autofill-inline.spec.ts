@@ -598,6 +598,8 @@ test("a row's open action opens the entry details without filling", async ({
 	await waitOutPickerClickGuard(page);
 
 	const opened = context.waitForEvent("page");
+	// The open action shares the row's trailing slot and appears on hover.
+	await frame.locator("[data-entry-id]").first().hover();
 	await frame.locator("[data-tp-open-entry]").click();
 	const details = await opened;
 	await expect(details).toHaveURL(/popup\.html\?detached=1/);
@@ -708,6 +710,7 @@ test("a second open action moves the existing Bramble window instead of duplicat
 	await waitOutPickerClickGuard(page);
 
 	const opened = context.waitForEvent("page");
+	await pickerFrame(page)!.locator("[data-entry-id]").first().hover();
 	await pickerFrame(page)!.locator("[data-tp-open-entry]").first().click();
 	const details = await opened;
 	await expect(details.getByRole("heading", { name: "Work account" })).toBeVisible({
@@ -721,6 +724,7 @@ test("a second open action moves the existing Bramble window instead of duplicat
 		expect(pickerFrame(page)).toBeDefined();
 	}).toPass({ timeout: 20_000 });
 	await waitOutPickerClickGuard(page);
+	await pickerFrame(page)!.locator("[data-entry-id]").nth(1).hover();
 	await pickerFrame(page)!.locator("[data-tp-open-entry]").nth(1).click();
 
 	await expect(details.getByRole("heading", { name: "Personal" })).toBeVisible({

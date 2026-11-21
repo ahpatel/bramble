@@ -137,6 +137,16 @@ describe("autofill-ui: clicks need the browser to vouch the picker is visible", 
 		expect(observerInit.delay).toBeGreaterThanOrEqual(100);
 	});
 
+	it("keeps the badge and the open action in one trailing slot", async () => {
+		adopted!.port.postMessage({
+			type: "RENDER_MATCHES",
+			matches: [{ ...MATCH, id: "entry-2" }],
+			carriedId: "entry-2",
+		});
+		await vi.waitFor(() => expect(document.querySelector(".tp-trail .tp-badge")).not.toBeNull());
+		expect(document.querySelector(".tp-trail .tp-open")).not.toBeNull();
+	});
+
 	it("refuses a click while the browser reports it obscured, and points to the keyboard", async () => {
 		reportVisible(false);
 
