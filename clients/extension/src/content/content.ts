@@ -966,12 +966,14 @@ function cycleAutofill(back: boolean): void {
 	const entry = list.matches[index];
 	if (!entry) return;
 	cyclePending = true;
-	void selectMatch(entry.id, false, list.otpOnly, field, undefined, { refresh: false }).then((filled) => {
-		cyclePending = false;
-		if (!filled) return;
-		cycleState = { field, key, index, at: Date.now() };
-		affordance.flash(field, entry.name, `${index + 1}/${total}`, { quick: true });
-	});
+	void selectMatch(entry.id, false, list.otpOnly, field, undefined, { refresh: false }).then(
+		(filled) => {
+			cyclePending = false;
+			if (!filled) return;
+			cycleState = { field, key, index, at: Date.now() };
+			affordance.flash(field, entry.name, `${index + 1}/${total}`, { quick: true });
+		},
+	);
 }
 
 /**
@@ -1396,13 +1398,6 @@ async function fillChosenLogin(entryId: string): Promise<boolean> {
 	const logins = await freshMatches(false);
 	if (!logins?.some((login) => login.id === entryId)) return false;
 	return selectMatch(entryId, false, false, into, documentIsVisible);
-}
-
-function focusedCandidate(): HTMLInputElement | null {
-	const focused = deepActiveElement();
-	return focused instanceof HTMLInputElement && isCandidate(getPageFields(), focused)
-		? focused
-		: null;
 }
 
 /** A settings push that changes the trigger mode, applied to a page that is already open. */

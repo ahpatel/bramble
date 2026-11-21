@@ -7,6 +7,10 @@
 		"message": "Bramble লক করুন",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
+	"cmdAutofillCycle": {
+		"message": "পরবর্তী সেভ করা লগইন পূরণ করুন",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
 	"cmdFillLogin": {
 		"message": "লগইন পূরণ করুন",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts. Fills the saved login for the page."
@@ -182,5 +186,61 @@
 	"cardUsedHere": {
 		"message": "এখানে ব্যবহৃত",
 		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	},
+	"cmdAutofillCycleBack": {
+		"message": "আগের সেভ করা লগইন পূরণ করুন",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
+	"autofillOpenMenu": {
+		"message": "Bramble: ভল্ট থেকে পূরণ করুন",
+		"description": "Accessible name for the small Bramble mark inside a login field."
+	},
+	"hintLogins": {
+		"message": "এই সাইটের সেভ করা লগইন",
+		"description": "One-time hint beside the in-field Bramble mark when the site has saved logins."
+	},
+	"hintLocked": {
+		"message": "লক করা আছে: আনলক করে পূরণ করতে ক্লিক করুন",
+		"description": "One-time hint beside the in-field Bramble mark while the vault is locked."
+	},
+	"hintCards": {
+		"message": "চেকআউটের জন্য সেভ করা কার্ড",
+		"description": "One-time hint beside the in-field Bramble mark on a payment form."
+	},
+	"hintOtp": {
+		"message": "সেভ করা ওয়ান-টাইম কোড",
+		"description": "One-time hint beside the in-field Bramble mark on a one-time-code field."
+	},
+	"hintGeneratedPassword": {
+		"message": "একটি শক্তিশালী পাসওয়ার্ড প্রস্তুত",
+		"description": "One-time hint beside the in-field Bramble mark on a signup password field."
+	},
+	"hintAlias": {
+		"message": "একটি বিকল্প ইমেইল তৈরি করুন",
+		"description": "One-time hint beside the in-field Bramble mark on a signup email field."
+	},
+	"savedLogin": {
+		"message": "সেভ করা লগইন",
+		"description": "Primary label for an entry with no name and no username, e.g. from an import."
+	},
+	"menuMore": {
+		"message": "তালিকা ছোট করতে টাইপ চালিয়ে যান",
+		"description": "Note at the end of the picker when only the first 50 matches are rendered."
+	},
+	"enterKey": {
+		"message": "Enter",
+		"description": "Label on the keycap that accepts the inline username completion."
+	},
+	"usedHere": {
+		"message": "এখানে ব্যবহৃত",
+		"description": "Badge on the picker row for the card or login already used on this site. A card carry is per tab; a login carry is per registrable domain."
+	},
+	"openEntryDetails": {
+		"message": "Bramble-এ খুলুন",
+		"description": "Row action that opens the entry's details in a Bramble window."
+	},
+	"hudFillRefused": {
+		"message": "পূরণ করা যায়নি",
+		"description": "HUD shown when a keyboard pick cannot fill, such as when the vault is locked or the site no longer matches."
 	}
 }
