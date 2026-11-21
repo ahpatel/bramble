@@ -147,9 +147,11 @@ test("a relayed picker takes a click when the card frame is inside the modal", a
 
 	const card = () => page.frames().find((f) => onOrigin(f.url(), PCI))!;
 	// The relay's anti-clickjacking watchdog hit-tests the host, so an unclickable host never
-	// even showed here: it read as covered and was torn down.
+	// even showed here: it read as covered and was torn down. Focus rather than click: the
+	// relayed host covers the field once it opens, so a retrying click would land on a row.
 	await expect(async () => {
-		await card().locator("#number").click();
+		await card().locator("#number").focus();
+		await expect.poll(() => uiFrame(page), { timeout: 5000 }).toBeDefined();
 		await expect(uiFrame(page)!.locator("[data-entry-id]")).toBeVisible({ timeout: 2000 });
 	}).toPass({ timeout: 25_000 });
 	expect(uiFrame(page)!.parentFrame()).toBe(page.mainFrame());

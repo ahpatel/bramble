@@ -885,7 +885,9 @@ function cancelExit(): void {
 	const host = activeHost();
 	if (host) {
 		host.style.transformOrigin = "";
-		host.style.pointerEvents = "";
+		// The base host style is pointer-events: auto (a modal's body can be none). Clearing it
+		// would inherit the modal's none and make the reopened menu unclickable.
+		host.style.pointerEvents = "auto";
 	}
 }
 

@@ -84,7 +84,9 @@ function cancelRelayExit(): void {
 	}
 	if (hosted) {
 		hosted.host.style.transformOrigin = "";
-		hosted.host.style.pointerEvents = "";
+		// The base host style is pointer-events: auto (a modal's body can be none). Clearing it
+		// would inherit the modal's none and make the repositioned menu unclickable.
+		hosted.host.style.pointerEvents = "auto";
 	}
 }
 
