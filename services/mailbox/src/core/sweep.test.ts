@@ -81,7 +81,7 @@ describe("sweep", () => {
 
 	it("expires blobs without leaving markers", async () => {
 		const { server, a, b, id } = await pair();
-		const { hash } = await uploadBlob(a, id, randomBytes(64));
+		const { hash } = await uploadBlob(a, id, randomBytes(64), { to: [b] });
 		server.clock.now += 7 * DAY_MS;
 		expect(await sweep(server.deps)).toEqual({ ...NOTHING, blobs: 1 });
 		const box = await inbox(b, id);
@@ -247,7 +247,7 @@ describe("sweep", () => {
 	it("is a no-op the second time", async () => {
 		const { server, a, b, id } = await pair();
 		await postMessage(a, id, { to: [b] });
-		await uploadBlob(a, id, randomBytes(32));
+		await uploadBlob(a, id, randomBytes(32), { to: [b] });
 		server.clock.now += 7 * DAY_MS;
 		await sweep(server.deps);
 		expect(await sweep(server.deps)).toEqual(NOTHING);

@@ -4,16 +4,17 @@
 
 import {
 	BlobHashSchema,
+	BlobPutQuerySchema,
 	MAX_BLOB_BYTES,
 	MailboxIdSchema,
 	type PostResponse,
 	WantsBodySchema,
 } from "@vault/core/src/sync/mailbox/protocol.ts";
-import { and, count, eq, ne, sql } from "drizzle-orm";
+import { and, count, eq, inArray, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppDeps, Env } from "./app.ts";
-import { HttpError, param, signedJson } from "./auth.ts";
+import { HttpError, param, query, signedJson } from "./auth.ts";
 import { blobKey } from "./bodies.ts";
 import { deleteUndelivered } from "./cleanup.ts";
 import { mailboxParam, requireMember } from "./mailboxes.ts";
@@ -31,12 +32,13 @@ export function blobRoutes(deps: AppDeps) {
 	const hashParam = param(z.object({ id: MailboxIdSchema, hash: BlobHashSchema }));
 	const r = new Hono<Env>();
 
-	/** Every active member but the uploader. */
-	function targets(mailboxId: string, caller: string) {
+	/** The active members the uploader names, never the uploader: the server's list never decides. */
+	function targets(mailboxId: string, caller: string, to: string[]) {
 		return and(
 			eq(members.mailboxId, mailboxId),
 			eq(members.status, "active"),
 			ne(members.sigKey, caller),
+			inArray(members.sigKey, to),
 		);
 	}
 
@@ -46,7 +48,7 @@ export function blobRoutes(deps: AppDeps) {
 
 	/**
 	 * Deliver `hash` to the targets as they are now, in one statement, as messages do; running it
-	 * again fills in what an earlier attempt never wrote. Every want for it is answered after.
+	 * again fills in what an earlier attempt never wrote. The targets' wants for it are answered.
 	 */
 	async function deliver(mailboxId: string, hash: string, where: ReturnType<typeof targets>) {
 		await db
@@ -64,19 +66,29 @@ export function blobRoutes(deps: AppDeps) {
 			.onConflictDoNothing();
 		await db
 			.delete(blobWants)
-			.where(and(eq(blobWants.mailboxId, mailboxId), eq(blobWants.hash, hash)));
+			.where(
+				and(
+					eq(blobWants.mailboxId, mailboxId),
+					eq(blobWants.hash, hash),
+					inArray(
+						blobWants.member,
+						db.select({ sigKey: members.sigKey }).from(members).where(where),
+					),
+				),
+			);
 		return countOf(where);
 	}
 
-	r.put("/:id/blobs/:hash", hashParam, async (c) => {
+	r.put("/:id/blobs/:hash", hashParam, query(BlobPutQuerySchema), async (c) => {
 		const { id: mailboxId, hash } = c.req.valid("param");
+		const { to } = c.req.valid("query");
 		const caller = c.var.sigKey;
 		// The signature covers contentSha256; the store checks the bytes against the same hash.
 		if (c.var.contentSha256 !== hash) throw new HttpError(400, "hash_mismatch");
 		const declared = declaredLength(c, MAX_BLOB_BYTES);
 		const { retentionDays } = await requireMember(deps, mailboxId, caller, "active");
 		if (!(await deps.entitlement.canPost(mailboxId))) throw new HttpError(402, "collect_only");
-		const where = targets(mailboxId, caller);
+		const where = targets(mailboxId, caller, to);
 
 		const present = await db
 			.select({ hash: blobs.hash })
@@ -126,11 +138,19 @@ export function blobRoutes(deps: AppDeps) {
 
 	r.get("/:id/blobs/:hash", hashParam, async (c) => {
 		const { id: mailboxId, hash } = c.req.valid("param");
-		await requireMember(deps, mailboxId, c.var.sigKey, "active");
+		const caller = c.var.sigKey;
+		await requireMember(deps, mailboxId, caller, "active");
+		// Only a member it was delivered to: listing alone gets nobody a blob.
 		const present = await db
-			.select({ hash: blobs.hash })
-			.from(blobs)
-			.where(and(eq(blobs.mailboxId, mailboxId), eq(blobs.hash, hash)))
+			.select({ hash: blobDeliveries.hash })
+			.from(blobDeliveries)
+			.where(
+				and(
+					eq(blobDeliveries.mailboxId, mailboxId),
+					eq(blobDeliveries.hash, hash),
+					eq(blobDeliveries.member, caller),
+				),
+			)
 			.get();
 		const found = present ? await deps.bodies.get(blobKey(mailboxId, hash)) : null;
 		if (!found) throw new HttpError(404, "not_found");

@@ -72,8 +72,10 @@ export interface MailboxApi {
 	message(messageId: string): Promise<Uint8Array | null>;
 	wants(hashes: string[]): Promise<void>;
 	ack(body: Partial<AckBody>): Promise<void>;
-	/** A signed blob transfer for a mover to run. A PUT's content hash is the blob's hash. */
-	blobRequest(method: "GET" | "PUT", hash: string): Promise<SignedRequest>;
+	/** A signed blob transfer for a mover to run. A PUT's content hash is the blob's hash, and it
+	 * names who the blob is for. */
+	blobRequest(method: "GET", hash: string): Promise<SignedRequest>;
+	blobRequest(method: "PUT", hash: string, to: string[]): Promise<SignedRequest>;
 	/** Pay for this mailbox from the API's account from now on (hosted). */
 	attach(): Promise<void>;
 	/** The API's account: paid time, frozen, storage. Throws without an account. */
@@ -207,8 +209,9 @@ export function mailboxApi(deps: {
 		ack: async (body) => {
 			await send("POST", `${prefix}/acks`, json({ messages: [], blobs: [], markers: [], ...body }));
 		},
-		blobRequest: async (method, hash) => {
-			const path = `${prefix}/blobs/${hash}`;
+		blobRequest: async (method: "GET" | "PUT", hash: string, to?: string[]) => {
+			const query = to ? `?to=${encodeURIComponent(to.join(","))}` : "";
+			const path = `${prefix}/blobs/${hash}${query}`;
 			const headers = await signed(method, path, method === "PUT" ? hash : EMPTY_SHA256);
 			if (method === "PUT") headers["content-type"] = RAW;
 			return { method, url: `${base.origin}${path}`, headers };

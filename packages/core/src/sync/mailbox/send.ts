@@ -8,6 +8,7 @@ import { MailboxApiError } from "./api";
 import { limit, type MailboxContext } from "./context";
 import { cutDelta } from "./delta";
 import { sealMessage } from "./envelope";
+import { uploadTo } from "./files";
 import { encodePlaintext, type MailboxPlaintext } from "./plaintext";
 import { MAX_LIST, MAX_MEMBERS, sha256Hex } from "./protocol";
 import type { MailboxState } from "./state";
@@ -21,8 +22,8 @@ const ROSTER_KEY = "r:";
 const dayOf = (ms: number) => Math.floor(ms / DAY_MS);
 
 /** Everyone else in the roster. Any active member can add a key to the server's list, so that list
- * never decides who a post is for. */
-const rosterRecipients = (ctx: MailboxContext, roster: RosterPayload) =>
+ * never decides who a post or a blob is for. */
+export const rosterRecipients = (ctx: MailboxContext, roster: RosterPayload) =>
 	activeSigKeys(roster).filter((key) => key !== ctx.sigKey);
 
 /**
@@ -68,6 +69,7 @@ async function uploadNew(
 	ctx: MailboxContext,
 	state: MailboxState,
 	parts: MailboxEnvelope["entries"][],
+	to: string[],
 ) {
 	if (Object.keys(state.posted).length === 0) return;
 	const done = new Set(state.uploaded);
@@ -75,7 +77,7 @@ async function uploadNew(
 		if (done.has(file.hash) || !(await ctx.blobs.store.has(file.hash))) continue;
 		done.add(file.hash);
 		try {
-			await ctx.blobs.mover.upload(file.hash, await ctx.api.blobRequest("PUT", file.hash));
+			if (to.length > 0) await uploadTo(ctx, file.hash, to);
 			state.uploaded.push(file.hash);
 		} catch (err) {
 			console.warn("[mailbox] an attachment upload failed; the wants path covers it:", err);
@@ -101,7 +103,7 @@ export async function postChanges(
 	const toPost = parts.length > 0 ? parts : [{ entries: [], tombstones: [] }];
 	const to = rosterRecipients(ctx, local.roster);
 	try {
-		await uploadNew(ctx, state, parts);
+		await uploadNew(ctx, state, parts, to);
 		for (const entries of toPost) {
 			const seq = state.nextSeq;
 			await postOne(

@@ -94,11 +94,11 @@ describe("mailboxApi", () => {
 		expect(await api.message("I".repeat(22))).toBeNull();
 	});
 
-	it("signs a blob upload with the blob's hash as its content hash", async () => {
+	it("signs a blob upload with the blob's hash as its content hash, and who it is for", async () => {
 		const { api, signer } = await setup([]);
 		const hash = "ab".repeat(32);
-		const req = await api.blobRequest("PUT", hash);
-		const path = `/v1/mailboxes/${ID}/blobs/${hash}`;
+		const req = await api.blobRequest("PUT", hash, [signer.sigKey]);
+		const path = `/v1/mailboxes/${ID}/blobs/${hash}?to=${encodeURIComponent(signer.sigKey)}`;
 		expect(req.url).toBe(`${URL_BASE}${path}`);
 		expect(req.headers[HEADERS.contentSha256]).toBe(hash);
 		expect(await signedOver({ ...req }, signer.sigKey, "PUT", path)).toBe(true);

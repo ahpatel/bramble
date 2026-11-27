@@ -13,7 +13,7 @@ import {
 	type PostResponse,
 	ReplacesBodySchema,
 } from "@vault/core/src/sync/mailbox/protocol.ts";
-import { and, asc, count, eq, gt, inArray, ne, notExists, type SQL, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, lte, ne, notExists, type SQL, sql } from "drizzle-orm";
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -275,37 +275,58 @@ export function messageRoutes(deps: AppDeps) {
 			.where(and(eq(blobDeliveries.mailboxId, mailboxId), eq(blobDeliveries.member, caller)))
 			.orderBy(asc(blobs.createdAt), asc(blobs.hash))
 			.limit(INBOX_PAGE + 1);
-		// What other active members want and this mailbox does not hold: the caller uploads any of
-		// these it has.
-		const wanted = await db
+		// What other active members want and have no delivery for, held or not, and who wants it:
+		// the caller uploads any of these it has, to those of them its roster holds.
+		const wantedBy = (upTo?: string) =>
+			and(
+				eq(blobWants.mailboxId, mailboxId),
+				ne(blobWants.member, caller),
+				wantedAfter ? gt(blobWants.hash, wantedAfter) : undefined,
+				upTo ? lte(blobWants.hash, upTo) : undefined,
+				eq(members.status, "active"),
+				notExists(
+					db
+						.select({ one: sql`1` })
+						.from(blobDeliveries)
+						.where(
+							and(
+								eq(blobDeliveries.mailboxId, blobWants.mailboxId),
+								eq(blobDeliveries.hash, blobWants.hash),
+								eq(blobDeliveries.member, blobWants.member),
+							),
+						),
+				),
+			);
+		const joined = and(
+			eq(members.mailboxId, blobWants.mailboxId),
+			eq(members.sigKey, blobWants.member),
+		);
+		const wantedHashes = await db
 			.selectDistinct({ hash: blobWants.hash })
 			.from(blobWants)
-			.innerJoin(
-				members,
-				and(eq(members.mailboxId, blobWants.mailboxId), eq(members.sigKey, blobWants.member)),
-			)
-			.where(
-				and(
-					eq(blobWants.mailboxId, mailboxId),
-					ne(blobWants.member, caller),
-					wantedAfter ? gt(blobWants.hash, wantedAfter) : undefined,
-					eq(members.status, "active"),
-					notExists(
-						db
-							.select({ one: sql`1` })
-							.from(blobs)
-							.where(and(eq(blobs.mailboxId, blobWants.mailboxId), eq(blobs.hash, blobWants.hash))),
-					),
-				),
-			)
+			.innerJoin(members, joined)
+			.where(wantedBy())
 			.orderBy(asc(blobWants.hash))
 			.limit(INBOX_PAGE + 1);
+		const page = wantedHashes.slice(0, INBOX_PAGE);
+		const last = page.at(-1)?.hash;
+		// The page is a run of hashes in order, so its wanters come from one range, not a long list.
+		const wanters = last
+			? await db
+					.select({ hash: blobWants.hash, member: blobWants.member })
+					.from(blobWants)
+					.innerJoin(members, joined)
+					.where(wantedBy(last))
+					.orderBy(asc(blobWants.hash), asc(blobWants.member))
+			: [];
+		const by = new Map<string, string[]>();
+		for (const w of wanters) by.set(w.hash, [...(by.get(w.hash) ?? []), w.member]);
 		const response: InboxResponse = {
 			messages: rows.slice(0, INBOX_PAGE),
 			blobs: blobRows.slice(0, INBOX_PAGE),
-			wanted: wanted.slice(0, INBOX_PAGE).map((w) => w.hash),
+			wanted: page.map((w) => ({ hash: w.hash, by: by.get(w.hash) ?? [] })),
 			markers,
-			wantedMore: wanted.length > INBOX_PAGE,
+			wantedMore: wantedHashes.length > INBOX_PAGE,
 			more: rows.length > INBOX_PAGE || blobRows.length > INBOX_PAGE,
 			retentionDays,
 			...(await deps.entitlement.usage(mailboxId)),

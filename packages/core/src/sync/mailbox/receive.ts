@@ -24,8 +24,8 @@ export interface DrainResult {
 	interrupted: boolean;
 	/** The inbox said this device is not active (or not a member). */
 	deactivated: boolean;
-	/** Hashes others want that the mailbox lacks, every page. */
-	wanted: string[];
+	/** Hashes others want and have no delivery for, with who wants each, every page. */
+	wanted: InboxResponse["wanted"];
 }
 
 type Message = InboxResponse["messages"][number];
@@ -225,7 +225,7 @@ export async function drainInbox(ctx: MailboxContext, state: MailboxState): Prom
 		}
 		if (!wantedDone) {
 			result.wanted.push(...page.wanted);
-			wantedAfter = page.wanted.at(-1);
+			wantedAfter = page.wanted.at(-1)?.hash;
 			wantedDone = !page.wantedMore || wantedAfter === undefined;
 		}
 		const progress = ack.messages.length + ack.blobs.length + ack.markers.length;

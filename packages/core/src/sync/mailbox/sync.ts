@@ -110,7 +110,7 @@ export function mailboxSync(
 		// A device revoked in what was just merged leaves before this round sends anything.
 		if (drain.held === 0) await pruneMembers(ctx, state, local.roster);
 		await posting(() => answerRequests(ctx, state, local));
-		await uploadWanted(ctx, drain.wanted);
+		await uploadWanted(ctx, drain.wanted, local.roster);
 		const posted = refused ?? (await postChanges(ctx, state, local));
 		await store.save(state);
 		await posting(() => compact(ctx, state, local));

@@ -169,14 +169,15 @@ export async function ack(
 	expect(res.status).toBe(204);
 }
 
-/** `from` uploads `bytes` as a blob, addressed by their SHA-256. */
+/** `from` uploads `bytes` as a blob, addressed by their SHA-256, for `to`. */
 export async function uploadBlob(
 	from: TestDevice,
 	id: string,
 	bytes: Uint8Array,
-	opts: RequestOpts = {},
+	{ to, ...opts }: RequestOpts & { to?: TestDevice[] } = {},
 ) {
 	const hash = await sha256Hex(bytes);
-	const res = await from.request("PUT", `/v1/mailboxes/${id}/blobs/${hash}`, bytes, opts);
+	const query = to ? `?to=${encodeURIComponent(to.map((d) => d.sigKey).join(","))}` : "";
+	const res = await from.request("PUT", `/v1/mailboxes/${id}/blobs/${hash}${query}`, bytes, opts);
 	return { res, hash };
 }

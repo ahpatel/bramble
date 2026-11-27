@@ -58,20 +58,25 @@ export type MembersBody = z.infer<typeof MembersBodySchema>;
 export const ActivationBodySchema = z.object({ active: z.boolean() });
 export type ActivationBody = z.infer<typeof ActivationBodySchema>;
 
+/** Recipients' keys, comma-separated (URL-encode them). */
+const recipients = z
+	.string()
+	.transform((s) => s.split(","))
+	.pipe(keys(1));
+
 /**
  * A post's query string. The request body is the sealed envelope itself, raw bytes, which the
  * server streams into storage against the signed content hash and never decodes. `to` lists the
- * recipients' keys, comma-separated (URL-encode it); without it, every other active member.
+ * recipients; without it, every other active member.
  */
 export const PostMessageQuerySchema = z.object({
 	id: MessageIdSchema,
-	to: z
-		.string()
-		.transform((s) => s.split(","))
-		.pipe(keys(1))
-		.optional(),
+	to: recipients.optional(),
 });
 export type PostMessageQuery = z.infer<typeof PostMessageQuerySchema>;
+
+/** A blob upload's query string: who it is for, always named. */
+export const BlobPutQuerySchema = z.object({ to: recipients });
 
 /** Compaction: the caller's earlier messages a snapshot it posted replaces, for its recipients. */
 export const ReplacesBodySchema = z.object({
@@ -117,8 +122,8 @@ export const InboxResponseSchema = z.object({
 			z.object({ hash: BlobHashSchema, size: z.int(), uploader: SigKeySchema, createdAt: z.int() }),
 		)
 		.max(INBOX_PAGE),
-	/** Hashes other active members want that this mailbox does not hold, in hash order. */
-	wanted: z.array(BlobHashSchema).max(INBOX_PAGE),
+	/** Hashes other active members want and have no delivery for, held or not, in hash order. */
+	wanted: z.array(z.object({ hash: BlobHashSchema, by: keys(1) })).max(INBOX_PAGE),
 	/** More wanted hashes follow the last one: ask again with `wantedAfter` set to it. */
 	wantedMore: z.boolean(),
 	markers: z

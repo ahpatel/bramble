@@ -127,7 +127,10 @@ describe("InboxResponseSchema", () => {
 			uploader: key,
 			createdAt: 0,
 		})),
-		wanted: Array.from({ length: n }, (_, i) => i.toString(16).padStart(64, "0")),
+		wanted: Array.from({ length: n }, (_, i) => ({
+			hash: i.toString(16).padStart(64, "0"),
+			by: [key],
+		})),
 		wantedMore: false,
 		markers: Array.from({ length: n }, (_, i) => ({
 			id: i + 1,

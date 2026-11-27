@@ -1,11 +1,12 @@
 // File blobs through the mailbox (docs/mailbox-service.md, "Files"): collect what is delivered,
-// list what this device's manifest names but its store lacks, and upload what others want that
-// this device holds. Blobs are sealed under their own file keys, so nothing here touches a key.
+// list what this device's manifest names but its store lacks, and upload what roster members want
+// that this device holds. Blobs are sealed under their own file keys, so nothing here touches a key.
 
 import type { EntriesPayload } from "../entries-payload";
+import { activeSigKeys, type RosterPayload } from "../roster";
 import { wantedFromPayload } from "../transport/blob-sync";
 import { limit, type MailboxContext } from "./context";
-import { type InboxResponse, MAX_WANTS } from "./protocol";
+import { type InboxResponse, MAX_MEMBERS, MAX_WANTS } from "./protocol";
 import type { MailboxState } from "./state";
 
 const download = async (ctx: MailboxContext, hash: string) =>
@@ -67,12 +68,28 @@ export async function syncWants(
 	});
 }
 
-/** Upload what other members want that this device holds; stop at the first failure. */
-export async function uploadWanted(ctx: MailboxContext, wanted: string[]): Promise<void> {
-	for (const hash of wanted) {
-		if (!(await ctx.blobs.store.has(hash))) continue;
+/** Upload a held blob for `to`, a part at a time past the server's per-request limit (a repeat of
+ * a held hash only adds deliveries). */
+export async function uploadTo(ctx: MailboxContext, hash: string, to: string[]): Promise<void> {
+	for (let i = 0; i < to.length; i += MAX_MEMBERS) {
+		const part = to.slice(i, i + MAX_MEMBERS);
+		await ctx.blobs.mover.upload(hash, await ctx.api.blobRequest("PUT", hash, part));
+	}
+}
+
+/** Upload what members of `roster` want that this device holds, to them only; stop at the first
+ * failure. Any member can list a key with the server, so a wanter the roster lacks gets nothing. */
+export async function uploadWanted(
+	ctx: MailboxContext,
+	wanted: InboxResponse["wanted"],
+	roster: RosterPayload,
+): Promise<void> {
+	const members = new Set(activeSigKeys(roster));
+	for (const { hash, by } of wanted) {
+		const to = by.filter((key) => members.has(key));
+		if (to.length === 0 || !(await ctx.blobs.store.has(hash))) continue;
 		try {
-			await ctx.blobs.mover.upload(hash, await ctx.api.blobRequest("PUT", hash));
+			await uploadTo(ctx, hash, to);
 		} catch (err) {
 			console.warn("[mailbox] uploading a wanted blob failed; next sync tries again:", err);
 			return;

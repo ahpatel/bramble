@@ -301,16 +301,19 @@ The blob store is already content-addressed by a hash over the ciphertext
 ([file-attachments.md](file-attachments.md), "Why the hash is over ciphertext"). The mailbox's
 file side follows it:
 
-- A blob is uploaded once per mailbox, keyed by its hash, and delivered to every other active
-  member.
+- A blob is uploaded once per mailbox, keyed by its hash, and delivered to the members the
+  uploader names: the other devices in its roster, as for posts. A member downloads a blob only
+  through a delivery addressed to it, so being on the server's list gets nobody a blob.
 - **New attachments go up eagerly.** The device that attaches a file uploads the blob before
   posting the delta that names it, so recipients can fetch it as soon as they see the manifest.
 - **Everything else goes up on demand.** A delta never waits for bytes (the merge does not,
   `vault-merge.ts:154-157`), so a member can pass on a file record whose bytes it lacks, for
   example one it learned over P2P from a device without the mailbox. Each active member lists the
-  hashes its manifest names but its blob store lacks (a "want"), and any member holding a wanted
-  hash uploads it. Switching the mailbox on therefore uploads nothing historical: storage holds
-  only what some device is actually missing.
+  hashes its manifest names but its blob store lacks (a "want"). The inbox tells every other
+  member who wants which hash, held or not, while the wanter has no delivery for it, and a member
+  holding it uploads it for those wanters its roster holds. For a hash the mailbox already holds,
+  that upload only adds the delivery. Switching the mailbox on therefore uploads nothing
+  historical: storage holds only what some device is actually missing.
 - A member that already holds that hash acknowledges without downloading. Content addressing
   makes that check free.
 - Deletion and retention work as for messages.

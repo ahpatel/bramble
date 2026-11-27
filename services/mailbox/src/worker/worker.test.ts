@@ -22,7 +22,7 @@ describe("the hosted mailbox", () => {
 	it("a blob uploads and downloads", async () => {
 		const { a, b, id } = await pair();
 		const bytes = new Uint8Array(100_000).map((_, i) => i % 251);
-		const { res, hash } = await uploadBlob(a, id, bytes);
+		const { res, hash } = await uploadBlob(a, id, bytes, { to: [b] });
 		expect(res.status).toBe(200);
 		const got = await b.request("GET", `/v1/mailboxes/${id}/blobs/${hash}`);
 		expect(got.status).toBe(200);
@@ -30,8 +30,9 @@ describe("the hosted mailbox", () => {
 	});
 
 	it("a blob whose bytes don't match its address is refused, and nothing is kept", async () => {
-		const { a, id } = await pair();
+		const { a, b, id } = await pair();
 		const { res, hash } = await uploadBlob(a, id, new Uint8Array(32).fill(1), {
+			to: [b],
 			sendBytes: new Uint8Array(32).fill(2),
 		});
 		expect(res.status).toBe(400);

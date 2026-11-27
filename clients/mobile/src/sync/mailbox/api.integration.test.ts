@@ -55,7 +55,7 @@ describe("mailbox client against the real server", () => {
 		await storeA.put(hash, bytes);
 		const moverA = storeBlobMover(fetchTransport, storeA);
 		const moverB = storeBlobMover(fetchTransport, storeB);
-		expect(await moverA.upload(hash, await apiA.blobRequest("PUT", hash))).toEqual({
+		expect(await moverA.upload(hash, await apiA.blobRequest("PUT", hash, [b.sigKey]))).toEqual({
 			stored: true,
 			recipients: 1,
 		});
