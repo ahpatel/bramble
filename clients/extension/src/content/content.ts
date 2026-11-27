@@ -59,6 +59,7 @@ import {
 	shouldSuggestPassword,
 	signupPasswordFields,
 } from "./signup-detect";
+import { type DropdownSkin, dropdownSkin } from "./skin";
 import type {
 	AliasCreateResponse,
 	AutofillQueryResponse,
@@ -146,7 +147,13 @@ let relayedHighlight = false;
 
 function rectOf(field: HTMLInputElement): RelayRect {
 	const r = field.getBoundingClientRect();
-	return { x: r.left, y: r.top, width: r.width, height: r.height };
+	return {
+		x: r.left,
+		y: r.top,
+		width: r.width,
+		height: r.height,
+		rtl: getComputedStyle(field).direction === "rtl",
+	};
 }
 
 // The top page never brought a relayed picker up (COEP blocks the UI there, or no content script
@@ -229,6 +236,26 @@ function removePicker(): void {
 	dropRelayed();
 }
 
+/**
+ * The field's skin, cached briefly.
+ *
+ * `dropdownSkin` reads several computed styles and may parse a modern colour through a canvas. A
+ * render happens on every keystroke that changes the filtered list, so repeating that work for an
+ * unchanged field is waste. A one-second window still lets a theme switch land on the next render.
+ */
+let skinCache: { field: HTMLInputElement; skin: DropdownSkin; at: number } | null = null;
+const SKIN_TTL_MS = 1000;
+function skinFor(field: HTMLInputElement): DropdownSkin {
+	const now = performance.now();
+	if (skinCache && skinCache.field === field && now - skinCache.at < SKIN_TTL_MS) {
+		return skinCache.skin;
+	}
+	const skin = dropdownSkin(field);
+	skinCache = { field, skin, at: now };
+	return skin;
+}
+
+
 function showMatchesFor(
 	matches: MatchSummary[],
 	field: HTMLInputElement,
@@ -237,10 +264,13 @@ function showMatchesFor(
 		suggest?: { password: string };
 		alias?: AliasRowState;
 		carriedId?: string;
+		// A trailing "new login" row, under a login field's matches (#213).
 		newLogin?: boolean;
+		skin?: DropdownSkin;
 	},
 ): void {
 	if (matches.length === 0 && !opts?.suggest && !opts?.alias) return;
+	const base = opts?.skin ?? skinFor(field);
 	const where = placement(field);
 	if (where === "none") {
 		removePicker();

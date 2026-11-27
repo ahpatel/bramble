@@ -11,6 +11,8 @@ export interface RelayRect {
 	y: number;
 	width: number;
 	height: number;
+	/** The field's inline direction, so the host can collapse into the mark on the correct side. */
+	rtl?: boolean;
 }
 
 /** An anchor that reached the top frame, `rect` in top-frame coords. */
@@ -100,7 +102,7 @@ function translate(rect: RelayRect, frameEl: HTMLElement, view: Window): RelayRe
 	const width = Math.min(rect.x + left + rect.width, right) - x;
 	const height = Math.min(rect.y + top + rect.height, bottom) - y;
 	if (width < 1 || height < 1) return null;
-	return { x, y, width, height };
+	return { x, y, width, height, ...(rect.rtl !== undefined ? { rtl: rect.rtl } : {}) };
 }
 
 export interface FrameRelay {

@@ -10,13 +10,14 @@ import { dropdownNewLogin } from "./html/dropdown-new-login";
 import { dropdownStyles } from "./html/dropdown-styles";
 import { dropdownSuggest } from "./html/dropdown-suggest";
 import { EARLY_CLICK_MS, isLegible } from "./legibility";
+import { t } from "./i18n";
 import { onTeardown } from "./lifecycle";
+import { MENU_COLLAPSE_MS, MENU_FADE_MS, maxMenuHeight, pickerWidth } from "./placement";
+import { type DropdownSkin, skinKey } from "./skin";
 import type { MatchSummary } from "./types";
 
-// The autofill picker: an extension-origin iframe (primary) with a closed-shadow
-// dropdown as the COEP fallback. This module hides the iframe-vs-shadow decision,
-// the postMessage bridge + origin checks, the clickjacking guard, positioning,
-// and keyboard nav behind the `picker` facade at the bottom.
+// The autofill picker: an extension-origin iframe (primary) with a closed-shadow COEP fallback,
+// behind one facade for positioning, keyboard navigation and the clickjacking guard.
 
 // User actions are reported via callbacks so this module never messages the
 // background or touches the page's display policy directly.
@@ -44,7 +45,15 @@ type RowOpts = {
 	suggest?: SuggestOpt;
 	alias?: AliasRowState;
 	carriedId?: string;
+	// Geometry and palette borrowed from the anchor field. See skin.ts.
+	skin?: DropdownSkin;
+	// The match list was capped; draw the "keep typing" note after the rows.
+	more?: boolean;
+	// A trailing "new login" row, under a login field's matches (#213).
 	newLogin?: boolean;
+	// A first-paint height estimate, so a field near the bottom opens its menu above instead of
+	// below for one frame and then jumping. The real height replaces it on the UI's resize.
+	estimatedHeight?: number;
 };
 
 /**
@@ -64,8 +73,14 @@ function renderKey(matches: MatchSummary[], opts?: RowOpts): string {
 	// The carried id is part of the content: the same rows with a different card marked is a
 	// different dropdown, and keyed on ids alone the badge would stay where it was first drawn.
 	const c = opts?.carriedId ? `c:${opts.carriedId}\0` : "";
-	const n = opts?.newLogin ? "n\0" : "";
-	return a + c + n + (opts?.suggest ? `s:${opts.suggest.password}\0` : "") + matchesKey(matches);
+	// A re-query can land after a theme switch or a class change on the field. The skin is part of
+	// what is on screen, so an unchanged match set with a new radius or surface must repaint.
+	const s = opts?.skin ? `k:${skinKey(opts.skin)}\0` : "";
+	const m = opts?.more ? "m:1\0" : "";
+	const n = opts?.newLogin ? "n:1\0" : "";
+	return (
+		a + c + m + n + s + (opts?.suggest ? `s:${opts.suggest.password}\0` : "") + matchesKey(matches)
+	);
 }
 
 // Anchor field shared by both renderers (the page input the picker sits under).
@@ -177,26 +192,74 @@ function clickIsOnAnchor(target: Node): boolean {
 	return false;
 }
 
-/** Match the field width for a bold, integrated look; floored so it stays substantial
- *  on narrow fields and capped so very wide fields don't sprawl. */
-function pickerWidth(fieldWidth: number): number {
-	return Math.min(Math.max(fieldWidth, 300), 440);
+/** Whether the visible menu is in its compact one-line layout. Part of positioning because the
+ *  width floor differs, and the tracker recomputes width every frame. */
+let pickerCompact = false;
+/** Whether the menu was placed above its field. Drives the entrance direction. */
+let pickerAbove = false;
+/** A first-paint height for the iframe, whose element is 0 tall until the UI reports back. */
+let pickerEstimate = 0;
+/** The rendered height, cached so the per-frame tracker does not read the host every frame. */
+let pickerHeight = 0;
+/** The height cap the current viewport allows. Sent to the iframe with every render and again
+ *  when a resize changes it. */
+let pickerMaxHeight = 0;
+
+/** Where the menu goes for a field rect and a known height. */
+function computePlacement(
+	rect: DOMRect,
+	height: number,
+	offset: { x: number; y: number } = { x: window.scrollX, y: window.scrollY },
+): { x: number; y: number; width: number; above: boolean; maxHeight: number } {
+	const width = pickerWidth(rect.width, pickerCompact, window.innerWidth);
+	// Keep the menu inside the viewport even when the field itself is wider (200% zoom on a
+	// narrow screen): clamp the left edge after the width is known. `offset` maps a viewport
+	// point to the host's containing block (host-offset.ts), which is not the document when the
+	// page positions <html> or <body>.
+	const x = Math.max(
+		offset.x,
+		Math.min(rect.left + offset.x, offset.x + window.innerWidth - width),
+	);
+	const spaceBelow = window.innerHeight - rect.bottom;
+	const spaceAbove = rect.top;
+	// Flip only when above is genuinely better; a menu taller than both sides stays below, capped
+	// to the larger gap and scrolling inside itself.
+	const above = height > 0 && spaceBelow < height + 8 && spaceAbove > spaceBelow;
+	const maxHeight = maxMenuHeight(spaceBelow, spaceAbove);
+	const y = above ? rect.top - height - 2 + offset.y : rect.bottom + offset.y + 2;
+	return { x, y, width, above, maxHeight };
 }
 
-/** Anchor a host below `field` via a compositor-friendly transform (no layout). */
+/** Write a placement with transform and width, so the tracker never thrashes layout. */
+function applyPlacement(
+	el: HTMLElement,
+	placement: ReturnType<typeof computePlacement>,
+	changed: boolean,
+): void {
+	pickerAbove = placement.above;
+	const maxHeightChanged = placement.maxHeight !== pickerMaxHeight;
+	pickerMaxHeight = placement.maxHeight;
+	// The iframe document cannot see the host's custom properties; tell it when the cap changes.
+	if (maxHeightChanged) {
+		el.style.setProperty("--tp-max-height", `${placement.maxHeight}px`);
+		if (uiMode === "iframe") postToUi({ type: "UI_MAX_HEIGHT", maxHeight: placement.maxHeight });
+	}
+	if (changed) {
+		el.style.transform = `translate3d(${placement.x}px, ${placement.y}px, 0)`;
+		el.style.width = `${placement.width}px`;
+		markPickerMoved();
+	}
+	el.classList.toggle("tp-above", placement.above);
+}
+
+/** Anchor a host below `field`, or above it when there is no room below, via a
+ *  compositor-friendly transform (no layout). */
 function positionHostElement(el: HTMLElement, field: HTMLInputElement): void {
 	const rect = field.getBoundingClientRect();
-	const offset = hostOffset(el);
-	const x = rect.left + offset.x;
-	const y = rect.bottom + offset.y + 2;
-	const width = `${pickerWidth(rect.width)}px`;
-	// translate (compositor-only) instead of top/left (layout) so the per-frame
-	// tracker doesn't thrash layout; write only on change.
-	const transform = `translate3d(${x}px, ${y}px, 0)`;
-	if (el.style.transform === transform && el.style.width === width) return;
-	el.style.transform = transform;
-	el.style.width = width;
-	markPickerMoved();
+	// The iframe's height is 0 until the UI reports its content; the shadow menu already has one.
+	// The estimate bridges that first frame so a low field does not flash below then jump above.
+	pickerHeight = el.getBoundingClientRect().height || pickerEstimate;
+	applyPlacement(el, computePlacement(rect, pickerHeight, hostOffset(el)), true);
 }
 
 // A page that can open or move the picker can put it under a click the user is already making
@@ -252,22 +315,17 @@ function startPositionTracking(): void {
 			removeActiveUi();
 			return;
 		}
-		const offset = hostOffset(host);
-		const x = rect.left + offset.x;
-		const y = rect.bottom + offset.y + 2;
-		const width = pickerWidth(rect.width);
+		const placement = computePlacement(rect, pickerHeight || pickerEstimate, hostOffset(host));
+		const changed = placement.x !== lastX || placement.y !== lastY || placement.width !== lastWidth;
+		applyPlacement(host, placement, changed);
 		// New field or first frame: re-baseline without treating it as a scroll.
 		const rebaseline = Number.isNaN(lastX) || anchorField !== lastAnchor;
-		const moved = !rebaseline && (x !== lastX || y !== lastY || width !== lastWidth);
+		const moved = !rebaseline && changed;
 
-		if (rebaseline || moved) {
-			host.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-			host.style.width = `${width}px`;
-			markPickerMoved();
-		}
-		lastX = x;
-		lastY = y;
-		lastWidth = width;
+		if (rebaseline || moved) markPickerMoved();
+		lastX = placement.x;
+		lastY = placement.y;
+		lastWidth = placement.width;
 		lastAnchor = anchorField;
 
 		// A change in the field's *document* position is an internal/modal scroll
@@ -302,6 +360,11 @@ function stopPositionTracking(): void {
 const DROPDOWN_ID = "bramble-autofill-dropdown";
 
 let dropdownEl: HTMLElement | null = null;
+// The shadow renderer's root and keyboard highlight. The iframe keeps its own state in the UI
+// document; the COEP fallback has to provide the same arrow/Enter/Escape path here.
+let dropdownShadow: ShadowRoot | null = null;
+let shadowHighlight = -1;
+let shadowOtpOnly = false;
 // Joined ids of the rendered matches; lets re-queries with the same set skip
 // the remove-and-re-add cycle that caused flicker on dynamic pages.
 let openMatchesKey = "";
@@ -322,7 +385,32 @@ function positionDropdown(field: HTMLInputElement): void {
 	positionHostElement(dropdownEl, field);
 }
 
-function mountDropdown(field: HTMLInputElement, bodyHtml: string): ShadowRoot {
+/** Apply the field's geometry and palette to the shadow menu. Every value has already been
+ *  parsed and re-serialized by skin.ts; this only turns it into custom properties. */
+function applySkin(el: HTMLElement, skin?: DropdownSkin): void {
+	if (!skin) return;
+	el.style.setProperty("--tp-radius", `${skin.radius}px`);
+	el.style.setProperty("--tp-surface", skin.surface);
+	el.style.setProperty("--tp-foreground", skin.ink);
+	el.style.setProperty("--tp-muted", skin.muted);
+	el.style.setProperty(
+		"--tp-border",
+		skin.border || `color-mix(in oklab, ${skin.ink} 18%, transparent)`,
+	);
+	// Deliberately not the field's font: this renderer lives in the page's document, so the page's
+	// @font-face rules apply inside the closed root and could draw the menu in blank or swapped
+	// glyphs. The extension-origin iframe keeps the sampled font; page fonts cannot reach it.
+	el.classList.toggle("tp-dark", skin.dark);
+	el.classList.toggle("tp-compact", skin.compact);
+	el.style.colorScheme = skin.dark ? "dark" : "light";
+}
+
+function mountDropdown(
+	field: HTMLInputElement,
+	bodyHtml: string,
+	opts?: RowOpts,
+	animate = false,
+): ShadowRoot {
 	removeDropdown();
 	setAnchorField(field);
 
@@ -336,7 +424,13 @@ function mountDropdown(field: HTMLInputElement, bodyHtml: string): ShadowRoot {
 	const shadow = root.attachShadow({ mode: "closed" });
 	// Box styling lives on the inner .tp-dropdown (not :host) so the host page's
 	// CSS reset can't reach it across the shadow boundary.
-	shadow.innerHTML = `${dropdownStyles}<div class="tp-dropdown">${bodyHtml}</div>`;
+	shadow.innerHTML = `${dropdownStyles}<div class="tp-dropdown${animate ? " tp-animate" : ""}" role="listbox" aria-label="${t("autofillOpenMenu")}">${bodyHtml}</div>`;
+	const listEl = shadow.querySelector<HTMLElement>(".tp-dropdown");
+	if (listEl?.querySelector(".tp-more")) listEl.setAttribute("aria-describedby", "tp-more-note");
+	dropdownShadow = shadow;
+	shadowHighlight = -1;
+	shadowOtpOnly = opts?.otpOnly === true;
+	applySkin(shadow.querySelector<HTMLElement>(".tp-dropdown") ?? root, opts?.skin);
 
 	dropdownEl = root;
 	document.body.appendChild(dropdownEl);
@@ -367,9 +461,11 @@ function buildDropdown(matches: MatchSummary[], field: HTMLInputElement, opts?: 
 	const parts: string[] = [];
 	if (opts?.alias) parts.push(dropdownAlias(opts.alias));
 	if (opts?.suggest) parts.push(dropdownSuggest(opts.suggest.password));
-	for (const m of matches) parts.push(dropdownItem({ ...m, carried: m.id === opts?.carriedId }));
 	if (opts?.newLogin) parts.push(dropdownNewLogin());
-	const root = mountDropdown(field, parts.join(""));
+	// A changed list on an already-open menu (the user typing) re-mounts the host; only a fresh
+	// open gets the entrance animation, or every keystroke would replay it.
+	const fresh = !dropdownEl || anchorField !== field || openDropdownKind !== "matches";
+	const root = mountDropdown(field, parts.join(""), opts, fresh);
 	openMatchesKey = key;
 	openDropdownKind = "matches";
 
@@ -405,16 +501,18 @@ function buildDropdown(matches: MatchSummary[], field: HTMLInputElement, opts?: 
 			e.preventDefault();
 			removeDropdown();
 			newLoginCb?.();
+			return;
 		}
 	});
 }
 
-function buildLockedDropdown(field: HTMLInputElement): void {
+function buildLockedDropdown(field: HTMLInputElement, skin?: DropdownSkin): void {
 	if (dropdownEl && anchorField === field && openDropdownKind === "locked") {
 		positionDropdown(field);
 		return;
 	}
-	const root = mountDropdown(field, dropdownLocked());
+	const fresh = !dropdownEl || anchorField !== field || openDropdownKind !== "locked";
+	const root = mountDropdown(field, dropdownLocked(), { skin }, fresh);
 	openDropdownKind = "locked";
 
 	// mousedown beats the field's blur; otherwise the row never gets the click.
@@ -453,12 +551,27 @@ type IframeRender =
 			suggest?: SuggestOpt;
 			alias?: AliasRowState;
 			carriedId?: string;
+			skin?: DropdownSkin;
+			// A trailing "new login" row, under a login field's matches (#213).
 			newLogin?: boolean;
+			// True only for a fresh open; a filtered re-render stays still.
+			animate?: boolean;
+			// The menu was placed above the field, so it unfolds from the field's top edge.
+			above?: boolean;
+			// First-paint height, used to choose above/below before the UI reports its real size.
+			estimatedHeight?: number;
 	  }
-	| { kind: "locked" };
+	| {
+			kind: "locked";
+			skin?: DropdownSkin;
+			animate?: boolean;
+			above?: boolean;
+			estimatedHeight?: number;
+	  };
 
-// "probe" until the first mount resolves to iframe (READY) or shadow (timeout).
-let uiMode: "probe" | "iframe" | "shadow" = "probe";
+// "probe" until the first mount resolves to iframe (READY) or shadow (timeout). An orphaned
+// injection has no runtime URL, so it goes straight to the shadow renderer.
+let uiMode: "probe" | "iframe" | "shadow" = AUTOFILL_UI_URL ? "probe" : "shadow";
 let iframeHostEl: HTMLElement | null = null;
 let iframeEl: HTMLIFrameElement | null = null;
 let iframeReady = false;
@@ -565,10 +678,20 @@ function flushPendingRender(): void {
 			suggest: render.suggest,
 			alias: render.alias,
 			carriedId: render.carriedId,
-			newLogin: render.newLogin,
+			skin: render.skin,
+			newLogin: render.newLogin === true,
+			animate: render.animate === true,
+			above: render.above === true,
+			maxHeight: pickerMaxHeight,
 		});
 	} else {
-		postToUi({ type: "RENDER_LOCKED" });
+		postToUi({
+			type: "RENDER_LOCKED",
+			skin: render.skin,
+			animate: render.animate === true,
+			above: render.above === true,
+			maxHeight: pickerMaxHeight,
+		});
 	}
 }
 
@@ -587,21 +710,26 @@ function armReadinessTimeout(): void {
 				buildDropdown(render.matches, field, {
 					otpOnly: render.otpOnly,
 					// Carried over, or falling back to the shadow renderer silently drops whichever
-					// extra row was on offer: the suggestion, the alias, and the new-login row.
 					suggest: render.suggest,
 					alias: render.alias,
-					newLogin: render.newLogin,
+					newLogin: render.newLogin === true,
+					skin: render.skin,
 				});
-			else buildLockedDropdown(field);
+			else buildLockedDropdown(field, render.skin);
 		}
 	}, 700);
 }
 
 function iframeShow(field: HTMLInputElement, render: IframeRender): void {
+	const wasVisible = !!iframeHostEl && iframeHostEl.style.display !== "none";
 	ensureIframeHost();
+	if (!wasVisible) pickerHeight = 0;
 	if (!iframeHostEl) return;
 	setAnchorField(field);
+	pickerEstimate = render.estimatedHeight ?? 0;
+	render.animate = !wasVisible;
 	positionHostElement(iframeHostEl, field);
+	render.above = pickerAbove;
 	startPositionTracking();
 	// Skip a redundant re-post when the same content is already showing here.
 	// The alias state belongs in this key exactly as it does in the shadow renderer's: without it
@@ -613,9 +741,10 @@ function iframeShow(field: HTMLInputElement, render: IframeRender): void {
 					suggest: render.suggest,
 					alias: render.alias,
 					carriedId: render.carriedId,
-					newLogin: render.newLogin,
+					newLogin: render.newLogin === true,
+					skin: render.skin,
 				})
-			: "\0locked";
+			: `\0locked${render.skin ? `k:${skinKey(render.skin)}` : ""}`;
 	if (iframeReady && key === iframeMatchesKey) return;
 	iframeMatchesKey = key;
 	pendingRender = render;
@@ -648,6 +777,29 @@ function repositionActive(): void {
 	if (host && anchorField) positionHostElement(host, anchorField);
 }
 
+// --- Collapse-to-mark exit ---
+// On a pick, the open menu shrinks into the in-field mark instead of vanishing. Only transform and
+// opacity animate, so the iframe content is scaled by the compositor; the fill request runs in
+// parallel and does not wait for the 200ms.
+let exitAnim: Animation | null = null;
+let exiting = false;
+
+/** Cancel an in-flight exit and put the host back in its normal state. A new query or an explicit
+ *  dismissal can arrive before the 200ms is up. */
+function cancelExit(): void {
+	if (exitAnim) {
+		exitAnim.cancel();
+		exitAnim = null;
+	}
+	exiting = false;
+	const host = activeHost();
+	if (host) {
+		host.style.transformOrigin = "";
+		// The base host style is pointer-events: auto (a modal's body can be none). Clearing it
+		// would inherit the modal's none and make the reopened menu unclickable.
+		host.style.pointerEvents = "auto";
+	}
+}
 /** Dismiss whichever picker is showing (shadow dropdown or iframe). The iframe is hidden, not destroyed, so it can be reused without re-loading. */
 function removeActiveUi(): void {
 	removeDropdown();
@@ -669,16 +821,23 @@ function showMatchesUi(matches: MatchSummary[], field: HTMLInputElement, opts?: 
 		suggest: opts?.suggest,
 		alias: opts?.alias,
 		carriedId: opts?.carriedId,
-		newLogin: opts?.newLogin,
+		skin: opts?.skin,
+		newLogin: opts?.newLogin === true,
+		estimatedHeight: opts?.estimatedHeight,
 	});
 }
 
-function showLockedUi(field: HTMLInputElement): void {
+function showLockedUi(
+	field: HTMLInputElement,
+	skin?: DropdownSkin,
+	estimatedHeight?: number,
+): void {
+	cancelExit();
 	if (uiMode === "shadow") {
-		buildLockedDropdown(field);
+		buildLockedDropdown(field, skin);
 		return;
 	}
-	iframeShow(field, { kind: "locked" });
+	iframeShow(field, { kind: "locked", skin, estimatedHeight });
 }
 
 // Handshake: READY from OUR iframe's window on an extension origin (a page-forged postMessage has a
@@ -722,6 +881,11 @@ function onUiMessage(e: MessageEvent): void {
 		case "UI_RESIZE":
 			if (iframeEl) {
 				iframeEl.style.height = `${Math.max(0, Math.min(400, Number(msg.height) || 0))}px`;
+				pickerHeight = Math.max(0, Math.min(400, Number(msg.height) || 0));
+				iframeEl.style.height = `${pickerHeight}px`;
+				// The height is what tells us whether the menu fits below the field. Re-place it now
+				// that the real height is known (the first placement ran while the iframe was 0 tall).
+				repositionActive();
 			}
 			break;
 		case "UI_PICK":

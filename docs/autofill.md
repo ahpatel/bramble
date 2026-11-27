@@ -686,7 +686,7 @@ root). This blocks a clickjacking page that hides/moves/overlays the picker to
 coax a real click - the case that matters being cards, which are offered on every
 site.
 
-### Relayed placement: pickers for fields in frames
+### Relayed placement: hosted-fields checkouts
 
 A card input on a hosted-fields checkout (Shopify, Stripe Elements, Braintree,
 Adyen) lives in a cross-origin iframe sized to the input itself; Shopify's is 47px
@@ -714,6 +714,21 @@ The fix splits **who owns the element** from **who owns the conversation**:
   `AUTOFILL_SELECT` on its own verified background channel and fills its own
   inputs, so the secret path is unchanged and no background message types were
   added.
+
+Which fields may relay:
+
+- **Cards relay from every frame.** Cards are offered on every site, so the top page learns
+  nothing from a hosted card picker beyond how many cards there are and whether the vault is
+  locked.
+- **Logins relay only from a same-site frame.** The top page can read a picker it hosts off its
+  own DOM (it appears, it has a height), which for a sign-in frame from another site would say
+  whether the user has logins saved for that site. Same-site is decided by the background from
+  the browser's account of the sender (`sameSiteAsTop`, eTLD+1 including the private PSL section,
+  and the scheme), never by the content script. A cross-site sign-in frame keeps its picker
+  inside it, even when that frame is too short to show it.
+- **No host upstairs falls back here.** If the top frame never brings the UI up (COEP blocks it
+  there, or no content script runs there) within two seconds, the frame stops asking for the
+  rest of the page's life and draws its own picker, when it has room for one.
 
 Geometry walks up the frame tree in `frame-relay.ts`, each hop adding its frame
 element's box plus border and padding. A hop is honoured only when `event.source`
@@ -990,3 +1005,5 @@ apart â€” a `/signin` route with a "Create account" link scores like a signup â€
 getting it wrong silently kills autofill on the screen where it is worth the most.
 `e2e/extension/signup-picker.spec.ts` guards every suppression case with the
 two-step login screen it must not swallow.
+
+`src/dev/dropdown-break.html` is a dev-only harness for the menu's worst-case data. It is not a build input and does not ship.

@@ -182,5 +182,13 @@
 	"cardUsedHere": {
 		"message": "Utilisée ici",
 		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	"autofillOpenMenu": {
+		"message": "Bramble : remplir depuis le coffre",
+		"description": "Accessible name for the small Bramble mark inside a login field."
+	},
+	"savedLogin": {
+		"message": "Connexion enregistrée",
+		"description": "Primary label for an entry with no name and no username, e.g. from an import."
+	},
 	}
 }

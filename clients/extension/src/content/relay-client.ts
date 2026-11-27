@@ -23,6 +23,7 @@
 import { isExtensionOrigin } from "./ext-origin";
 import type { FrameRelay, RelayRect } from "./frame-relay";
 import type { AliasRowState } from "./html/dropdown-alias";
+import type { DropdownSkin } from "./skin";
 import type { MatchSummary } from "./types";
 
 // The UI announces itself; this frame cannot go looking for it. `window.frames`
@@ -41,9 +42,10 @@ export type RelayRender =
 			suggest?: SuggestOpt;
 			alias?: AliasRowState;
 			carriedId?: string;
+			skin?: DropdownSkin;
 			newLogin?: boolean;
 	  }
-	| { kind: "locked" };
+	| { kind: "locked"; skin?: DropdownSkin };
 
 export interface RelayClientHandlers {
 	onPick(entryId: string, otpOnly: boolean): void;
@@ -96,7 +98,7 @@ function flush(): void {
 	pending = null;
 	if (render.kind === "locked") {
 		renderedIds = new Set();
-		post({ type: "RENDER_LOCKED" });
+		post({ type: "RENDER_LOCKED", skin: render.skin });
 		return;
 	}
 	renderedIds = new Set(render.matches.map((m) => m.id));
@@ -108,7 +110,7 @@ function flush(): void {
 		suggest: render.suggest,
 		alias: render.alias,
 		carriedId: render.carriedId,
-		newLogin: render.newLogin,
+		skin: render.skin,
 	});
 }
 

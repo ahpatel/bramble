@@ -182,5 +182,13 @@
 	"cardUsedHere": {
 		"message": "এখানে ব্যবহৃত",
 		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	"autofillOpenMenu": {
+		"message": "Bramble: ভল্ট থেকে পূরণ করুন",
+		"description": "Accessible name for the small Bramble mark inside a login field."
+	},
+	"savedLogin": {
+		"message": "সেভ করা লগইন",
+		"description": "Primary label for an entry with no name and no username, e.g. from an import."
+	},
 	}
 }

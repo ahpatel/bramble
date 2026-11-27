@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Autofill dropdown: break test</title>
+		<style>
+			:root { color-scheme: light; }
+			body {
+				margin: 0;
+				min-height: 100vh;
+				box-sizing: border-box;
+				padding: 40px 16px 150px;
+				display: flex;
+				align-items: flex-start;
+				justify-content: center;
+				background: #eef0f4;
+				color: #17202b;
+				font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+			}
+			body.dark { background: #14161a; color: #e8eaed; }
+			#stage { width: 380px; max-width: 100%; }
+			#menu { display: block; width: 100%; }
+			#empty {
+				display: none;
+				padding: 24px;
+				border: 1px dashed #b9c0c9;
+				border-radius: 12px;
+				text-align: center;
+				color: #5b6470;
+				background: #fff;
+				font-size: 13px;
+				line-height: 1.5;
+			}
+			body.dark #empty { background: #1e2126; border-color: #3a3d44; color: #aeb4bd; }
+			#status { margin-top: 12px; text-align: center; font-size: 12px; color: #5b6470; }
+			body.dark #status { color: #aeb4bd; }
+			.chrome {
+				position: fixed;
+				left: 50%;
+				transform: translateX(-50%);
+				display: flex;
+				flex-wrap: wrap;
+				justify-content: center;
+				gap: 3px;
+				padding: 4px;
+				background: #d7dbe0;
+				border-radius: 12px;
+				box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+				z-index: 999;
+				max-width: calc(100vw - 24px);
+				box-sizing: border-box;
+			}
+			.chrome button {
+				border: 0;
+				background: transparent;
+				padding: 6px 9px;
+				border-radius: 9px;
+				font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+				color: #3b4250;
+				cursor: pointer;
+				white-space: nowrap;
+			}
+			.chrome button[aria-pressed="true"] {
+				background: #fff;
+				box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+				color: #111;
+			}
+			#data { bottom: 16px; }
+			#layout { bottom: 62px; }
+			#locale { bottom: 108px; }
+		</style>
+	</head>
+	<body>
+		<main id="stage">
+			<div id="menu"></div>
+			<div id="empty">
+				No menu is drawn: with zero entries the in-field mark hides and the picker never
+				opens. This is the empty state.
+			</div>
+			<div id="status"></div>
+		</main>
+
+		<div id="locale" class="chrome" role="group" aria-label="Labels">
+			<button type="button" data-locale="en" aria-pressed="true">EN labels</button>
+			<button type="button" data-locale="de" aria-pressed="false">DE labels</button>
+			<button type="button" data-theme="light" aria-pressed="true">Light field</button>
+			<button type="button" data-theme="dark" aria-pressed="false">Dark field</button>
+		</div>
+		<div id="layout" class="chrome" role="group" aria-label="Row layout">
+			<button type="button" data-layout="compact" aria-pressed="true">Compact rows</button>
+			<button type="button" data-layout="normal" aria-pressed="false">Normal rows</button>
+		</div>
+		<div id="data" class="chrome" role="group" aria-label="Dataset">
+			<button type="button" data-state="demo" aria-pressed="true">Demo data</button>
+			<button type="button" data-state="worst" aria-pressed="false">Worst case</button>
+			<button type="button" data-state="empty" aria-pressed="false">Empty</button>
+			<button type="button" data-state="one" aria-pressed="false">One</button>
+			<button type="button" data-state="thousand" aria-pressed="false">1,000 rows</button>
+			<button type="button" data-state="suggest" aria-pressed="false">Suggest</button>
+			<button type="button" data-state="locked" aria-pressed="false">Locked</button>
+		</div>
+
+		<script type="module" src="./dropdown-break.ts"></script>
+	</body>
+</html>

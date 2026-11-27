@@ -18,19 +18,17 @@ import type { RelayedAnchor, RelayRect } from "./frame-relay";
 import { hostOffset } from "./host-offset";
 import { isLegible } from "./legibility";
 import { onTeardown } from "./lifecycle";
-
 const AUTOFILL_UI_URL = api.runtime.getURL("autofill-ui.html");
+import { MENU_COLLAPSE_MS, MENU_FADE_MS, maxMenuHeight, relayWidth } from "./placement";
+
 const MAX_HEIGHT = 400;
-
-function pickerWidth(fieldWidth: number): number {
-	return Math.min(Math.max(fieldWidth, 300), 440);
-}
-
 type Hosted = {
 	relayId: string;
 	host: HTMLElement;
 	frame: HTMLIFrameElement;
 	rect: RelayRect;
+	/** The larger of the two gaps around the field, so the UI can cap its list. */
+	cap?: number;
 };
 
 let hosted: Hosted | null = null;
@@ -38,24 +36,36 @@ let watchdog: number | null = null;
 
 /**
  * A relayed rect is in this frame's VIEWPORT coordinates, but the host is
- * position:absolute, so it is placed relative to its containing block. Placed in
- * viewport coordinates, the picker lands off-screen on a scrolled checkout or one
- * whose dialog has blocked the page's scroll, and the watchdog below then destroys it
- * for being illegible. Matches positionHostElement in picker.ts.
+ * position:absolute, so it is placed in DOCUMENT coordinates. Without the scroll
+ * offset the picker is drawn scrollY pixels too high, which on a checkout you had to
+ * scroll down to reach puts it off-screen entirely, and the watchdog below then
+ * destroys it for being illegible. Matches positionHostElement in picker.ts.
  */
 function position(h: Hosted): void {
+	const width = relayWidth(h.rect.width, window.innerWidth);
 	const offset = hostOffset(h.host);
-	const x = h.rect.x + offset.x;
-	const y = h.rect.y + h.rect.height + offset.y + 2;
+	const x = Math.max(offset.x, Math.min(h.rect.x + offset.x, offset.x + window.innerWidth - width));
+	// The iframe is 0 tall until the UI reports; once it has a height, place it above when the
+	// space below the field is too small. A relayed field often sits low in a checkout form.
+	const height = h.frame.getBoundingClientRect().height;
+	const spaceBelow = window.innerHeight - (h.rect.y + h.rect.height);
+	const spaceAbove = h.rect.y;
+	const above = height > 0 && spaceBelow < height + 8 && spaceAbove > spaceBelow;
+	const y = above ? h.rect.y - height - 2 + offset.y : h.rect.y + h.rect.height + 2 + offset.y;
 	const transform = `translate3d(${x}px, ${y}px, 0)`;
-	const width = `${pickerWidth(h.rect.width)}px`;
-	if (h.host.style.transform === transform && h.host.style.width === width) return;
-	const moved = h.host.style.transform !== "";
-	h.host.style.transform = transform;
-	h.host.style.width = width;
-	// The UI holds clicks until the picker has sat still; it cannot see the move itself. Carries
-	// nothing, so "*" is fine, and a forged one only ever delays a click.
-	if (moved) h.frame.contentWindow?.postMessage({ type: "UI_MOVED" }, "*");
+	if (h.host.style.transform !== transform) {
+		h.host.style.transform = transform;
+		// The UI cannot see the host move; reset its early-click guard so a click aimed at where
+		// the card used to be cannot fill.
+		h.frame.contentWindow?.postMessage({ type: "UI_MOVED" }, "*");
+	}
+	h.host.style.width = `${width}px`;
+	h.host.classList.toggle("tp-above", above);
+	// The UI cannot see this frame's viewport, so it cannot cap the list to the gap around the
+	// field by itself. Post the cap; the first post can land before the UI is ready, so the
+	// UI_RESIZE handler posts it again once the document exists.
+	h.cap = maxMenuHeight(spaceBelow, spaceAbove);
+	h.frame.contentWindow?.postMessage({ type: "UI_MAX_HEIGHT", maxHeight: h.cap }, "*");
 }
 
 function stopWatchdog(): void {
@@ -144,6 +154,10 @@ window.addEventListener("message", (e) => {
 	if (msg?.type !== "UI_RESIZE") return;
 	const height = Math.max(0, Math.min(MAX_HEIGHT, Number(msg.height) || 0));
 	hosted.frame.style.height = `${height}px`;
+	// The first placement ran while the frame was 0 tall; now that the menu has a height, choose
+	// above/below again so a field near the bottom does not leave the card cut off. This also
+	// re-posts the gap cap once the UI document exists to receive it.
+	position(hosted);
 });
 
 onTeardown(destroyRelayHost);

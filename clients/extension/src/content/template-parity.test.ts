@@ -15,6 +15,7 @@ import aliasSource from "./html/dropdown-alias.ts?raw";
 import itemSource from "./html/dropdown-item.ts?raw";
 import newLoginSource from "./html/dropdown-new-login.ts?raw";
 import stylesSource from "./html/dropdown-styles.ts?raw";
+import skinSource from "./skin.ts?raw";
 import { html as contentHtml } from "./template";
 
 const HOSTILE = [
@@ -130,5 +131,16 @@ describe("the new-login row is identical in both renderers", () => {
 
 	it("keeps the hook the click handlers match on", () => {
 		for (const src of [uiSource, newLoginSource]) expect(src).toContain('data-tp-new-login="1"');
+	});
+});
+
+// The iframe cannot import skin.ts as a value: both entries would share it, Vite would hoist it
+// into a chunk, and the content script cannot import one. The constant is copied, so pin it.
+describe("the corner-radius ceiling is the same in both renderers", () => {
+	const value = (src: string): string | undefined => src.match(/const MAX_RADIUS = (\d+);/)?.[1];
+
+	it("matches content/skin.ts", () => {
+		expect(value(uiSource)).toBeDefined();
+		expect(value(uiSource)).toBe(value(skinSource));
 	});
 });

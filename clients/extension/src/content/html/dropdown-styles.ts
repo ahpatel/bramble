@@ -4,6 +4,12 @@ import { html } from "../template";
 // @vault/theme scale (packages/theme/theme.css); the on-page UI has no Bramble app shell to read a
 // `.dark` class, so light/dark follows the OS via prefers-color-scheme. Keep values in sync with
 // theme.css. The iframe renderer (autofill-ui.ts) carries a byte-identical copy for its flat bundle.
+//
+// The picker also takes a skin from the anchor field (content/skin.ts): --tp-radius, --tp-surface,
+// --tp-foreground, --tp-border and --tp-font are overwritten per render so a square bank login and
+// a pill-shaped SaaS sign-in each get a menu that belongs to them. The surface is the field's
+// surface lifted toward the popover, not the field's fill: a menu painted in the field's own grey
+// reads as another form control rather than something floating above it.
 export const dropdownStyles = html`
 		<style>
 			:host {
@@ -11,10 +17,10 @@ export const dropdownStyles = html`
 				color-scheme: light dark;
 				--tp-surface: #ffffff; /* --popover */
 				--tp-foreground: oklch(20.5% 0 0); /* --popover-foreground */
-				--tp-muted: oklch(52% 0 0); /* --muted-foreground */
+				--tp-muted: oklch(55.6% 0 0); /* --muted-foreground */
 				--tp-border: oklch(87% 0 0); /* --border */
-				--tp-primary: oklch(20.5% 0 0); /* --primary */
-				--tp-on-primary: #ffffff; /* --primary-foreground */
+				--tp-radius: 16px;
+				--tp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 			}
 			@media (prefers-color-scheme: dark) {
 				:host {
@@ -22,17 +28,17 @@ export const dropdownStyles = html`
 					--tp-foreground: oklch(97% 0 0);
 					--tp-muted: oklch(70.8% 0 0);
 					--tp-border: oklch(37.1% 0 0);
-					--tp-primary: oklch(97% 0 0);
-					--tp-on-primary: oklch(20.5% 0 0);
 				}
 			}
 			.tp-dropdown {
+				container-type: inline-size;
 				background: var(--tp-surface);
 				border: 1px solid var(--tp-border);
-				border-radius: 16px;
-				box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.15);
-				font-family:
-					-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+				border-radius: var(--tp-radius);
+				box-shadow:
+					0 20px 48px -22px rgba(0, 0, 0, 0.38),
+					0 3px 10px rgba(0, 0, 0, 0.06);
+				font-family: var(--tp-font);
 				font-size: 13px;
 				color: var(--tp-foreground);
 				text-align: left;
@@ -40,24 +46,47 @@ export const dropdownStyles = html`
 				text-transform: none;
 				font-style: normal;
 				text-indent: 0;
-				max-height: 360px;
+				/* The content script lowers this to the larger viewport gap; 380px is the design cap
+				   and the value used when no position has been written yet. */
+				max-height: var(--tp-max-height, 380px);
 				overflow-y: auto;
 				margin: 0;
-				padding: 6px;
+				padding: 4px;
 				box-sizing: border-box;
+				transform-origin: top center;
+			}
+			.tp-dropdown.tp-dark {
+				box-shadow:
+					0 24px 56px -20px rgba(0, 0, 0, 0.72),
+					0 3px 10px rgba(0, 0, 0, 0.28);
+			}
+			.tp-dropdown.tp-animate {
+				animation: tp-unfold 0.16s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+			}
+			:host(.tp-above) .tp-dropdown {
+				transform-origin: bottom center;
+			}
+			:host(.tp-above) .tp-dropdown.tp-animate {
+				animation-name: tp-unfold-up;
 			}
 			.tp-item {
-				padding: 10px 12px;
+				box-sizing: border-box;
+				padding: 8px 10px;
 				cursor: pointer !important;
 				display: flex;
 				align-items: center;
-				gap: 12px;
-				border-radius: 12px;
-				transition: background 0.12s ease;
+				gap: 10px;
+				border-radius: max(0px, calc(var(--tp-radius) - 4px));
+				transition: background 0.1s ease;
 			}
-			.tp-item:hover {
-				background: color-mix(in oklab, var(--tp-foreground) 8%, transparent);
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 7%, transparent);
+				}
 			}
+			/* One monogram treatment, tinted from the field's own ink: the avatar the vault list
+			   draws. A per-entry colour put nine fixed hues on a menu that otherwise borrows the
+			   site's palette, and the initials already identify the row. */
 			.tp-avatar {
 				width: 40px;
 				height: 40px;
@@ -67,14 +96,9 @@ export const dropdownStyles = html`
 				justify-content: center;
 				font-size: 15px;
 				font-weight: 700;
-				color: #fff;
-				flex-shrink: 0;
-				letter-spacing: 0.3px;
-				box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.14);
-			}
-			.tp-avatar-locked {
-				background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
 				color: var(--tp-muted);
+				background: color-mix(in oklab, var(--tp-foreground) 8%, transparent);
+				flex-shrink: 0;
 			}
 			.tp-avatar-locked svg {
 				width: 20px;
@@ -94,6 +118,8 @@ export const dropdownStyles = html`
 				text-overflow: ellipsis;
 				color: var(--tp-foreground);
 				line-height: 1.3;
+				unicode-bidi: plaintext;
+			}
 			}
 			.tp-user {
 				color: var(--tp-muted);
@@ -103,17 +129,21 @@ export const dropdownStyles = html`
 				text-overflow: ellipsis;
 				margin-top: 2px;
 				line-height: 1.3;
+				unicode-bidi: plaintext;
 			}
 			.tp-badge {
-				margin-left: auto;
-				flex-shrink: 0;
 				font-size: 11px;
-				font-weight: 600;
+				font-weight: 500;
 				letter-spacing: 0.2px;
 				padding: 3px 8px;
 				border-radius: 999px;
+			}
+				flex-shrink: 0;
+				display: flex;
+				align-items: center;
 				color: var(--tp-muted);
-				background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
+			}
+				color: var(--tp-foreground);
 			}
 			.tp-launch {
 				margin-left: auto;
@@ -123,30 +153,14 @@ export const dropdownStyles = html`
 				color: var(--tp-muted);
 				transition: color 0.12s ease;
 			}
-			.tp-item:hover .tp-launch {
-				color: var(--tp-foreground);
-			}
-			.tp-new-login {
-				display: flex;
-				align-items: center;
-				gap: 6px;
-				width: 100%;
-				padding: 6px 12px;
-				border: 0;
-				border-top: 1px solid var(--tp-border);
-				background: none;
-				color: var(--tp-muted);
-				font: inherit;
-				font-size: 12px;
-				text-align: left;
-				cursor: pointer;
-			}
-			.tp-new-login:hover {
-				color: var(--tp-foreground);
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover .tp-launch {
+					color: var(--tp-foreground);
+				}
 			}
 			.tp-avatar-suggest {
-				background: var(--tp-primary);
-				color: var(--tp-on-primary);
+				background: var(--tp-foreground);
+				color: var(--tp-surface);
 			}
 			.tp-avatar-suggest svg {
 				width: 20px;
@@ -173,9 +187,73 @@ export const dropdownStyles = html`
 				cursor: pointer !important;
 				transition: background 0.12s ease, color 0.12s ease;
 			}
-			.tp-regenerate:hover {
-				background: color-mix(in oklab, var(--tp-foreground) 12%, transparent);
-				color: var(--tp-foreground);
+			@media (hover: hover) and (pointer: fine) {
+				.tp-regenerate:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 12%, transparent);
+					color: var(--tp-foreground);
+				}
+			}
+			@keyframes tp-unfold {
+				from {
+					opacity: 0;
+					transform: translateY(-6px) scale(0.985);
+				}
+				to {
+					opacity: 1;
+					transform: none;
+				}
+			}
+			@keyframes tp-unfold-up {
+				from {
+					opacity: 0;
+					transform: translateY(6px) scale(0.985);
+				}
+				to {
+					opacity: 1;
+					transform: none;
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				.tp-dropdown.tp-animate {
+					animation: none;
+				}
+			}
+			@media (forced-colors: active) {
+				.tp-dropdown {
+					background: Canvas;
+					border-color: CanvasText;
+					box-shadow: none;
+				}
+				.tp-item { color: CanvasText; }
+				.tp-item.tp-active { outline: 2px solid Highlight; outline-offset: -2px; }
+				.tp-badge {
+					--tp-badge-dot-bg: CanvasText;
+					background: Canvas;
+					color: CanvasText;
+					border: 1px solid CanvasText;
+				}
+			}
+			/* The menu can be as narrow as 152px at 200% zoom on a 320px screen. The avatar and
+			   the text badge are the first things to go: the entry name is the identifier. */
+			@container (max-width: 320px) {
+				.tp-badge {
+					width: 8px;
+					height: 8px;
+					padding: 0;
+					border-radius: 999px;
+					font-size: 0;
+					color: transparent;
+					background: var(--tp-badge-dot-bg, var(--tp-muted));
+				}
+			}
+			@container (max-width: 260px) {
+				.tp-text-compact { flex-direction: column; align-items: stretch; }
+				.tp-text-compact .tp-user { margin-top: 2px; }
+				.tp-text-compact .tp-user::before { content: none; }
+			}
+			@container (max-width: 220px) {
+				.tp-item { padding: 8px; gap: 8px; }
+				.tp-avatar { display: none; }
 			}
 		</style>
 	`;

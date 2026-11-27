@@ -2,6 +2,12 @@
 // docs/autofill.md ("UI isolation"). Self-contained so the bundle stays flat.
 
 import { html } from "./autofill-ui-template";
+import type { DropdownSkin } from "./content/skin";
+
+// Keep in step with content/skin.ts. Imported as a value it would make Vite hoist skin.ts into a
+// chunk shared with the content script, which loads as a classic script. template-parity.test.ts
+// asserts the two constants stay equal.
+const MAX_RADIUS = 16;
 
 interface MatchSummary {
 	id: string;
@@ -25,9 +31,26 @@ type Inbound =
 			// The card already filled elsewhere on this page: rendered with a badge, never
 			// highlighted (Enter belongs to the page's form).
 			carriedId?: string;
+			// Geometry and palette borrowed from the anchor field. See content/skin.ts.
+			skin?: DropdownSkin;
+			// True only for a fresh open; a filtered re-render stays still.
+			animate?: boolean;
+			// The menu was placed above the field, so it unfolds from the field's top edge.
+			above?: boolean;
+			// The tallest the list may draw in the current viewport, so it scrolls instead of
+			// clipping against the window edge.
+			maxHeight?: number;
 	  }
-	| { type: "RENDER_LOCKED" }
-	| { type: "UI_KEY"; key: string };
+	| {
+			type: "RENDER_LOCKED";
+			skin?: DropdownSkin;
+			animate?: boolean;
+			above?: boolean;
+			maxHeight?: number;
+	  }
+	| { type: "UI_MAX_HEIGHT"; maxHeight?: number }
+	| { type: "UI_HIDDEN" }
+	| { type: "UI_KEY"; key: string; open?: boolean };
 
 // Page origin (from the iframe src): READY is pinned to it, and only the content script's
 // UI_CONNECT is taken from it. The page shares that window, so everything after rides the port.
@@ -117,155 +140,242 @@ function colorForName(name: string): string {
 // `.dark` class, so light/dark follows the OS via prefers-color-scheme. Byte-identical to the
 // shadow renderer's copy (content/html/dropdown-styles.ts); keep both in sync with theme.css.
 const STYLE = `
-	:root {
-		color-scheme: light dark;
-		--tp-surface: #ffffff; /* --popover */
-		--tp-foreground: oklch(20.5% 0 0); /* --popover-foreground */
-		--tp-muted: oklch(52% 0 0); /* --muted-foreground */
-		--tp-border: oklch(87% 0 0); /* --border */
-		--tp-primary: oklch(20.5% 0 0); /* --primary */
-		--tp-on-primary: #ffffff; /* --primary-foreground */
-	}
-	@media (prefers-color-scheme: dark) {
-		:root {
-			--tp-surface: oklch(26.9% 0 0);
-			--tp-foreground: oklch(97% 0 0);
-			--tp-muted: oklch(70.8% 0 0);
-			--tp-border: oklch(37.1% 0 0);
-			--tp-primary: oklch(97% 0 0);
-			--tp-on-primary: oklch(20.5% 0 0);
-		}
-	}
-	.tp-list {
-		background: var(--tp-surface);
-		border: 1px solid var(--tp-border);
-		border-radius: 16px;
-		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.15);
-		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-		font-size: 13px;
-		color: var(--tp-foreground);
-		text-align: left;
-		max-height: 360px;
-		overflow-y: auto;
-		padding: 6px;
-		box-sizing: border-box;
-	}
-	.tp-item {
-		padding: 10px 12px;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		border-radius: 12px;
-		transition: background 0.12s ease;
-	}
-	.tp-item:hover { background: color-mix(in oklab, var(--tp-foreground) 8%, transparent); }
-	.tp-item.tp-active { background: color-mix(in oklab, var(--tp-foreground) 12%, transparent); }
-	.tp-avatar {
-		width: 40px;
-		height: 40px;
-		border-radius: 11px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 15px;
-		font-weight: 700;
-		color: #fff;
-		flex-shrink: 0;
-		letter-spacing: 0.3px;
-		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.14);
-	}
-	.tp-avatar-locked {
-		background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
-		color: var(--tp-muted);
-	}
-	.tp-avatar-locked svg { width: 20px; height: 20px; }
-	.tp-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-	.tp-name {
-		font-weight: 600;
-		font-size: 15px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		color: var(--tp-foreground);
-		line-height: 1.3;
-	}
-	.tp-user {
-		color: var(--tp-muted);
-		font-size: 13px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		margin-top: 2px;
-		line-height: 1.3;
-	}
-	.tp-badge {
-		margin-left: auto;
-		flex-shrink: 0;
-		font-size: 11px;
-		font-weight: 600;
-		letter-spacing: 0.2px;
-		padding: 3px 8px;
-		border-radius: 999px;
-		color: var(--tp-muted);
-		background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
-	}
-	.tp-launch {
-		margin-left: auto;
-		flex-shrink: 0;
-		display: flex;
-		align-items: center;
-		color: var(--tp-muted);
-		transition: color 0.12s ease;
-	}
-	.tp-item:hover .tp-launch { color: var(--tp-foreground); }
-	.tp-avatar-suggest { background: var(--tp-primary); color: var(--tp-on-primary); }
-	.tp-avatar-alias { background: var(--tp-primary); color: var(--tp-on-primary); }
-	.tp-avatar-alias svg { width: 20px; height: 20px; }
-	.tp-alias-busy { opacity: 0.75; cursor: default; }
-	.tp-alias-error .tp-user { color: var(--tp-danger, #dc2626); }
-	.tp-spin { animation: tp-spin 0.9s linear infinite; }
-	.tp-new-login { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 12px; border: 0; border-top: 1px solid var(--tp-border); background: none; color: var(--tp-muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
-	.tp-new-login:hover { color: var(--tp-foreground); }
-	.tp-hint { padding: 8px 12px; color: var(--tp-muted); font-size: 12px; }
-	@keyframes tp-spin { to { transform: rotate(360deg); } }
-	.tp-avatar-suggest svg { width: 20px; height: 20px; }
-	.tp-suggest-pw {
-		font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-		font-size: 14px;
-		letter-spacing: 0.5px;
-	}
-	.tp-regenerate {
-		margin-left: auto;
-		flex-shrink: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 32px;
-		height: 32px;
-		padding: 0;
-		border: 0;
-		border-radius: 8px;
-		background: transparent;
-		color: var(--tp-muted);
-		cursor: pointer;
-		transition: background 0.12s ease, color 0.12s ease;
-	}
-	.tp-regenerate:hover { background: color-mix(in oklab, var(--tp-foreground) 12%, transparent); color: var(--tp-foreground); }
-`;
+		html, body { margin: 0; padding: 0; background: transparent; }
+			:root {
+				color-scheme: light dark;
+				--tp-surface: #ffffff; /* --popover */
+				--tp-foreground: oklch(20.5% 0 0); /* --popover-foreground */
+				--tp-muted: oklch(55.6% 0 0); /* --muted-foreground */
+				--tp-border: oklch(87% 0 0); /* --border */
+				--tp-radius: 16px;
+				--tp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--tp-surface: oklch(26.9% 0 0);
+					--tp-foreground: oklch(97% 0 0);
+					--tp-muted: oklch(70.8% 0 0);
+					--tp-border: oklch(37.1% 0 0);
+				}
+			}
+			.tp-list {
+				container-type: inline-size;
+				background: var(--tp-surface);
+				border: 1px solid var(--tp-border);
+				border-radius: var(--tp-radius);
+				box-shadow:
+					0 20px 48px -22px rgba(0, 0, 0, 0.38),
+					0 3px 10px rgba(0, 0, 0, 0.06);
+				font-family: var(--tp-font);
+				font-size: 13px;
+				color: var(--tp-foreground);
+				text-align: left;
+				letter-spacing: normal;
+				text-transform: none;
+				font-style: normal;
+				text-indent: 0;
+				max-height: 380px;
+				overflow-y: auto;
+				margin: 0;
+				padding: 4px;
+				box-sizing: border-box;
+				transform-origin: top center;
+			}
+			.tp-list.tp-dark {
+				box-shadow:
+					0 24px 56px -20px rgba(0, 0, 0, 0.72),
+					0 3px 10px rgba(0, 0, 0, 0.28);
+			}
+			.tp-list.tp-animate {
+				animation: tp-unfold 0.16s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+			}
+			.tp-item {
+				box-sizing: border-box;
+				padding: 8px 10px;
+				cursor: pointer !important;
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				border-radius: max(0px, calc(var(--tp-radius) - 4px));
+				transition: background 0.1s ease;
+			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 7%, transparent);
+				}
+			}
+			/* One monogram treatment, tinted from the field's own ink: the avatar the vault list
+			   draws. A per-entry colour put nine fixed hues on a menu that otherwise borrows the
+			   site's palette, and the initials already identify the row. */
+			.tp-avatar {
+				width: 40px;
+				height: 40px;
+				border-radius: 11px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				font-size: 15px;
+				font-weight: 700;
+				color: var(--tp-muted);
+				background: color-mix(in oklab, var(--tp-foreground) 8%, transparent);
+				flex-shrink: 0;
+			}
+			.tp-avatar-locked svg {
+				width: 20px;
+				height: 20px;
+			}
+			.tp-text {
+				display: flex;
+				flex-direction: column;
+				min-width: 0;
+				flex: 1;
+			}
+			.tp-name {
+				font-weight: 600;
+				font-size: 15px;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				color: var(--tp-foreground);
+				line-height: 1.3;
+				unicode-bidi: plaintext;
+			}
+			.tp-user {
+				color: var(--tp-muted);
+				font-size: 13px;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				margin-top: 2px;
+				line-height: 1.3;
+				unicode-bidi: plaintext;
+			}
+			.tp-launch {
+				margin-left: auto;
+				flex-shrink: 0;
+				display: flex;
+				align-items: center;
+				color: var(--tp-muted);
+				transition: color 0.12s ease;
+			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover .tp-launch {
+					color: var(--tp-foreground);
+				}
+			}
+			.tp-avatar-suggest {
+				background: var(--tp-foreground);
+				color: var(--tp-surface);
+			}
+			.tp-avatar-suggest svg {
+				width: 20px;
+				height: 20px;
+			}
+			.tp-suggest-pw {
+				font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+				font-size: 14px;
+				letter-spacing: 0.5px;
+			}
+			.tp-regenerate {
+				margin-left: auto;
+				flex-shrink: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				width: 32px;
+				height: 32px;
+				padding: 0;
+				border: 0;
+				border-radius: 8px;
+				background: transparent;
+				color: var(--tp-muted);
+				cursor: pointer !important;
+				transition: background 0.12s ease, color 0.12s ease;
+			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-regenerate:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 12%, transparent);
+					color: var(--tp-foreground);
+				}
+			}
+			@keyframes tp-unfold {
+				from {
+					opacity: 0;
+					transform: translateY(-6px) scale(0.985);
+				}
+				to {
+					opacity: 1;
+					transform: none;
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				.tp-list.tp-animate {
+					animation: none;
+				}
+			}
+			@media (forced-colors: active) {
+				.tp-list {
+					background: Canvas;
+					border-color: CanvasText;
+					box-shadow: none;
+				}
+				.tp-item { color: CanvasText; }
+				.tp-item.tp-active { outline: 2px solid Highlight; outline-offset: -2px; }
+				.tp-badge {
+					--tp-badge-dot-bg: CanvasText;
+					background: Canvas;
+					color: CanvasText;
+					border: 1px solid CanvasText;
+				}
+			}
+		`;
 
-function matchRow(m: MatchSummary, carried: boolean): string {
-	const badge = carried ? html`<span class="tp-badge">${t("cardUsedHere")}</span>` : "";
+function matchRow(m: MatchSummary, carried: boolean, compact: boolean): string {
+	// A nameless entry still needs a primary line; the username is its only identifier. A generic
+	// label covers the rare row with neither. Twin of content/html/dropdown-item.ts.
+	const primary = m.name || m.secondary || t("savedLogin");
+	const detail = m.name ? m.secondary : "";
 	return html`
-		<div class="tp-item" data-entry-id="${m.id}" role="option">
-			<div class="tp-avatar" style="background: ${colorForName(m.name)};">${initials(m.name)}</div>
+		<div class="tp-item" data-entry-id="${m.id}" role="option" aria-selected="false">
+			<div class="tp-avatar" aria-hidden="true">${initials(primary)}</div>
 			<div class="tp-text">
-				<span class="tp-name">${m.name}</span>
-				<span class="tp-user">${m.secondary}</span>
+				<span class="tp-name" title="${primary}">${primary}</span>
+				<span class="tp-user" title="${detail}">${detail}</span>
 			</div>
-			${[badge]}
 		</div>
 	`;
+}
+
+/** Apply the field's skin. Values are validated here as well as in the content script: the UI
+ *  document is reachable by anything in the tab, so it treats its input as untrusted plumbing. */
+function applySkin(el: HTMLElement, skin?: DropdownSkin): void {
+	if (!skin) return;
+	const radius = Number(skin.radius);
+	if (Number.isFinite(radius)) {
+		el.style.setProperty("--tp-radius", `${Math.max(0, Math.min(MAX_RADIUS, radius))}px`);
+	}
+	const isColor = (v: unknown): v is string =>
+		typeof v === "string" &&
+		/^(rgb|hsl|oklch|oklab|lab|lch|color|#)/i.test(v) &&
+		!/url\s*\(/i.test(v);
+	if (isColor(skin.surface)) el.style.setProperty("--tp-surface", skin.surface);
+	if (isColor(skin.ink)) el.style.setProperty("--tp-foreground", skin.ink);
+	if (isColor(skin.muted)) el.style.setProperty("--tp-muted", skin.muted);
+	if (isColor(skin.border)) el.style.setProperty("--tp-border", skin.border);
+	else if (isColor(skin.ink)) {
+		el.style.setProperty("--tp-border", `color-mix(in oklab, ${skin.ink} 18%, transparent)`);
+	}
+	if (typeof skin.font === "string") {
+		const font = skin.font
+			.replace(/[;{}]/g, " ")
+			.replace(/url\s*\(/gi, " ")
+			.slice(0, 120)
+			.trim();
+		if (font) el.style.setProperty("--tp-font", font);
+	}
+	el.classList.toggle("tp-compact", skin.compact === true);
+	el.classList.toggle("tp-dark", skin.dark === true);
+	el.style.colorScheme = skin.dark ? "dark" : "light";
 }
 
 // Extension i18n: browser locale with en default_locale fallback. Kept inline (not a
@@ -363,17 +473,62 @@ function lockedRow(): string {
 	`;
 }
 
-/** Render body html, then report the rendered height so the parent can size the iframe. */
-function render(bodyHtml: string): void {
-	document.body.innerHTML = `<style>${STYLE}</style><div class="tp-list" role="listbox">${bodyHtml}</div>`;
+/** Render body html, then report the rendered height so the parent can size the iframe.
+ *
+ * The stylesheet and the list element are created once and reused: rebuilding them on every
+ * keystroke re-parsed the CSS and restarted the entrance animation, which is exactly the flicker
+ * the render cache exists to avoid. `animate` is true only for a fresh open, so a filtered re-render
+ * is instant. */
+let sizeObserver: ResizeObserver | null = null;
+function render(
+	bodyHtml: string,
+	skin?: DropdownSkin,
+	animate = false,
+	above = false,
+	maxHeight?: number,
+): void {
+	let list = document.body.querySelector<HTMLElement>(".tp-list");
+	if (!list) {
+		document.body.innerHTML = `<style>${STYLE}</style><div class="tp-list" role="listbox" aria-label="${t("autofillOpenMenu")}"></div>`;
+		list = document.body.querySelector<HTMLElement>(".tp-list");
+	}
+	if (!list) return;
+	// Clamp what the content script sends: this document is reachable by anything in the tab, so
+	// it treats its input as untrusted plumbing. The default stylesheet cap applies when absent.
+	if (typeof maxHeight === "number" && Number.isFinite(maxHeight)) {
+		list.style.maxHeight = `${Math.max(96, Math.min(380, maxHeight))}px`;
+	}
+	list.innerHTML = bodyHtml;
+	// The note is a description of the list, not an option: point the listbox at it instead of
+	// leaving a note role inside the option set where some screen readers drop it.
+	const more = list.querySelector(".tp-more");
+	if (more) list.setAttribute("aria-describedby", "tp-more-note");
+	else list.removeAttribute("aria-describedby");
+	list.style.transformOrigin = above ? "bottom center" : "top center";
+	applySkin(list, skin);
+	const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+	if (animate && !reduced && typeof list.animate === "function") {
+		list.animate(
+			[
+				{
+					opacity: 0,
+					transform: above ? "translateY(6px) scale(0.985)" : "translateY(-6px) scale(0.985)",
+				},
+				{ opacity: 1, transform: "none" },
+			],
+			{ duration: 160, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+		);
+	}
 	reportHeight();
 }
 
+/** Report the list's height plus a small inset. The inset is the iframe's bottom margin for the
+ *  list's own border: a viewport sized exactly to the border-box clips that last pixel at some
+ *  device pixel ratios, which reads as a missing bottom border. */
+const BOTTOM_INSET = 2;
+let lastReportedHeight = -1;
 function reportHeight(): void {
-	requestAnimationFrame(() => {
 		const list = document.body.querySelector(".tp-list");
-		postHeight(list ? Math.ceil(list.getBoundingClientRect().height) : 0);
-	});
 }
 
 // Chromium can vouch that this frame is unobscured and unfiltered on screen (IntersectionObserver
@@ -480,7 +635,7 @@ document.addEventListener("mousedown", (e) => {
 	}
 });
 
-const CONTENT_TYPES = new Set(["RENDER_MATCHES", "RENDER_LOCKED", "UI_KEY"]);
+const CONTENT_TYPES = new Set(["RENDER_MATCHES", "RENDER_LOCKED", "UI_MAX_HEIGHT", "UI_KEY"]);
 
 window.addEventListener("message", (e) => {
 	if (RELAYED) {
@@ -488,8 +643,12 @@ window.addEventListener("message", (e) => {
 		// post here, so this binding is not a trust decision: the peer re-checks our
 		// origin, our source, and that a picked id is one it actually rendered.
 		const type = (e.data as { type?: string } | undefined)?.type;
-		if (type === "UI_MOVED" && e.source === window.parent) {
-			settledAt = performance.now();
+		// The host frame (our parent) sends only geometry: a move resets the click guard, and the
+		// gap cap limits the list. Neither may become the peer, or picks would go to the host
+		// instead of the frame that owns the field.
+		if (e.source === window.parent && (type === "UI_MOVED" || type === "UI_MAX_HEIGHT")) {
+			if (type === "UI_MOVED") settledAt = performance.now();
+			else handleInbound(e.data as Inbound | undefined);
 			return;
 		}
 		if (!e.source || !type || !CONTENT_TYPES.has(type)) return;
@@ -525,10 +684,9 @@ function handleInbound(msg: Inbound | undefined): void {
 			}
 			for (const m of msg.matches) {
 				rows.push({ kind: "match", id: m.id });
-				body.push(matchRow(m, m.id === msg.carriedId));
 			}
 			if (msg.newLogin) body.push(newLoginRow());
-			render(body.join(""));
+			render(body.join(""), msg.skin, msg.animate === true, msg.above === true, msg.maxHeight);
 			settledAt = performance.now();
 			post({ type: "UI_HIGHLIGHT", active: false });
 			break;
@@ -536,14 +694,29 @@ function handleInbound(msg: Inbound | undefined): void {
 		case "RENDER_LOCKED":
 			rows = [{ kind: "locked" }];
 			highlight = -1;
-			render(lockedRow());
+			render(lockedRow(), msg.skin, msg.animate === true, msg.above === true, msg.maxHeight);
 			settledAt = performance.now();
 			post({ type: "UI_HIGHLIGHT", active: false });
+			break;
+		case "UI_MAX_HEIGHT": {
+			// The viewport changed under an open menu (a phone URL bar, a window resize). Re-cap the
+			// list and report the new height so the host can re-place it.
+			const list = document.body.querySelector<HTMLElement>(".tp-list");
+			const cap = Number(msg.maxHeight);
+			if (list && Number.isFinite(cap)) {
+				list.style.maxHeight = `${Math.max(96, Math.min(380, cap))}px`;
+				reportHeight();
+			}
+			break;
+		}
+		case "UI_HIDDEN":
+			// The host hid the menu. Forget the last reported height: the next open must report it
+			// again, even when the list happens to be the same height as before.
+			lastReportedHeight = -1;
 			break;
 		case "UI_KEY":
 			if (msg.key === "ArrowDown") moveHighlight(1);
 			else if (msg.key === "ArrowUp") moveHighlight(-1);
-			else if (msg.key === "Enter" && highlight >= 0) activate(highlight);
 			break;
 	}
 }
