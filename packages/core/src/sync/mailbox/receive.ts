@@ -14,7 +14,7 @@ import { collectBlobs } from "./files";
 import { decodePlaintext, type MailboxPlaintext } from "./plaintext";
 import { type InboxResponse, MAX_MESSAGE_BYTES } from "./protocol";
 import { hasGap, recordDelta, recordPart, recordSnapshot } from "./sequence";
-import type { MailboxState } from "./state";
+import { type MailboxState, noteRefused } from "./state";
 
 export interface DrainResult {
 	merged: number;
@@ -155,6 +155,7 @@ async function receive(
 		return "ack";
 	}
 	if (!activeSigKeys(await ctx.vault.previewRoster(m.roster)).includes(msg.sender)) {
+		noteRefused(state, msg.sender);
 		return refuse(ctx, state, msg, body, "revoked_sender", false);
 	}
 	const applied = await ctx.vault.apply({ entries: m.entries, roster: m.roster });

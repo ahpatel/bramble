@@ -102,6 +102,10 @@ export async function postChanges(
 	if (parts.length === 0 && state.posted[ROSTER_KEY] === roster) return "nothing";
 	const toPost = parts.length > 0 ? parts : [{ entries: [], tombstones: [] }];
 	const to = rosterRecipients(ctx, local.roster);
+	// Someone this device has posted before without: it missed those posts, so it gets a snapshot.
+	if (state.addressed !== null && state.nextSeq > 1) {
+		for (const key of to) if (!state.addressed.includes(key)) state.toAnswer[key] ??= null;
+	}
 	try {
 		await uploadNew(ctx, state, parts, to);
 		for (const entries of toPost) {
@@ -121,6 +125,7 @@ export async function postChanges(
 	}
 	// Only once every part is up: a failure midway re-cuts the same groups next time.
 	state.posted = { ...index, [ROSTER_KEY]: roster };
+	state.addressed = to;
 	return "posted";
 }
 

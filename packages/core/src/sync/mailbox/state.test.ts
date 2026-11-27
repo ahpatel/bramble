@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MESSAGE_ID_RE } from "./protocol";
-import { forgetStrangers, freshState, metaStateStore } from "./state";
+import { forgetStrangers, freshState, metaStateStore, retryRefused } from "./state";
 
 const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
 
@@ -33,6 +33,40 @@ describe("mailbox state", () => {
 		};
 		await store.save(state);
 		expect(await store.load()).toEqual(state);
+	});
+
+	it("a stored state from before these fields still loads", async () => {
+		const {
+			addressed: _a,
+			refused: _r,
+			...older
+		} = {
+			...freshState(random),
+			nextSeq: 4,
+			addressed: null,
+			refused: [],
+		};
+		const state = await metaStateStore(meta(older), "k", random).load();
+		expect(state.nextSeq).toBe(4);
+		expect(state.addressed).toBeNull();
+		expect(state.refused).toEqual([]);
+	});
+});
+
+describe("retryRefused", () => {
+	it("moves a refused sender the roster now holds to the gaps, and keeps the rest", () => {
+		const state = freshState(random);
+		state.refused = ["joined", "stranger"];
+		retryRefused(state, ["joined", "member"]);
+		expect(state.gaps).toEqual(["joined"]);
+		expect(state.refused).toEqual(["stranger"]);
+	});
+
+	it("forgetting strangers keeps the refused senders", () => {
+		const state = freshState(random);
+		state.refused = ["stranger"];
+		forgetStrangers(state, ["member"]);
+		expect(state.refused).toEqual(["stranger"]);
 	});
 });
 

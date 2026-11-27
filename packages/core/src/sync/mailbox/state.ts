@@ -5,7 +5,7 @@
 import { z } from "zod";
 import type { StorageAdapter } from "../../adapters/storage";
 import { bytesToBase64Url } from "../../util/bytes";
-import { BlobHashSchema, MessageIdSchema, SigKeySchema } from "./protocol";
+import { BlobHashSchema, MAX_MEMBERS, MessageIdSchema, SigKeySchema } from "./protocol";
 
 export const SenderTrackSchema = z.object({
 	epoch: MessageIdSchema,
@@ -66,6 +66,12 @@ export const MailboxStateSchema = z.object({
 	reconciled: z.object({ roster: z.string(), at: z.int() }).nullable(),
 	/** Hex SHA-256 of the account number the mailbox was created under or moved to (hosted). */
 	account: z.string().nullable().default(null),
+	/** Who this device's last change post was for; null until a post records it. A key that joins
+	 * it later is sent a snapshot, since the posts before reached others but not it. */
+	addressed: z.array(SigKeySchema).nullable().default(null),
+	/** Senders whose messages were refused because the roster didn't hold them, newest last. Once
+	 * it does, each is asked for a snapshot: what it sent was quarantined, not merged. */
+	refused: z.array(SigKeySchema).max(MAX_MEMBERS).default([]),
 });
 export type MailboxState = z.infer<typeof MailboxStateSchema>;
 export type SnapshotParts = MailboxState["snapshots"][string];
@@ -84,6 +90,20 @@ export function forgetStrangers(state: MailboxState, members: string[]): void {
 	for (const key of Object.keys(state.answered)) {
 		if (!keep(key.split("|")[0] ?? "")) delete state.answered[key];
 	}
+}
+
+/** Ask each refused sender the roster now holds for a snapshot; keep the others. */
+export function retryRefused(state: MailboxState, members: string[]): void {
+	const known = new Set(members);
+	for (const key of state.refused) {
+		if (known.has(key) && !state.gaps.includes(key)) state.gaps.push(key);
+	}
+	state.refused = state.refused.filter((key) => !known.has(key));
+}
+
+/** Note a sender refused for not being in the roster. */
+export function noteRefused(state: MailboxState, sender: string): void {
+	state.refused = [...state.refused.filter((key) => key !== sender), sender].slice(-MAX_MEMBERS);
 }
 
 export interface MailboxStateStore {
@@ -112,6 +132,8 @@ export function freshState(random: (n: number) => Uint8Array): MailboxState {
 		wants: [],
 		reconciled: null,
 		account: null,
+		addressed: null,
+		refused: [],
 	};
 }
 

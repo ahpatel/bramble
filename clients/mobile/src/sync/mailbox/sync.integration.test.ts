@@ -13,6 +13,7 @@ import { addDevice, type RosterEntry, revokeDevice } from "@core/sync/roster";
 import type { VaultCrypto } from "@core/wasm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+	activeGroup,
 	addLogin,
 	attachFile,
 	type GroupKeys,
@@ -52,6 +53,31 @@ async function rounds(n: number, ...engines: ReturnType<typeof engine>[]) {
 	for (let i = 0; i < n; i++) for (const e of engines) await e.sync();
 }
 
+/** Take `id` out of `d`'s roster; its entry, to add back later. */
+function without(d: TestDevice, id: string): RosterEntry {
+	const entry = d.roster.current.devices.find((e) => e.id === id) as RosterEntry;
+	d.roster.current.devices = d.roster.current.devices.filter((e) => e.id !== id);
+	return entry;
+}
+
+/** `d`'s roster check turns `id` away, as one does a device it can't verify, until `value` is set. */
+function refusing(d: TestDevice, id: string): { value: boolean } {
+	const trust = { value: false };
+	const vault = d.ctx.vault;
+	d.ctx = {
+		...d.ctx,
+		vault: {
+			...vault,
+			previewRoster: async (remote) => {
+				const merged = await vault.previewRoster(remote);
+				if (trust.value) return merged;
+				return { ...merged, devices: merged.devices.filter((e) => e.id !== id) };
+			},
+		},
+	};
+	return trust;
+}
+
 const hour = 3_600_000;
 const day = 24 * hour;
 
@@ -83,6 +109,70 @@ describe("mailbox sync end to end", () => {
 		expect(await names(c)).toEqual([]);
 		await rounds(2, C, A, B);
 		expect(await names(c)).toEqual(["One", "Two"]);
+	});
+
+	it("a member this device learns after posting is sent a snapshot", async () => {
+		const [a, b, c] = (await activeGroup(box, ["a", "b", "c"])) as [
+			TestDevice,
+			TestDevice,
+			TestDevice,
+		];
+		const joined = without(b, "c");
+		// a listed c and is away from now on; b's daily reconcile isn't due, so c stays listed.
+		b.state.reconciled = { roster: [a.sigKey, b.sigKey].sort().join(","), at: Date.now() };
+		const trust = refusing(b, "c");
+		c.state.catchUp = true;
+		const [B, C] = [engine(b), engine(c)];
+		await C.sync();
+		await addLogin(b, "Two");
+		await B.sync();
+		trust.value = true;
+		b.roster.current = addDevice(b.roster.current, joined);
+		await rounds(2, B, C);
+		expect(await names(c)).toEqual(["Two"]);
+	});
+
+	it("a device that has never posted sends no snapshot to the members it starts with", async () => {
+		const [a, b] = (await activeGroup(box, ["a", "b"])) as [TestDevice, TestDevice];
+		const A = engine(a);
+		await addLogin(a, "One");
+		await A.sync();
+		// What a state saved by a build without the record loads as.
+		a.state.addressed = null;
+		await addLogin(a, "Two");
+		await rounds(2, A);
+		expect(await inboxKinds(b)).not.toContain("snapshot");
+	});
+
+	it("a sender refused earlier is asked for a snapshot once the roster holds it", async () => {
+		const [b, c] = (await activeGroup(box, ["b", "c"])) as [TestDevice, TestDevice];
+		const joined = without(b, "c");
+		b.state.reconciled = { roster: b.sigKey, at: Date.now() };
+		const trust = refusing(b, "c");
+		const [B, C] = [engine(b), engine(c)];
+		await addLogin(c, "Three");
+		await C.sync();
+		await B.sync();
+		expect(await names(b)).toEqual([]);
+		trust.value = true;
+		b.roster.current = addDevice(b.roster.current, joined);
+		await rounds(2, B, C);
+		await B.sync();
+		expect(await names(b)).toEqual(["Three"]);
+	});
+
+	it("a catch-up answered within the hour is not sent twice", async () => {
+		const [b, c] = (await activeGroup(box, ["b", "c"])) as [TestDevice, TestDevice];
+		const joined = without(b, "c");
+		b.state.reconciled = { roster: b.sigKey, at: Date.now() };
+		const [B, C] = [engine(b), engine(c)];
+		await addLogin(b, "One");
+		await B.sync();
+		b.roster.current = addDevice(b.roster.current, joined);
+		c.state.catchUp = true;
+		await C.sync();
+		await rounds(2, B);
+		expect((await inboxKinds(c)).filter((k) => k === "snapshot")).toHaveLength(1);
 	});
 
 	it("a future-dated message is retried, not lost", async () => {

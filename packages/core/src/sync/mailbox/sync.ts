@@ -16,7 +16,7 @@ import {
 	refusal,
 	requestSnapshot,
 } from "./send";
-import { forgetStrangers, type MailboxState, type MailboxStateStore } from "./state";
+import { forgetStrangers, type MailboxState, type MailboxStateStore, retryRefused } from "./state";
 
 export type MailboxStatus =
 	| "synced"
@@ -101,6 +101,7 @@ export function mailboxSync(
 
 		local = await ctx.vault.readLocal();
 		forgetStrangers(state, activeSigKeys(local.roster));
+		retryRefused(state, activeSigKeys(local.roster));
 		for (const sender of [...state.gaps]) {
 			await posting(async () => {
 				await requestSnapshot(ctx, state, sender, local.roster);
