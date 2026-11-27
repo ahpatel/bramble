@@ -221,6 +221,234 @@ async function cycle(context: import("@playwright/test").BrowserContext) {
 	});
 }
 
+test("quiet mode: Enter fills the suggested login, Tab keeps its native focus move, and the menu borrows the field's skin", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+
+	// The mark exists and is parked exactly over the field.
+	await expect(markHost(page)).toHaveCount(1);
+	// The one-time introduction was shown on this first meeting and reported back, so it will not
+	// follow the user to every site.
+	await expect
+		.poll(() =>
+			popup.evaluate(() =>
+				chrome.storage.local
+					.get("pref.autofillIconHintSeen")
+					.then((r) => r["pref.autofillIconHintSeen"]),
+			),
+		)
+		.toBe(true);
+	const fieldBox = await page.locator("#user").boundingBox();
+	const markBox = await markHost(page).boundingBox();
+	expect(markBox).not.toBeNull();
+	expect(markBox!.x).toBeCloseTo(fieldBox!.x, 0);
+	expect(markBox!.width).toBeCloseTo(fieldBox!.width, 0);
+
+	// Nothing opened on focus: the quiet mode draws no panel. The picker iframe is preloaded
+	// while the mark is up, so it exists but must stay hidden.
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() => document.querySelector<HTMLElement>('div[id^="tp-"]')?.style.display ?? "gone",
+			),
+		)
+		.not.toBe("block");
+
+	// Tab is the browser's: it moves focus to the password field and fills nothing.
+	await page.locator("#user").fill("ali");
+	await page.keyboard.press("Tab");
+	await expect(page.locator("#pass")).toBeFocused();
+	await expect(page.locator("#user")).toHaveValue("ali");
+	await expect(page.locator("#pass")).toHaveValue("");
+
+	// Enter takes the completion instead, filling both fields.
+	await page.locator("#user").focus();
+	await page.keyboard.press("Enter");
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+	await expect(page.locator("#pass")).toHaveValue("s3cr3t-pw-01");
+
+	// Clear it and open the menu with the mark.
+	await page.locator("#user").fill("");
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const frame = pickerFrame(page)!;
+	await expect(frame.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+	// The panel aligns with the field, not inset by the iframe document's default margin.
+	const menuBox = await page.locator('div[id^="tp-"]').boundingBox();
+	expect(menuBox).not.toBeNull();
+	expect(menuBox!.width).toBeCloseTo(fieldBox!.width, 0);
+
+	// The skin is the field's: square corners and the page's serif font, not the old 16px card.
+	const skin = await frame.evaluate(() => {
+		const list = document.querySelector<HTMLElement>(".tp-list")!;
+		const cs = getComputedStyle(list);
+		return { radius: cs.borderTopLeftRadius, font: cs.fontFamily, surface: cs.backgroundColor };
+	});
+	expect(skin.radius).toBe("0px");
+	expect(skin.font).toContain("Georgia");
+	expect(skin.surface).toBe("rgb(255, 255, 255)");
+
+	await waitOutPickerClickGuard(page);
+	await frame.locator("[data-entry-id]").click();
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+	await expect(page.locator("#pass")).toHaveValue("s3cr3t-pw-01");
+});
+
+test("Enter fills the suggested login with the menu closed", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	// Quiet mode: typing draws the ghost completion, not a panel.
+	expect(pickerFrame(page)).toBeUndefined();
+	await page.locator("#user").fill("ali");
+	await page.keyboard.press("Enter");
+
+	// The top suggestion fills both fields; Enter does not submit the half-typed form.
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+	await expect(page.locator("#pass")).toHaveValue("s3cr3t-pw-01");
+	await expect(page).toHaveURL("https://example.com/");
+});
+
+test("Enter fills a fully typed matching username, with no ghost to accept", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	// The whole saved username, not a prefix: there is no completion to paint.
+	await page.locator("#user").fill("alice@example.com");
+	await page.keyboard.press("Enter");
+
+	// The value is already a saved-login selection, so Enter supplies the password.
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+	await expect(page.locator("#pass")).toHaveValue("s3cr3t-pw-01");
+	await expect(page).toHaveURL("https://example.com/");
+});
+
+const CARD_CHECKOUT = `<!doctype html><html><head><title>checkout</title><style>
+	body { margin: 40px; }
+	form { width: 340px; }
+	input {
+		display: block; width: 100%; height: 42px; box-sizing: border-box; margin-top: 12px;
+		padding: 0 44px 0 11px; font: 14px Georgia, serif; color: rgb(23, 32, 43);
+		background: rgb(255, 255, 255); border: 1px solid rgb(185, 192, 201); border-radius: 0;
+	}
+</style></head><body>
+	<form>
+		<input id="number" name="cardnumber" autocomplete="cc-number" />
+		<input id="exp" name="exp-date" autocomplete="cc-exp" />
+		<input id="cvc" name="cvc" autocomplete="cc-csc" />
+	</form>
+</body></html>`;
+
+const OFFSCREEN_PASSWORD_LOGIN = `<!doctype html><html><head><title>login</title><style>
+	body { margin: 40px; }
+	form { width: 340px; }
+	input { display: block; width: 100%; height: 42px; box-sizing: border-box; margin-top: 12px; }
+	#pass { position: fixed; left: -9999px; top: 0; width: 200px; height: 40px; }
+</style></head><body>
+	<form onsubmit="event.preventDefault(); window.__submitted = true">
+		<input id="user" name="username" type="text" autocomplete="username" />
+		<input id="pass" name="password" type="password" autocomplete="current-password" />
+		<button type="submit">Sign in</button>
+	</form>
+</body></html>`;
+
+const RTL_LOGIN = `<!doctype html><html><head><title>login</title><style>
+	body { margin: 40px; }
+	form { width: 340px; }
+	input { display: block; width: 100%; height: 42px; box-sizing: border-box; margin-top: 12px; }
+</style></head><body>
+	<form onsubmit="event.preventDefault(); window.__submitted = true">
+		<input id="user" name="username" type="text" autocomplete="username" dir="rtl" />
+		<input id="pass" name="password" type="password" autocomplete="current-password" />
+		<button type="submit">Sign in</button>
+	</form>
+</body></html>`;
+
+const GUARDED_LOGIN = SQUARE_LOGIN.replace(
+	"<form>",
+	'<form onsubmit="event.preventDefault(); window.__submitted = true">',
+);
+
+test("Enter on an empty field submits without filling", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, GUARDED_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	// The mark is up, but an empty field gets no completion: a page that focuses its own username
+	// field on load must not let a stray Enter fill the account.
+	await expect(markHost(page)).toHaveCount(1);
+	await expect(page.locator("#user")).toHaveValue("");
+	await page.keyboard.press("Enter");
+	await expect
+		.poll(() => page.evaluate(() => (window as { __submitted?: boolean }).__submitted))
+		.toBe(true);
+
+	await expect(page.locator("#user")).toHaveValue("");
+	await expect(page.locator("#pass")).toHaveValue("");
+});
+
+test("a page that hides the mark cannot turn Enter into a fill", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, GUARDED_LOGIN);
+	await page.goto("https://example.com/");
+	// The reviewer's repro: the page hides the affordance, focuses its own username field, and a
+	// stray Enter must not fill the login the user never saw confirmed.
+	await page.addStyleTag({ content: 'div[id^="bmk-"] { display: none !important; }' });
+	await page.locator("#user").click();
+	await page.locator("#user").fill("al");
+	await page.keyboard.press("Enter");
+	await expect
+		.poll(() => page.evaluate(() => (window as { __submitted?: boolean }).__submitted))
+		.toBe(true);
+
+	await expect(page.locator("#user")).toHaveValue("al");
+	await expect(page.locator("#pass")).toHaveValue("");
+});
 
 test("the compact menu follows a rounded field", async ({ context, extensionId }) => {
 	const popup = await context.newPage();
@@ -607,6 +835,38 @@ test("typing narrows an open quiet-mode menu", async ({ context, extensionId }) 
 		expect(pickerFrame(page)).toBeDefined();
 	}).toPass({ timeout: 20_000 });
 	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(2, { timeout: 10_000 });
+});
+
+test("typing with one saved login keeps the filtered menu and the completion", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const frame = pickerFrame(page)!;
+	await expect(frame.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+
+	// One login used to remove the menu on the first keystroke, leaving only the completion.
+	await page.keyboard.type("ali");
+	await expect(frame.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+	await expect(frame.locator(".tp-item-compact").first()).toContainText("alice@example.com");
+
+	// ...and Enter takes the top filtered login, filling both fields (not just the username).
+	await page.keyboard.press("Enter");
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+	await expect(page.locator("#pass")).toHaveValue("s3cr3t-pw-01");
 });
 
 test("Alt+ArrowDown opens the menu from the field and Escape closes it", async ({
@@ -1015,6 +1275,46 @@ test("the mark shows on a short identifier-first field", async ({ context, exten
 	});
 });
 
+const IDENTIFIER_FIRST = `<!doctype html><html><head><title>Sign in</title><style>
+	#user { width: 320px; box-sizing: border-box; }
+</style></head><body>
+	<form id="f">
+		<input id="user" name="username" type="text" autocomplete="username" />
+		<button type="submit">Next</button>
+	</form>
+	<script>
+		document.getElementById("f").addEventListener("submit", (e) => {
+			e.preventDefault();
+			window.__submitted = true;
+		});
+	</script>
+</body></html>`;
+
+test("Enter fills the username and submits on an identifier-first page", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, IDENTIFIER_FIRST);
+	await page.goto("https://example.com/");
+	await page.locator("#user").fill("al");
+	await expect(markHost(page)).toHaveCount(1, { timeout: 10_000 });
+	await page.keyboard.press("Enter");
+
+	// The username completes and the page's own Enter submit runs; there is no password on this
+	// step, so the whole-login fill would race the page's navigation and be refused.
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+	await expect
+		.poll(() => page.evaluate(() => (window as { __submitted?: boolean }).__submitted))
+		.toBe(true);
+});
+
 const NARROW_LOGIN = `<!doctype html><html><head><title>Sign in</title><style>
 	body { margin: 40px; }
 	input { height: 24px; font: 14px Georgia, serif; }
@@ -1176,4 +1476,112 @@ test("the shipped default fills a login and a card with no stored trigger", asyn
 	await waitOutPickerClickGuard(card);
 	await frame.locator("[data-entry-id]").first().click();
 	await expect(card.locator("#number")).toHaveValue("4242424242424242", { timeout: 10_000 });
+});
+
+test("Enter does not fill a password into an off-screen field", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, OFFSCREEN_PASSWORD_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await page.locator("#user").fill("alice@example.com");
+	// The full username matches, but the password field is off-screen. The exact-match Enter fill
+	// requires the password field the user can actually see.
+	await page.keyboard.press("Enter");
+	await expect
+		.poll(() => page.evaluate(() => (window as { __submitted?: boolean }).__submitted))
+		.toBe(true);
+
+	await expect(page.locator("#pass")).toHaveValue("");
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+});
+
+test("a page cannot steer a fully typed Enter fill to another saved login", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedLogin(popup, "Alice", "alice", "pw-alice");
+	await seedLogin(popup, "Alice Work", "alice@work.example.com", "pw-work");
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, RTL_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await page.locator("#user").fill("alice");
+	// The page changes the value after the user's typing, without an input event. The fill must
+	// stay with the value the user typed (and here the RTL ghost cannot paint, so no completion).
+	await page.evaluate(() => {
+		(document.querySelector("#user") as HTMLInputElement).value = "alice@work.example.com";
+	});
+	await page.keyboard.press("Enter");
+	await expect
+		.poll(() => page.evaluate(() => (window as { __submitted?: boolean }).__submitted))
+		.toBe(true);
+
+	await expect(page.locator("#pass")).toHaveValue("");
+	await expect(page.locator("#user")).toHaveValue("alice@work.example.com");
+});
+
+test("a page that camouflages the mark's ink cannot turn Enter into a fill", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, GUARDED_LOGIN);
+	await page.goto("https://example.com/");
+	await page.addStyleTag({
+		content: 'div[id^="bmk-"] { --mark-ink: transparent !important; }',
+	});
+	await page.locator("#user").click();
+	await page.locator("#user").fill("al");
+	await page.keyboard.press("Enter");
+	await expect
+		.poll(() => page.evaluate(() => (window as { __submitted?: boolean }).__submitted))
+		.toBe(true);
+
+	await expect(page.locator("#pass")).toHaveValue("");
+});
+
+test("a page that moves the mark off the field cannot turn Enter into a fill", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, GUARDED_LOGIN);
+	await page.goto("https://example.com/");
+	await page.addStyleTag({
+		content: 'div[id^="bmk-"] { transform: translateX(400px) !important; }',
+	});
+	await page.locator("#user").click();
+	await page.locator("#user").fill("al");
+	await page.keyboard.press("Enter");
+	await expect
+		.poll(() => page.evaluate(() => (window as { __submitted?: boolean }).__submitted))
+		.toBe(true);
+
+	await expect(page.locator("#pass")).toHaveValue("");
 });

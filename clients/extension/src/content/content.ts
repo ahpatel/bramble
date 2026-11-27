@@ -605,6 +605,13 @@ function applySelectResponse(
 	);
 	fillCustomFields(data.payload.customFields, data.isAuto);
 	fillOtp(data.payload.totp);
+	// The pick ends the typed-filter session. The field now holds the chosen username, so a second
+	// mark click should offer every login for the site, not just the one just filled.
+	const usernameField = getPageFields().login.username;
+	if (usernameField) {
+		typedUsernameQuery.delete(usernameField);
+		updateAffordance(usernameField);
+	}
 	// Refresh the cache so the site's "last used" carry reaches the next menu open. `silenceAutoOpen`
 	// is set by the pick, so the result updates the cache without reopening the panel.
 	if (intent.refresh) queryAutofill();
@@ -1254,6 +1261,88 @@ function entryName(id: string): string | undefined {
 	return all.find((match) => match.id === id)?.name;
 }
 
+/**
+ * Accept the completion with Enter.
+ *
+ * The completion is a selection of a Bramble credential, so it fills the whole login through the
+ * same authorized path as a click, not just the username. (Filling the username alone read as a
+ * half-done pick: the user had chosen the entry and still had to fetch the password.)
+ *
+ * A completion is only offered after the user has typed at least one character, so a page that
+ * focuses its own field on load cannot turn a stray Enter into a fill. A page-prefilled value (or a
+ * browser autofill) must not turn the submit key into a Bramble fill either. Tab is deliberately
+ * not involved; it keeps its native focus move.
+ */
+function acceptInlineSuggestion(): boolean {
+	if (autofillTrigger !== "icon" || !inlineSuggestion) return false;
+	const { field, entryId, name, username } = inlineSuggestion;
+	if (deepActiveElement() !== field || !field.isConnected) return false;
+	// The ghost completes the user's own text; it is never an empty-field fill.
+	if (!typedUsernameQuery.get(field)) return false;
+	// The mark is the visible confirmation; a page that hid, faded or covered it must not turn a
+	// stray Enter into a credential fill.
+	if (!affordance.markTrustworthy()) {
+		clearInlineSuggestion();
+		return false;
+	}
+	// Identifier-first pages (Google, Yahoo) have no visible password on this step. Fill the
+	// username and let Enter submit so the page can advance; the next step's mark fills the
+	// password. A whole-login round trip here races the page's navigation and comes back refused.
+	const password = getPageFields().login.password;
+	if (!password || !isRendered(password)) {
+		fillTextField(field, username);
+		clearInlineSuggestion();
+		return false;
+	}
+	clearInlineSuggestion();
+	fillAndReport(field, entryId, name);
+	return true;
+}
+
+/**
+ * Enter with a full username typed and the menu closed.
+ *
+ * The ghost only appears while the typed text is a strict prefix, so a fully typed username has no
+ * completion to accept. It still shows the Enter keycap when the value exactly matches a saved
+ * login; pressing Enter fills that login's password when the password field is visible and empty.
+ * The entry is fixed when the keycap is painted, and the field must still hold the value the user
+ * typed, so a page cannot steer the fill to another saved account.
+ */
+function acceptTypedUsername(): boolean {
+	if (autofillTrigger !== "icon" || !cachedResult || cachedResult.locked) return false;
+	const suggestion = exactSuggestion;
+	if (!suggestion) return false;
+	const { field } = suggestion;
+	if (deepActiveElement() !== field || !field.isConnected) return false;
+	// The keycap was painted for the value the user typed. A page that changes the field afterwards
+	// must not steer the fill to another saved login.
+	const typed = typedUsernameQuery.get(field);
+	if (!typed || field.value !== typed) return false;
+	if (!affordance.markTrustworthy()) return false;
+	const password = getPageFields().login.password;
+	if (!passwordFieldVisible(password) || password.value) return false;
+	clearInlineSuggestion();
+	fillAndReport(field, suggestion.entryId, suggestion.name);
+	return true;
+}
+
+/**
+ * Enter takes the top filtered login when the user has typed a username into the anchored field
+ * and the filtered menu is open. That fills both fields, like a click on the row; an empty or
+ * pre-filled field keeps Enter as the form's submit.
+ */
+function pickTopForTypedQuery(): boolean {
+	if (!cachedResult || cachedResult.locked || !pickerIsOpen()) return false;
+	const field = anchorField();
+	if (!field || field !== getPageFields().login.username) return false;
+	if (deepActiveElement() !== field) return false;
+	if (!typedUsernameQuery.get(field)) return false;
+	if (!affordance.markTrustworthy()) return false;
+	const top = loginRows(field, cachedResult.logins).matches[0];
+	if (!top) return false;
+	fillAndReport(field, top.id, top.name);
+	return true;
+}
 
 /** Apply the click-behaviour mode. Never opens a panel by itself; the caller decides what the
  *  change should show on the field already in front of the user. */
@@ -1508,13 +1597,9 @@ function openPickerFor(field: HTMLInputElement): void {
 		queryAutofill();
 		return;
 	}
-	// A single saved login has nothing to disambiguate: get out of the way while the user
-	// types their own value. This is a property of the site (how many logins it has), not of
-	// how the typed query narrows them, so it uses the unfiltered count.
-	if (cachedResult.logins.length === 1 && field.value) {
-		removePicker();
-		return;
-	}
+	// The list is filtered by the typed query, so a single login that matches the prefix stays
+	// visible (with its completion) and one that does not is removed by showLoginPicker. The old
+	// unconditional "get out of the way" removed the menu before the filter could be seen.
 	showLoginPicker(field, cachedResult.logins);
 }
 
@@ -2212,6 +2297,18 @@ function bootstrap(): void {
 		true,
 	);
 
+	// The completion follows the caret. `selectionchange` covers arrow keys and a click inside the
+	// field, which no `input` event reports. Throttled to one frame: it fires for every selection
+	// in the document, and only the username field matters here.
+	let previewRaf = 0;
+	document.addEventListener("selectionchange", () => {
+		if (previewRaf) return;
+		previewRaf = requestAnimationFrame(() => {
+			previewRaf = 0;
+			const field = getPageFields().login.username;
+			if (field && deepActiveElement() === field) updateInlinePreview(field);
+		});
+	});
 
 	window.addEventListener("scroll", () => repositionPicker(), true);
 	window.addEventListener("resize", () => repositionPicker(), true);

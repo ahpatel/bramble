@@ -1005,10 +1005,9 @@ describe("content: username filter on login picker", () => {
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual(logins);
 	});
 
-	it("hides the picker while typing when the site has exactly one saved login", () => {
-		// The static "nothing to disambiguate" rule, kept deliberately separate from filtering:
-		// this must keep working even though the filtered-narrows-to-one case now shows a row
-		// instead of hiding.
+	it("keeps a matching single login while typing, and drops the menu on a non-match", () => {
+		// Filtering decides, not the raw login count: one saved login that matches the typed
+		// prefix stays visible with its completion, and a value that matches nothing hides it.
 		const oneLogin = [{ id: "1", name: "GitHub", secondary: "alice@example.com" }];
 		const user = document.getElementById("user") as HTMLInputElement;
 		user.focus();
@@ -1018,6 +1017,13 @@ describe("content: username filter on login picker", () => {
 		removePicker.mockClear();
 
 		user.value = "a";
+		dispatchTrustedInteraction("input", user);
+		expect(showMatches).toHaveBeenCalled();
+		expect(removePicker).not.toHaveBeenCalled();
+
+		showMatches.mockClear();
+		removePicker.mockClear();
+		user.value = "zzz";
 		dispatchTrustedInteraction("input", user);
 		expect(showMatches).not.toHaveBeenCalled();
 		expect(removePicker).toHaveBeenCalled();

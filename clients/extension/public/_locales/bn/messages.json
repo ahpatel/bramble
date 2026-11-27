@@ -218,6 +218,10 @@
 		"message": "তালিকা ছোট করতে টাইপ চালিয়ে যান",
 		"description": "Note at the end of the picker when only the first 50 matches are rendered."
 	},
+	"enterKey": {
+		"message": "Enter",
+		"description": "Label on the keycap that accepts the inline username completion."
+	},
 	"usedHere": {
 		"message": "এখানে ব্যবহৃত",
 		"description": "Badge on the picker row for the card or login already used on this site. A card carry is per tab; a login carry is per registrable domain."
