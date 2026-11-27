@@ -34,6 +34,7 @@ const handlers = {
 	onUseAlias: vi.fn(),
 	onRegenerate: vi.fn(),
 	onNewLogin: vi.fn(),
+	onOpenEntry: vi.fn(),
 };
 
 /** A stand-in for the UI document's window: records what the field frame sends it. */
@@ -180,6 +181,17 @@ describe("honouring a pick", () => {
 		deliver({ type: "UI_PICK", entryId: "some-other-entry" }, ui, EXT_ORIGIN);
 
 		expect(handlers.onPick).not.toHaveBeenCalled();
+	});
+
+	it("forwards an open-entry request only for a rendered id", () => {
+		const ui = bind();
+
+		deliver({ type: "UI_OPEN_ENTRY", entryId: "card-1" }, ui, EXT_ORIGIN);
+		expect(handlers.onOpenEntry).toHaveBeenCalledWith("card-1");
+
+		handlers.onOpenEntry.mockClear();
+		deliver({ type: "UI_OPEN_ENTRY", entryId: "some-other-entry" }, ui, EXT_ORIGIN);
+		expect(handlers.onOpenEntry).not.toHaveBeenCalled();
 	});
 
 	it("drops a pick posted by the page rather than the UI", () => {

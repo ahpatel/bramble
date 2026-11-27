@@ -26,8 +26,6 @@ type Inbound =
 			otpOnly?: boolean;
 			suggest?: { password: string };
 			alias?: AliasRowState;
-			// A trailing "new login" row, under a login field's matches (#213).
-			newLogin?: boolean;
 			// The card already filled elsewhere on this page: rendered with a badge, never
 			// highlighted (Enter belongs to the page's form).
 			carriedId?: string;
@@ -42,6 +40,8 @@ type Inbound =
 			maxHeight?: number;
 			// The match list was capped; draw the "keep typing" note after the rows.
 			more?: boolean;
+			// A trailing "new login" row, under a login field's matches (#213).
+			newLogin?: boolean;
 	  }
 	| {
 			type: "RENDER_LOCKED";
@@ -109,32 +109,41 @@ function postHeight(height: number): void {
 	window.parent.postMessage(message, PARENT_ORIGIN);
 }
 
-/** Uppercase avatar initials: first letter of the first two words, else first two letters. */
+type GraphemeSegmenter = new (
+	locales?: string | string[],
+	options?: { granularity: "grapheme" },
+) => { segment(input: string): Iterable<{ segment: string }> };
+
+const SEGMENTER = (() => {
+	const Segmenter = (Intl as unknown as { Segmenter?: GraphemeSegmenter }).Segmenter;
+	if (!Segmenter) return null;
+	try {
+		return new Segmenter(undefined, { granularity: "grapheme" });
+	} catch {
+		return null;
+	}
+})();
+
+function graphemes(text: string): string[] {
+	if (SEGMENTER) return [...SEGMENTER.segment(text)].map((part) => part.segment);
+	return Array.from(text);
+}
+
+const NAME_SUFFIXES = new Set(["jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v"]);
+
+/** Uppercase avatar initials from grapheme clusters: first + last significant word, else the
+ *  first two graphemes of a single-word name. Twin of content/html/dropdown-item.ts. */
 function initials(name: string): string {
 	const trimmed = name.trim();
 	if (!trimmed) return "??";
-	const words = trimmed.split(/\s+/);
-	if (words.length >= 2 && words[0] && words[1]) {
-		return (words[0][0]! + words[1][0]!).toUpperCase();
+	const words = trimmed.split(/\s+/).filter(Boolean);
+	const significant = words.filter((word) => !NAME_SUFFIXES.has(word.toLowerCase()));
+	const firstWord = significant[0] ?? words[0] ?? "";
+	const lastWord = significant.length > 1 ? significant[significant.length - 1]! : "";
+	if (lastWord) {
+		return (graphemes(firstWord)[0]! + graphemes(lastWord)[0]!).toUpperCase();
 	}
-	return trimmed.slice(0, 2).toUpperCase();
-}
-
-const AVATAR_COLORS = [
-	"#7C3AED",
-	"#2563EB",
-	"#0E7490",
-	"#047857",
-	"#4D7C0F",
-	"#A16207",
-	"#C2410C",
-	"#DC2626",
-	"#DB2777",
-];
-function colorForName(name: string): string {
-	let hash = 0;
-	for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-	return AVATAR_COLORS[hash % AVATAR_COLORS.length]!;
+	return graphemes(firstWord).slice(0, 2).join("").toUpperCase() || "??";
 }
 
 // Colours reference the local --tp-* tokens below, never literals. The tokens mirror the
@@ -261,6 +270,87 @@ const STYLE = `
 				line-height: 1.3;
 				unicode-bidi: plaintext;
 			}
+			/* The trailing slot. The carried badge and the open action share one cell and swap on
+			   hover or row highlight, the way the vault list's rows do, so the right edge never
+			   moves. Touch has no hover to swap on, so both stay visible there. */
+			.tp-trail {
+				margin-inline-start: auto;
+				flex-shrink: 0;
+				display: grid;
+				place-items: center end;
+			}
+			.tp-trail > * {
+				grid-area: 1 / 1;
+			}
+			.tp-item:hover .tp-badge,
+			.tp-item.tp-active .tp-badge {
+				opacity: 0;
+			}
+			/* Compact rows are one line: a text badge ("Hier verwendet", 102px) leaves the name
+			   almost nothing at 320px. A dot keeps the meaning (and the title/accessible text)
+			   without stealing the width; normal rows keep the words. */
+			.tp-item-compact .tp-badge {
+				width: 8px;
+				height: 8px;
+				padding: 0;
+				border-radius: 999px;
+				font-size: 0;
+				color: transparent;
+				background: var(--tp-muted);
+			}
+			.tp-open {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				width: 28px;
+				height: 28px;
+				padding: 0;
+				border: 0;
+				border-radius: 7px;
+				background: transparent;
+				color: var(--tp-muted);
+				cursor: pointer !important;
+				opacity: 0;
+				pointer-events: none;
+				transition: opacity 0.1s ease, background 0.12s ease, color 0.12s ease;
+			}
+			.tp-open:focus-visible {
+				opacity: 1;
+				pointer-events: auto;
+				color: var(--tp-foreground);
+			}
+			.tp-item:hover .tp-open,
+			.tp-item.tp-active .tp-open {
+				opacity: 1;
+				pointer-events: auto;
+				transition-delay: 0.04s;
+			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover .tp-open {
+					color: var(--tp-foreground);
+				}
+				.tp-open:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
+				}
+			}
+			@media (hover: none) {
+				.tp-trail {
+					display: flex;
+					align-items: center;
+					gap: 4px;
+				}
+				.tp-badge,
+				.tp-open {
+					opacity: 1;
+				}
+				.tp-open {
+					pointer-events: auto;
+				}
+			}
+			.tp-open svg {
+				width: 15px;
+				height: 15px;
+			}
 			.tp-launch {
 				margin-left: auto;
 				flex-shrink: 0;
@@ -294,6 +384,24 @@ const STYLE = `
 				font-size: 11px;
 				line-height: 1.3;
 				color: var(--tp-muted);
+			}
+			.tp-new-login {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				width: 100%;
+				padding: 6px 12px;
+				border: 0;
+				border-top: 1px solid var(--tp-border);
+				background: none;
+				color: var(--tp-muted);
+				font: inherit;
+				font-size: 12px;
+				text-align: left;
+				cursor: pointer;
+			}
+			.tp-new-login:hover {
+				color: var(--tp-foreground);
 			}
 			.tp-regenerate {
 				margin-left: auto;
@@ -413,6 +521,12 @@ function matchRow(m: MatchSummary, carried: boolean, compact: boolean): string {
 	// label covers the rare row with neither. Twin of content/html/dropdown-item.ts.
 	const primary = m.name || m.secondary || t("savedLogin");
 	const detail = m.name ? m.secondary : "";
+	const badge = carried
+		? html`<span class="tp-badge" title="${t("usedHere")}">${t("usedHere")}</span>`
+		: "";
+	// Shares the trailing slot with the badge and appears on hover or row highlight, so the row
+	// reads as one thing until you reach for the escape hatch. Twin of content/html/dropdown-item.ts.
+	const open = html`<button class="tp-open" type="button" data-tp-open-entry="1" aria-label="${t("openEntryDetails")}" title="${t("openEntryDetails")}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg></button>`;
 	if (compact) {
 		return html`
 		<div class="tp-item tp-item-compact" data-entry-id="${m.id}" role="option" aria-selected="false">
@@ -421,6 +535,7 @@ function matchRow(m: MatchSummary, carried: boolean, compact: boolean): string {
 				<span class="tp-name" title="${primary}">${primary}</span>
 				<span class="tp-user" title="${detail}">${detail}</span>
 			</div>
+			<div class="tp-trail">${[badge, open]}</div>
 		</div>
 	`;
 	}
@@ -431,6 +546,7 @@ function matchRow(m: MatchSummary, carried: boolean, compact: boolean): string {
 				<span class="tp-name" title="${primary}">${primary}</span>
 				<span class="tp-user" title="${detail}">${detail}</span>
 			</div>
+			<div class="tp-trail">${[badge, open]}</div>
 		</div>
 	`;
 }
@@ -666,9 +782,18 @@ function setHighlight(index: number): void {
 	rows.forEach((row, i) => {
 		const active = i === highlight;
 		row.classList.toggle("tp-active", active);
+		row.setAttribute("aria-selected", active ? "true" : "false");
 		if (active) row.scrollIntoView({ block: "nearest" });
 	});
-	post({ type: "UI_HIGHLIGHT", active: highlight >= 0 });
+	// The parent keeps focus in the page field (typing filters), so the active row is announced
+	// through its live region. The id lets Ctrl/Cmd+Enter reach the row's secondary action.
+	const active = rows[highlight] ?? null;
+	post({
+		type: "UI_HIGHLIGHT",
+		active: highlight >= 0,
+		entryId: active?.dataset.entryId,
+		label: active?.textContent?.trim() || undefined,
+	});
 }
 
 function moveHighlight(delta: number): void {
@@ -697,6 +822,17 @@ document.addEventListener("mousedown", (e) => {
 	if (target?.closest("[data-tp-regenerate]")) {
 		e.preventDefault();
 		post({ type: "UI_REGENERATE" });
+		return;
+	}
+	// The row's "open in Bramble" action. It is inside the row, so match it before the entry id or
+	// the row would treat this as a fill.
+	const open = target?.closest<HTMLElement>("[data-tp-open-entry]");
+	if (open) {
+		e.preventDefault();
+		const row = open.closest<HTMLElement>("[data-entry-id]");
+		if (row?.dataset.entryId && clickAllowed()) {
+			post({ type: "UI_OPEN_ENTRY", entryId: row.dataset.entryId, pointer: true });
+		}
 		return;
 	}
 	// Anything that fills is marked as a click, so the content script can time it.
@@ -813,6 +949,15 @@ function handleInbound(msg: Inbound | undefined): void {
 		case "UI_KEY":
 			if (msg.key === "ArrowDown") moveHighlight(1);
 			else if (msg.key === "ArrowUp") moveHighlight(-1);
+			else if (msg.key === "Enter" && highlight >= 0) {
+				const row = rows[highlight];
+				// Ctrl/Cmd+Enter is the row's secondary action: open the entry, never fill it.
+				if (msg.open === true && row?.kind === "match") {
+					post({ type: "UI_OPEN_ENTRY", entryId: row.id });
+				} else {
+					activate(highlight);
+				}
+			}
 			break;
 	}
 }

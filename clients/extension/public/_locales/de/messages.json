@@ -194,5 +194,9 @@
 		"message": "Weitertippen, um die Liste einzugrenzen",
 		"description": "Note at the end of the picker when only the first 50 matches are rendered."
 	},
+	"openEntryDetails": {
+		"message": "In Bramble öffnen",
+		"description": "Row action that opens the entry's details in a Bramble window."
+	},
 	}
 }

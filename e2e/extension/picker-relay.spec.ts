@@ -734,3 +734,25 @@ test("a sign-in form in a same-site frame is hosted by the top frame", async ({
 	await expect(login().locator("#user")).toHaveValue("alice@example.com", { timeout: 15_000 });
 	await expect(login().locator("#pass")).toHaveValue("s3cr3t-pw-01");
 });
+
+test("Ctrl+Enter opens the relayed highlighted row instead of filling", async ({
+	context,
+	extensionId,
+}) => {
+	await setUp(context, extensionId);
+	const page = await context.newPage();
+	await serve(page);
+	await page.goto(`${MERCHANT}/`);
+
+	const ui = await openPicker(page);
+	await page.keyboard.press("ArrowDown");
+	await expect(ui.locator("[data-entry-id]")).toHaveClass(/tp-active/, { timeout: 10_000 });
+
+	// The secondary action crosses the relay too: it opens the entry, and the card stays empty.
+	const opened = context.waitForEvent("page");
+	await page.keyboard.press("Control+Enter");
+	const details = await opened;
+	await expect(details).toHaveURL(/popup\.html\?detached=1/);
+	await expect(cardFrame(page).locator("#number")).toHaveValue("");
+});
+

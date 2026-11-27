@@ -194,5 +194,9 @@
 		"message": "তালিকা ছোট করতে টাইপ চালিয়ে যান",
 		"description": "Note at the end of the picker when only the first 50 matches are rendered."
 	},
+	"openEntryDetails": {
+		"message": "Bramble-এ খুলুন",
+		"description": "Row action that opens the entry's details in a Bramble window."
+	},
 	}
 }

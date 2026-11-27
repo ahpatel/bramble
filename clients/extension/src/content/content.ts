@@ -368,6 +368,13 @@ function handleRelayedKey(e: KeyboardEvent): boolean {
 		dropRelayed();
 		return true;
 	}
+	// Ctrl/Cmd+Enter opens the highlighted row's details, the same secondary action the local
+	// picker offers. It must not fall through to the plain Enter fill below.
+	if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && relayedHighlight) {
+		e.preventDefault();
+		keyToRelayed("Enter", true);
+		return true;
+	}
 	// Enter only picks when a row is highlighted; otherwise the form submits normally.
 	if (e.key === "Enter" && relayedHighlight) {
 		e.preventDefault();
@@ -776,6 +783,35 @@ function selectMatch(
 	}).then((response) => applySelectResponse(intent, response, pageIsLive));
 }
 
+/**
+ * Open the full Bramble window on `entryId`, for fields the picker does not fill.
+ *
+ * The row action is a navigation, not a credential release: it sends only the opaque entry id and
+ * a route, and the pop-out's own guards decide whether the entry can be shown. Nothing is returned
+ * to the page.
+ */
+function openEntryDetails(entryId: string): void {
+	if (!entryId) return;
+	cancelOperations();
+	silenceAutoOpen = true;
+	picker.remove();
+	dropRelayed();
+	safeSendMessage({
+		type: "POPOUT_OPEN",
+		payload: {
+			reason: "entry",
+			handoff: { path: `/vault/${encodeURIComponent(entryId)}` },
+		},
+	});
+}
+
+/** The "new login" row: Bramble's create form in a pop-out, for this site (#213). */
+function openNewLogin(): void {
+	cancelOperations();
+	silenceAutoOpen = true;
+	picker.remove();
+	safeSendMessage({ type: "POPOUT_OPEN", payload: { reason: "new-login" } });
+}
 /** The password field a launch may fill: rendered, empty, and not on a form setting a password. */
 function launchField(): HTMLInputElement | null {
 	invalidatePageFields();
@@ -1219,22 +1255,12 @@ picker.onUseSuggested(() => {
  * one suggestion that can fail, and the failure is the only thing that tells someone whether to
  * fix a key, a plan or an allowance.
  */
-/** The "new login" row: Bramble's create form in a pop-out, for this site (#213). */
-function openNewLogin(): void {
-	cancelOperations();
-	silenceAutoOpen = true;
-	removePicker();
-	safeSendMessage({ type: "POPOUT_OPEN", payload: { reason: "new-login" } });
-}
-
-picker.onNewLogin(openNewLogin);
-
 picker.onUseAlias(() => {
 	cancelOperations();
 	const field = anchorField();
-	if (!field) return;
 	// A click on the busy row is impossible by construction (it carries no hook), but a stale
 	// keyboard activation could still arrive; one gesture must not buy two aliases.
+	if (!field) return;
 	if (aliasStateFor.get(field)?.state === "busy") return;
 
 	aliasStateFor.set(field, { state: "busy" });
@@ -1278,6 +1304,8 @@ picker.onUseAlias(() => {
 		dropRelayed();
 	});
 });
+picker.onOpenEntry((entryId) => openEntryDetails(entryId));
+picker.onNewLogin(openNewLogin);
 picker.onRegenerate(() => {
 	cancelOperations();
 	const field = anchorField();
@@ -1334,6 +1362,7 @@ if (frameRelay.isTop()) {
 				showMatchesFor([], field, { suggest: { password: pw } });
 			});
 		},
+		onOpenEntry: (entryId) => openEntryDetails(entryId),
 		onNewLogin: openNewLogin,
 	});
 }

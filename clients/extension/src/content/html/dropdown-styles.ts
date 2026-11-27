@@ -159,11 +159,58 @@ export const dropdownStyles = html`
 				color: transparent;
 				background: var(--tp-muted);
 			}
+			.tp-open {
 				display: flex;
 				align-items: center;
+				justify-content: center;
+				width: 28px;
+				height: 28px;
+				padding: 0;
+				border: 0;
+				border-radius: 7px;
+				background: transparent;
 				color: var(--tp-muted);
+				cursor: pointer !important;
+				opacity: 0;
+				pointer-events: none;
+				transition: opacity 0.1s ease, background 0.12s ease, color 0.12s ease;
 			}
+			.tp-open:focus-visible {
+				opacity: 1;
+				pointer-events: auto;
 				color: var(--tp-foreground);
+			}
+			.tp-item:hover .tp-open,
+			.tp-item.tp-active .tp-open {
+				opacity: 1;
+				pointer-events: auto;
+				transition-delay: 0.04s;
+			}
+			@media (hover: hover) and (pointer: fine) {
+				.tp-item:hover .tp-open {
+					color: var(--tp-foreground);
+				}
+				.tp-open:hover {
+					background: color-mix(in oklab, var(--tp-foreground) 10%, transparent);
+				}
+			}
+			@media (hover: none) {
+				.tp-trail {
+					display: flex;
+					align-items: center;
+					gap: 4px;
+				}
+				.tp-badge,
+				.tp-open {
+					opacity: 1;
+				}
+				.tp-open {
+					pointer-events: auto;
+				}
+			}
+			.tp-open svg {
+				width: 15px;
+				height: 15px;
 			}
 			.tp-launch {
 				margin-left: auto;

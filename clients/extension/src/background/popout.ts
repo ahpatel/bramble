@@ -115,13 +115,22 @@ async function popoutOpen(
 	// that gap so popping out doesn't lock the vault out from under the new window.
 	armViewGrace();
 
-	const payload = message.payload as { handoff?: { draft?: unknown }; reason?: string } | undefined;
+	const payload = message.payload as
+		| { handoff?: { draft?: unknown; path?: string; vaultId?: string }; reason?: string }
+		| undefined;
 	// The page dropdown's "new login" row names a reason, never a path: a page must not steer the
 	// window to a route of its choosing. The form reads the site from the tab behind it (#213).
 	const newLogin = payload?.reason === "new-login";
-	const handoff: { draft?: unknown; path?: string } | undefined = newLogin
+	const handoff: { draft?: unknown; path?: string; vaultId?: string } | undefined = newLogin
 		? { path: "/vault/new/login" }
 		: payload?.handoff;
+	// The picker's "open in Bramble" row is a content-script handoff: it names only the route.
+	// The open pop-out's reuse guard compares the vault it was opened for, so fill the active one
+	// in here; a pop-up handoff already carries it. Other page handoffs keep their old shape.
+	if (payload?.reason === "entry" && handoff && handoff.vaultId === undefined) {
+		const activeVaultId = await resolveActiveVaultId().catch(() => null);
+		if (activeVaultId) handoff.vaultId = activeVaultId;
+	}
 	// Single instance: reuse an already-open pop-out instead of spawning a duplicate. A request
 	// carrying an in-flight draft is the exception - the open window consumed its boot handoff
 	// once, so reusing it would silently drop the new draft (which can hold a plaintext

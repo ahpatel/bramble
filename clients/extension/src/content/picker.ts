@@ -36,6 +36,10 @@ let regenerateCb: (() => void) | null = null;
 let aliasCb: (() => void) | null = null;
 // The "new login" row opens the create form; the content policy owns that request.
 let newLoginCb: (() => void) | null = null;
+// "Open in Bramble" on a row. The content policy owns the pop-out; this only forwards an id it
+// actually rendered.
+let openEntryCb: ((entryId: string) => void) | null = null;
+let pointerCb: ((x: number, y: number) => void) | null = null;
 
 // A suggest option threads a generated password to whichever renderer is active.
 type SuggestOpt = { password: string };
@@ -494,6 +498,16 @@ function buildDropdown(matches: MatchSummary[], field: HTMLInputElement, opts?: 
 			regenerateCb?.();
 			return;
 		}
+		// The row action sits inside the row, so it must be matched before the entry id or the row
+		// would treat it as a fill.
+		if (target?.closest("[data-tp-open-entry]")) {
+			e.preventDefault();
+			const row = target.closest<HTMLElement>("[data-entry-id]");
+			if (row?.dataset.entryId && pickAllowed(dropdownEl, true)) {
+				openEntryCb?.(row.dataset.entryId);
+			}
+			return;
+		}
 		const item = target?.closest<HTMLElement>("[data-entry-id]");
 		if (item?.dataset.entryId) {
 			e.preventDefault();
@@ -597,6 +611,8 @@ let iframeMatchesKey = "";
 // renders and arrows we send, which the iframe applies in order, not from its UI_HIGHLIGHT: that
 // arrives a round trip late and lost the race to a quick Enter.
 let iframeHasHighlight = false;
+// The highlighted row's entry id, for the keyboard path to "Open in Bramble" (Ctrl/Cmd+Enter).
+let iframeHighlightId: string | null = null;
 let iframeNavRows = 0;
 // Ids last sent to the iframe. A pick naming anything else is dropped, as in relay-client.ts.
 let iframeRenderedIds = new Set<string>();
@@ -611,6 +627,7 @@ function hideIframe(): void {
 	}
 	iframeMatchesKey = "";
 	iframeHasHighlight = false;
+	iframeHighlightId = null;
 	setAnchorField(null);
 }
 
@@ -631,6 +648,7 @@ function destroyIframeHost(): void {
 	pendingRender = null;
 	iframeMatchesKey = "";
 	iframeHasHighlight = false;
+	iframeHighlightId = null;
 	setAnchorField(null);
 }
 
@@ -726,6 +744,7 @@ function armReadinessTimeout(): void {
 				buildDropdown(render.matches, field, {
 					otpOnly: render.otpOnly,
 					// Carried over, or falling back to the shadow renderer silently drops whichever
+					// extra row was on offer: the suggestion as well as the alias.
 					suggest: render.suggest,
 					alias: render.alias,
 					more: render.more === true,
@@ -887,6 +906,7 @@ function onUiMessage(e: MessageEvent): void {
 		| { type: "UI_REGENERATE" }
 		| { type: "UI_USE_ALIAS"; pointer?: boolean }
 		| { type: "UI_NEW_LOGIN" }
+		| { type: "UI_OPEN_ENTRY"; entryId?: string; pointer?: boolean }
 		| undefined;
 	switch (msg?.type) {
 		case "UI_CONNECTED":
@@ -942,6 +962,17 @@ function onUiMessage(e: MessageEvent): void {
 			hideIframe();
 			newLoginCb?.();
 			break;
+		case "UI_OPEN_ENTRY":
+			// Opening the entry detail is not a fill, but it is still a user action on a row the page
+			// could try to clickjack; use the same visibility gate and only an id we rendered.
+			if (
+				typeof msg.entryId === "string" &&
+				iframeRenderedIds.has(msg.entryId) &&
+				pickAllowed(iframeHostEl, msg.pointer)
+			) {
+				openEntryCb?.(msg.entryId);
+			}
+			break;
 	}
 }
 
@@ -963,9 +994,18 @@ function handleDropdownKey(e: KeyboardEvent): boolean {
 		hideIframe();
 		return true;
 	}
-	// Enter only picks when a row is highlighted; otherwise the form submits normally.
+	// Enter only picks when a row is highlighted; otherwise the form submits normally. Ctrl/Cmd+Enter
+	// is the row's secondary action ("Open in Bramble"), which is otherwise pointer-only.
 	if (e.key === "Enter" && iframeHasHighlight) {
 		e.preventDefault();
+		if ((e.ctrlKey || e.metaKey) && iframeHighlightId) {
+			// Same trust gate as the click path: the id is one we rendered, and the menu must be on
+			// screen. A keyboard press has no pointer coordinates, so no pointer evidence is sent.
+			if (iframeRenderedIds.has(iframeHighlightId)) {
+				openEntryCb?.(iframeHighlightId);
+			}
+			return true;
+		}
 		postToUi({ type: "UI_KEY", key: "Enter" });
 		return true;
 	}
@@ -1014,11 +1054,19 @@ export const picker = {
 		regenerateCb = cb;
 	},
 	/** Fired when the user chooses the email-alias row, in any state it accepts a click in. */
+	onUseAlias(cb: () => void): void {
+		aliasCb = cb;
+	},
 	/** Fired when the user chooses the "new login" row. */
 	onNewLogin(cb: () => void): void {
 		newLoginCb = cb;
 	},
-	onUseAlias(cb: () => void): void {
-		aliasCb = cb;
+	/** Fired when the user asks to open a row's entry in the full Bramble window. */
+	onOpenEntry(cb: (entryId: string) => void): void {
+		openEntryCb = cb;
+	},
+	/** A click inside the menu, in the parent's viewport coordinates. */
+	onPointer(cb: (x: number, y: number) => void): void {
+		pointerCb = cb;
 	},
 };

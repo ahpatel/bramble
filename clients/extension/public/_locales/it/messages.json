@@ -194,5 +194,9 @@
 		"message": "Continua a digitare per restringere l'elenco",
 		"description": "Note at the end of the picker when only the first 50 matches are rendered."
 	},
+	"openEntryDetails": {
+		"message": "Apri in Bramble",
+		"description": "Row action that opens the entry's details in a Bramble window."
+	},
 	}
 }

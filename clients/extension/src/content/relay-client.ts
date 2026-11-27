@@ -45,6 +45,7 @@ export type RelayRender =
 			skin?: DropdownSkin;
 			// The match list was capped; draw the "keep typing" note after the rows.
 			more?: boolean;
+			// A trailing "new login" row, under a login field's matches (#213).
 			newLogin?: boolean;
 	  }
 	| { kind: "locked"; skin?: DropdownSkin };
@@ -56,6 +57,8 @@ export interface RelayClientHandlers {
 	onUseSuggested(): void;
 	onRegenerate(): void;
 	onNewLogin(): void;
+	/** A row's "open in Bramble" action, for an id this frame actually rendered. */
+	onOpenEntry(entryId: string): void;
 }
 
 let relay: FrameRelay | null = null;
@@ -114,6 +117,7 @@ function flush(): void {
 		carriedId: render.carriedId,
 		skin: render.skin,
 		more: render.more === true,
+		newLogin: render.newLogin === true,
 	});
 }
 
@@ -145,9 +149,9 @@ export function closeRelayed(): void {
 	renderedIds = new Set();
 }
 
-/** Forward a navigation key to the relayed UI. */
-export function keyToRelayed(key: string): void {
-	if (relayedPickerIsLive()) post({ type: "UI_KEY", key });
+/** Forward a navigation key to the relayed UI. `open` is Ctrl/Cmd+Enter: open, don't fill. */
+export function keyToRelayed(key: string, open = false): void {
+	if (relayedPickerIsLive()) post({ type: "UI_KEY", key, open: open || undefined });
 }
 
 function handleMessage(e: MessageEvent): void {
@@ -192,6 +196,12 @@ function handleMessage(e: MessageEvent): void {
 		case "UI_NEW_LOGIN":
 			handlers?.onNewLogin();
 			break;
+		case "UI_OPEN_ENTRY": {
+			const entryId = (data as { entryId?: unknown }).entryId;
+			if (typeof entryId !== "string" || !renderedIds.has(entryId)) return;
+			handlers?.onOpenEntry(entryId);
+			break;
+		}
 	}
 }
 

@@ -298,6 +298,41 @@ test("the dropdown rows setting switches the menu between comfortable and compac
 	});
 });
 
+test("a row's open action opens the entry details without filling", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const frame = pickerFrame(page)!;
+	await expect(frame.locator("[data-entry-id]")).toHaveCount(1, { timeout: 10_000 });
+	await waitOutPickerClickGuard(page);
+
+	const opened = context.waitForEvent("page");
+	// The open action shares the row's trailing slot and appears on hover.
+	await frame.locator("[data-entry-id]").first().hover();
+	await frame.locator("[data-tp-open-entry]").click();
+	const details = await opened;
+	await expect(details).toHaveURL(/popup\.html\?detached=1/);
+	await expect(details.getByRole("heading", { name: "Example Login" })).toBeVisible({
+		timeout: 15_000,
+	});
+	// Opening the entry is a navigation, not a pick: the page field must be untouched.
+	await expect(page.locator("#user")).toHaveValue("");
+});
+
 test("a field near the bottom opens the menu above it, fully inside the viewport", async ({
 	context,
 	extensionId,
@@ -374,6 +409,51 @@ test("a menu taller than both gaps is capped and scrolls, not clipped", async ({
 	const menu = (await page.locator('div[id^="tp-"]').boundingBox())!;
 	expect(menu.y).toBeGreaterThanOrEqual(0);
 	expect(menu.y + menu.height).toBeLessThanOrEqual(360);
+});
+
+test("a second open action moves the existing Bramble window instead of duplicating it", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedLogin(popup, "Work account", "alice@example.com", "work-pw-01");
+	await seedLogin(popup, "Personal", "alice.personal@example.com", "home-pw-02");
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await waitOutPickerClickGuard(page);
+
+	const opened = context.waitForEvent("page");
+	await pickerFrame(page)!.locator("[data-entry-id]").first().hover();
+	await pickerFrame(page)!.locator("[data-tp-open-entry]").first().click();
+	const details = await opened;
+	await expect(details.getByRole("heading", { name: "Work account" })).toBeVisible({
+		timeout: 15_000,
+	});
+
+	await page.bringToFront();
+	await page.locator("#user").click();
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await waitOutPickerClickGuard(page);
+	await pickerFrame(page)!.locator("[data-entry-id]").nth(1).hover();
+	await pickerFrame(page)!.locator("[data-tp-open-entry]").nth(1).click();
+
+	await expect(details.getByRole("heading", { name: "Personal" })).toBeVisible({
+		timeout: 10_000,
+	});
+	expect(context.pages().filter((p) => p.url().includes("popup.html?detached=1"))).toHaveLength(1);
 });
 
 test("a 200% zoom menu keeps the entry name readable", async ({ context, extensionId }) => {
