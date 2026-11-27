@@ -624,6 +624,8 @@ describe("autofill master switch", () => {
 				locked: false,
 				hasPotentialMatch: false,
 				disabled: true,
+				trigger: "icon",
+				density: "comfortable",
 			},
 		});
 	});
@@ -677,6 +679,50 @@ describe("autofill master switch", () => {
 	});
 });
 
+describe("autofill trigger mode", () => {
+	it("pushes a new row density to open tabs", async () => {
+		const bg = await loadBackground({
+			sessionSeed: { [VEK_KEY]: "SEED" },
+			openTabs: [{ id: 3 }, { id: 4 }],
+		});
+		expect(
+			(
+				await bg.send(
+					{ type: "AUTOFILL_SET_DENSITY", payload: { density: "compact" } },
+					pageSender("example.com", 3),
+				)
+			).resp,
+		).toEqual({ ok: false, error: "forbidden" });
+		expect(bg.state.tabMessages).toEqual([]);
+
+		await bg.send(
+			{ type: "AUTOFILL_SET_DENSITY", payload: { density: "compact" } },
+			extensionSender,
+		);
+		expect(bg.state.tabMessages).toEqual([
+			{
+				tabId: 3,
+				message: { type: "AUTOFILL_DENSITY", payload: { density: "compact" } },
+				options: undefined,
+			},
+			{
+				tabId: 4,
+				message: { type: "AUTOFILL_DENSITY", payload: { density: "compact" } },
+				options: undefined,
+			},
+		]);
+	});
+
+	it("refuses a density it does not know", async () => {
+		const bg = await loadBackground({ sessionSeed: { [VEK_KEY]: "SEED" } });
+		const { resp } = await bg.send(
+			{ type: "AUTOFILL_SET_DENSITY", payload: { density: "tiny" } },
+			extensionSender,
+		);
+		expect(resp).toEqual({ ok: false, error: "invalid_request" });
+		expect(bg.state.tabMessages).toEqual([]);
+	});
+});
 describe("AUTOFILL_SELECT session transitions", () => {
 	it("fails a select held across lock, including lock-to-unlock ABA", async () => {
 		const bg = await unlockedWithIndex();

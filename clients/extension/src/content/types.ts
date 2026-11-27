@@ -2,6 +2,9 @@
 // duplicated here to keep the content script a flat bundle with no cross-package
 // runtime imports.
 
+import type { AutofillDensity } from "@core/util/autofill-density";
+import type { AutofillTrigger } from "@core/util/autofill-trigger";
+
 export interface MatchSummary {
 	id: string;
 	name: string;
@@ -36,11 +39,19 @@ export interface QueryResult {
 	// An alias provider is configured for the active vault, so the alias row may be offered.
 	// Absent when there is none, when the vault is locked, or from an older background.
 	aliasReady?: boolean;
-	// This frame is the same site as the tab's top page, so the top page may host its login
+	// The asking frame is the same site as its tab's top page, so the top page may host its login
 	// picker. Absent from an older background, which reads as no.
 	sameSiteAsTop?: boolean;
-	/** This tab holds a launch grant this frame could spend. */
+	// This tab holds a launch grant this frame could spend. Absent from an older background.
 	launch?: boolean;
+	// What a click into a login field should do. Absent from an older background, where the
+	// content script falls back to the quiet default.
+	trigger?: AutofillTrigger;
+	// The in-page list's row layout. Absent from an older background, where the content script
+	// falls back to the comfortable rows.
+	density?: AutofillDensity;
+	// Show the one-time "what is this mark?" hint. Absent once it has been shown.
+	hint?: boolean;
 }
 
 /** Fill instruction from the background, discriminated by `kind`. `isAuto` echoes whether the fill was user-initiated. */

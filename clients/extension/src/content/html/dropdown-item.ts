@@ -36,12 +36,14 @@ export function dropdownItem({
 	name,
 	secondary,
 	carried,
+	compact,
 }: {
 	id: string;
 	name: string;
 	secondary: string;
 	// The card already filled elsewhere on this page. See content.ts `cardRows`.
 	carried?: boolean;
+	compact?: boolean;
 }) {
 	const badge = carried ? html`<span class="tp-badge">${t("cardUsedHere")}</span>` : "";
 	return html`

@@ -190,5 +190,9 @@
 		"message": "Gespeicherte Anmeldung",
 		"description": "Primary label for an entry with no name and no username, e.g. from an import."
 	},
+	"menuMore": {
+		"message": "Weitertippen, um die Liste einzugrenzen",
+		"description": "Note at the end of the picker when only the first 50 matches are rendered."
+	},
 	}
 }

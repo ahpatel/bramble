@@ -1,4 +1,14 @@
 /// <reference types="chrome" />
+import {
+	type AutofillDensity,
+	DEFAULT_AUTOFILL_DENSITY,
+	normalizeAutofillDensity,
+} from "@core/util/autofill-density";
+import {
+	type AutofillTrigger,
+	DEFAULT_AUTOFILL_TRIGGER,
+	normalizeAutofillTrigger,
+} from "@core/util/autofill-trigger";
 import { type GeneratorSettings, normalizeGeneratorSettings } from "@core/util/password-gen";
 import { api } from "../platform-api";
 
@@ -8,6 +18,9 @@ export const PREF_AUTOLOCK_MINUTES = "pref.autoLockMinutes";
 const PREF_CLIPBOARD_SECONDS = "pref.clipboardClearSeconds";
 const PREF_OFFER_TO_SAVE = "pref.offerToSave";
 const PREF_AUTOFILL_ENABLED = "pref.autofillEnabled";
+const PREF_AUTOFILL_TRIGGER = "pref.autofillTrigger";
+const PREF_AUTOFILL_DENSITY = "pref.autofillDensity";
+const PREF_AUTOFILL_ICON_HINT = "pref.autofillIconHintSeen";
 const PREF_NEVER_SAVE_SITES = "pref.neverSaveSites";
 export const PREF_PASSKEY_PROVIDER = "pref.passkeyProviderEnabled";
 export const PREF_LOCK_ON_SCREEN_LOCK = "pref.lockOnScreenLock";
@@ -81,6 +94,41 @@ export async function getPasskeyConfirmOncePerUnlock(): Promise<boolean> {
 		if (r[PREF_PASSKEY_CONFIRM_ONCE] === true) return true;
 	} catch {}
 	return false;
+}
+
+/** What a click into a login field does. Read per query, like the master switch: a stale copy in
+ *  a woken service worker would keep opening the list after the user chose the quiet mode. */
+export async function getAutofillTrigger(): Promise<AutofillTrigger> {
+	try {
+		const r = await api.storage.local.get(PREF_AUTOFILL_TRIGGER);
+		return normalizeAutofillTrigger(r[PREF_AUTOFILL_TRIGGER]);
+	} catch {}
+	return DEFAULT_AUTOFILL_TRIGGER;
+}
+
+/** The in-page list's row layout. Read per query, like the trigger: the menu is drawn from the
+ *  query result, and a stale copy would keep drawing the old rows after the setting changed. */
+export async function getAutofillDensity(): Promise<AutofillDensity> {
+	try {
+		const r = await api.storage.local.get(PREF_AUTOFILL_DENSITY);
+		return normalizeAutofillDensity(r[PREF_AUTOFILL_DENSITY]);
+	} catch {}
+	return DEFAULT_AUTOFILL_DENSITY;
+}
+
+/** Whether the one-time "what is this mark?" hint has already been shown. */
+export async function getAutofillIconHintSeen(): Promise<boolean> {
+	try {
+		const r = await api.storage.local.get(PREF_AUTOFILL_ICON_HINT);
+		return r[PREF_AUTOFILL_ICON_HINT] === true;
+	} catch {}
+	return false;
+}
+
+export async function markAutofillIconHintSeen(): Promise<void> {
+	try {
+		await api.storage.local.set({ [PREF_AUTOFILL_ICON_HINT]: true });
+	} catch {}
 }
 
 export async function getPasskeyProviderEnabled(): Promise<boolean> {

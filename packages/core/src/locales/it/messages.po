@@ -1337,6 +1337,19 @@ msgstr "I codici sono volutamente a breve durata. Ne generi uno nuovo quando l'a
 msgid "Combine into one"
 msgstr "Combina in uno"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Comfortable"
+msgstr "Comodo"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid ""
+"Comfortable gives each saved login the full row for its title, so a long name "
+"stays readable, with the username on the next line. Compact fits more rows."
+msgstr ""
+"Comodo dà a ogni accesso salvato l'intera riga per il titolo, così un nome "
+"lungo resta leggibile, con il nome utente sulla riga successiva. Compat "
+"contiene più righe."
+
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Coming soon"
 msgstr "Prossimamente"
@@ -1344,6 +1357,10 @@ msgstr "Prossimamente"
 #: packages/core/src/app/components/PasswordGenerator.tsx
 msgid "Comma (,)"
 msgstr "Virgola (,)"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Compact"
+msgstr "Compatto"
 
 #: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
 msgid "Compare versions"
@@ -1943,6 +1960,10 @@ msgstr "Scaricamento in corso…"
 #: packages/core/src/app/screens/Settings/components/UpdatesSection.tsx
 msgid "Downloads and restarts Bramble. Your vault is untouched."
 msgstr "Scarica e riavvia Bramble. Il Suo archivio non viene toccato."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Dropdown rows"
+msgstr "Righe del menu"
 
 #: packages/core/src/app/screens/Settings/components/SshAgentSection.tsx
 msgid "DSA keys aren't supported"
@@ -3928,6 +3949,10 @@ msgstr "La rotazione non è riuscita, nessuna modifica è stata apportata. Sbloc
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 #~ msgid "Runs on schedule even while Bramble is locked"
 #~ msgstr "Viene eseguito come pianificato anche quando Bramble è bloccato"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Rows"
+msgstr "Righe"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Runs quietly in the menu bar so scheduled backups happen without you opening the app."

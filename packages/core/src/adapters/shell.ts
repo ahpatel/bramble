@@ -1,6 +1,8 @@
 import type { PasskeyCredential } from "../hooks/useVault";
 import type { EntriesPayload, RosterEntry, RosterPayload, WireRecoverySlot } from "../sync";
 import type { MailboxStatusRecord, MembersResponse } from "../sync/mailbox";
+import type { AutofillDensity } from "../util/autofill-density";
+import type { AutofillTrigger } from "../util/autofill-trigger";
 import type { SubdomainMatchMode } from "./autofill";
 import type { HttpBodySource } from "./http";
 
@@ -197,6 +199,12 @@ export interface ShellAdapter {
 	 * capability). Persisting the pref is the caller's job; the background reads it per query anyway,
 	 * so this only exists to drop a dropdown that is already on screen. */
 	setAutofillEnabled?(enabled: boolean): Promise<void>;
+	/** Apply a new autofill trigger to open tabs now (extension only). Persisting the pref is the
+	 * caller's job; this settles what a page that is already focused should show. */
+	setAutofillTrigger?(trigger: AutofillTrigger): Promise<void>;
+	/** Apply a new row density to open tabs now (extension only). Persisting the pref is the
+	 * caller's job. */
+	setAutofillDensity?(density: AutofillDensity): Promise<void>;
 	/** Open a login's website in a new tab and fill it there once (extension only). See
 	 * docs/launch-and-fill.md. */
 	launchLogin?(entryId: string, url: string): Promise<void>;

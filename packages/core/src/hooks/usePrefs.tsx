@@ -28,6 +28,16 @@ import {
 import { parseAccountNumber } from "../sync/mailbox/protocol";
 import { syncKeyFor } from "../sync/sync-keys";
 import {
+	type AutofillDensity,
+	DEFAULT_AUTOFILL_DENSITY,
+	normalizeAutofillDensity,
+} from "../util/autofill-density";
+import {
+	type AutofillTrigger,
+	DEFAULT_AUTOFILL_TRIGGER,
+	normalizeAutofillTrigger,
+} from "../util/autofill-trigger";
+import {
 	DEFAULT_GENERATOR_SETTINGS,
 	type GeneratorSettings,
 	normalizeGeneratorSettings,
@@ -44,6 +54,31 @@ export const PREF_OFFER_TO_SAVE = "pref.offerToSave";
 // Extension only: the master switch for page autofill. Off hides the in-page dropdown entirely
 // (matches, the "Vault locked" row, and the generated-password suggestion) and refuses fills.
 export const PREF_AUTOFILL_ENABLED = "pref.autofillEnabled";
+// Extension only: what clicking into a login field does. "icon" (the default) shows a small
+// Bramble mark inside the field and leaves the list closed until it is clicked; "focus" opens the
+// list on focus as older builds did; "shortcut" draws nothing and leaves filling to the browser
+// command. Device-scoped: the background reads it while the vault is locked.
+export const PREF_AUTOFILL_TRIGGER = "pref.autofillTrigger";
+// Extension only: one-line rows or a two-row comfortable layout. Device-scoped, like the trigger:
+// the background reads it while the vault is locked, and it describes this install's screen.
+export const PREF_AUTOFILL_DENSITY = "pref.autofillDensity";
+// Extension only: the one-time "what is this mark?" hint has been shown. Device-scoped: one
+// install, not one vault.
+export const PREF_AUTOFILL_ICON_HINT = "pref.autofillIconHintSeen";
+// The mode type, its default and its validator live in one shared module so the background and
+// the content script read the same definition rather than declaring their own copies.
+export {
+	type AutofillDensity,
+	DEFAULT_AUTOFILL_DENSITY,
+	isAutofillDensity,
+	normalizeAutofillDensity,
+} from "../util/autofill-density";
+export {
+	type AutofillTrigger,
+	DEFAULT_AUTOFILL_TRIGGER,
+	isAutofillTrigger,
+	normalizeAutofillTrigger,
+} from "../util/autofill-trigger";
 export const PREF_NEVER_SAVE_SITES = "pref.neverSaveSites";
 // Mobile only: present the biometric gate as soon as the unlock screen is up, rather than
 // waiting for a tap. Off by default; see docs/auth-and-unlock.md (issue #43).
@@ -141,6 +176,12 @@ export interface Prefs {
 	offerToSave: boolean;
 	// Extension: show the in-page autofill dropdown at all.
 	autofillEnabled: boolean;
+	// Extension: what opens the in-page list (focus, inline icon, or the keyboard shortcut).
+	autofillTrigger: AutofillTrigger;
+	// Extension: the in-page list's row layout (one line, or the comfortable two-row rows).
+	autofillDensity: AutofillDensity;
+	// Extension: the one-time "what is this mark?" hint has been shown.
+	autofillIconHintSeen: boolean;
 	// eTLD+1 hostnames muted via "Never for this site".
 	neverSaveSites: string[];
 	// Mobile: fire the biometric prompt when the unlock screen appears, with no tap.
@@ -197,6 +238,9 @@ const META_KEYS: Record<keyof Prefs, string> = {
 	clipboardClearSeconds: PREF_CLIPBOARD_SECONDS,
 	offerToSave: PREF_OFFER_TO_SAVE,
 	autofillEnabled: PREF_AUTOFILL_ENABLED,
+	autofillTrigger: PREF_AUTOFILL_TRIGGER,
+	autofillDensity: PREF_AUTOFILL_DENSITY,
+	autofillIconHintSeen: PREF_AUTOFILL_ICON_HINT,
 	neverSaveSites: PREF_NEVER_SAVE_SITES,
 	biometricAutoPrompt: PREF_BIOMETRIC_AUTO_PROMPT,
 	biometricPasscodeFallback: PREF_BIOMETRIC_PASSCODE_FALLBACK,
@@ -252,6 +296,9 @@ const PREF_SCOPE: Record<keyof Prefs, PrefScope> = {
 	clipboardClearSeconds: "device",
 	offerToSave: "device",
 	autofillEnabled: "device",
+	autofillTrigger: "device",
+	autofillDensity: "device",
+	autofillIconHintSeen: "device",
 	neverSaveSites: "device",
 	biometricAutoPrompt: "vault",
 	autofillQuickType: "device",
@@ -337,6 +384,9 @@ const DEFAULT_PREFS: Prefs = {
 	clipboardClearSeconds: DEFAULT_CLIPBOARD_SECONDS,
 	offerToSave: DEFAULT_OFFER_TO_SAVE,
 	autofillEnabled: DEFAULT_AUTOFILL_ENABLED,
+	autofillTrigger: DEFAULT_AUTOFILL_TRIGGER,
+	autofillDensity: DEFAULT_AUTOFILL_DENSITY,
+	autofillIconHintSeen: false,
 	neverSaveSites: DEFAULT_NEVER_SAVE_SITES,
 	biometricAutoPrompt: DEFAULT_BIOMETRIC_AUTO_PROMPT,
 	biometricPasscodeFallback: DEFAULT_BIOMETRIC_PASSCODE_FALLBACK,
@@ -462,46 +512,76 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
 		}));
 		void (async () => {
 			if (retireLegacy) await retireLegacyFlatPrefs(storage);
-			const [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, u, v, w, x, y, z, sc] =
-				await Promise.all([
-					storage.getMeta<number>(PREF_AUTOLOCK_MINUTES),
-					storage.getMeta<boolean>(PREF_BREACH_CHECK),
-					storage.getMeta<number>(PREF_CLIPBOARD_SECONDS),
-					storage.getMeta<boolean>(PREF_OFFER_TO_SAVE),
-					storage.getMeta<boolean>(PREF_AUTOFILL_ENABLED),
-					storage.getMeta<string[]>(PREF_NEVER_SAVE_SITES),
-					readVaultPref<boolean>(
-						storage,
-						PREF_BIOMETRIC_AUTO_PROMPT,
-						keyFor("biometricAutoPrompt"),
-						adoptLegacy,
-					),
-					storage.getMeta<boolean>(PREF_AUTOFILL_QUICKTYPE),
-					storage.getMeta<boolean>(PREF_PASSKEY_PROVIDER),
-					storage.getMeta<boolean>(PREF_LOCK_ON_SCREEN_LOCK),
-					storage.getMeta<boolean>(PREF_STATS_COLLAPSED),
-					storage.getMeta<boolean>(PREF_AUTOSTART_PROMPT_DISMISSED),
-					readVaultPref<boolean>(
-						storage,
-						PREF_BIOMETRIC_PASSCODE_FALLBACK,
-						keyFor("biometricPasscodeFallback"),
-						adoptLegacy,
-					),
-					storage.getMeta<unknown>(PREF_GENERATOR),
-					storage.getMeta<unknown>(PREF_REVIEW_NUDGE),
-					// New with the mailbox, so there is no flat legacy key to adopt.
-					readVaultPref<boolean>(storage, MAILBOX_OFF_PREF_KEY, keyFor("mailboxOff"), false),
-					storage.getMeta<boolean>(PREF_DEFAULT_MANAGER_PROMPT_DISMISSED),
-					storage.getMeta<boolean>(PREF_PASSKEY_CONFIRM_ONCE),
-					storage.getMeta<boolean>(PREF_UPDATE_CHECK),
-					storage.getMeta<unknown>(PREF_APP_UPDATE),
-					storage.getMeta<unknown>(PREF_VAULT_SORT),
-					storage.getMeta<boolean>(PREF_COPY_TOTP_ON_FILL),
-					storage.getMeta<unknown>(PREF_WHATS_NEW),
-					storage.getMeta<unknown>(PREF_SUPPORT_ASK),
-					storage.getMeta<boolean>(PREF_SUPPORT_ASK_ENABLED),
-					storage.getMeta<boolean>(PREF_SCREEN_CAPTURE_BLOCKED),
-				]);
+			const [
+				a,
+				b,
+				c,
+				d,
+				e,
+				f,
+				g,
+				h,
+				i,
+				j,
+				k,
+				l,
+				m,
+				n,
+				o,
+				p,
+				q,
+				r,
+				s,
+				u,
+				v,
+				w,
+				x,
+				y,
+				z,
+				sc,
+				aa,
+				ab,
+			] = await Promise.all([
+				storage.getMeta<number>(PREF_AUTOLOCK_MINUTES),
+				storage.getMeta<boolean>(PREF_BREACH_CHECK),
+				storage.getMeta<number>(PREF_CLIPBOARD_SECONDS),
+				storage.getMeta<boolean>(PREF_OFFER_TO_SAVE),
+				storage.getMeta<boolean>(PREF_AUTOFILL_ENABLED),
+				storage.getMeta<string[]>(PREF_NEVER_SAVE_SITES),
+				readVaultPref<boolean>(
+					storage,
+					PREF_BIOMETRIC_AUTO_PROMPT,
+					keyFor("biometricAutoPrompt"),
+					adoptLegacy,
+				),
+				storage.getMeta<boolean>(PREF_AUTOFILL_QUICKTYPE),
+				storage.getMeta<boolean>(PREF_PASSKEY_PROVIDER),
+				storage.getMeta<boolean>(PREF_LOCK_ON_SCREEN_LOCK),
+				storage.getMeta<boolean>(PREF_STATS_COLLAPSED),
+				storage.getMeta<boolean>(PREF_AUTOSTART_PROMPT_DISMISSED),
+				readVaultPref<boolean>(
+					storage,
+					PREF_BIOMETRIC_PASSCODE_FALLBACK,
+					keyFor("biometricPasscodeFallback"),
+					adoptLegacy,
+				),
+				storage.getMeta<unknown>(PREF_GENERATOR),
+				storage.getMeta<unknown>(PREF_REVIEW_NUDGE),
+				// New with the mailbox, so there is no flat legacy key to adopt.
+				readVaultPref<boolean>(storage, MAILBOX_OFF_PREF_KEY, keyFor("mailboxOff"), false),
+				storage.getMeta<boolean>(PREF_DEFAULT_MANAGER_PROMPT_DISMISSED),
+				storage.getMeta<boolean>(PREF_PASSKEY_CONFIRM_ONCE),
+				storage.getMeta<boolean>(PREF_UPDATE_CHECK),
+				storage.getMeta<unknown>(PREF_APP_UPDATE),
+				storage.getMeta<unknown>(PREF_VAULT_SORT),
+				storage.getMeta<boolean>(PREF_COPY_TOTP_ON_FILL),
+				storage.getMeta<unknown>(PREF_WHATS_NEW),
+				storage.getMeta<unknown>(PREF_SUPPORT_ASK),
+				storage.getMeta<boolean>(PREF_SUPPORT_ASK_ENABLED),
+				storage.getMeta<boolean>(PREF_SCREEN_CAPTURE_BLOCKED),
+				storage.getMeta<unknown>(PREF_AUTOFILL_TRIGGER),
+				storage.getMeta<unknown>(PREF_AUTOFILL_DENSITY),
+			]);
 			if (cancelled) return;
 			// One `now` for the read: a fresh install's clock starts here rather than at whichever
 			// millisecond each consumer happens to ask.
@@ -516,6 +596,8 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
 				clipboardClearSeconds: typeof c === "number" ? c : DEFAULT_CLIPBOARD_SECONDS,
 				offerToSave: typeof d === "boolean" ? d : DEFAULT_OFFER_TO_SAVE,
 				autofillEnabled: typeof e === "boolean" ? e : DEFAULT_AUTOFILL_ENABLED,
+				autofillTrigger: normalizeAutofillTrigger(aa),
+				autofillDensity: normalizeAutofillDensity(ab),
 				neverSaveSites: Array.isArray(f) ? f : DEFAULT_NEVER_SAVE_SITES,
 				biometricAutoPrompt: typeof g === "boolean" ? g : DEFAULT_BIOMETRIC_AUTO_PROMPT,
 				autofillQuickType: typeof h === "boolean" ? h : DEFAULT_AUTOFILL_QUICKTYPE,

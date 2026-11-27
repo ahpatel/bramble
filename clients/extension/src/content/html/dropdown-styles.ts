@@ -120,6 +120,14 @@ export const dropdownStyles = html`
 				line-height: 1.3;
 				unicode-bidi: plaintext;
 			}
+			/* Comfortable rows give the title the full row and let it take a second line when it
+			   needs one, so a distinguishing suffix is not the part that gets clipped. */
+			.tp-item:not(.tp-item-compact) .tp-name {
+				white-space: normal;
+				display: -webkit-box;
+				-webkit-line-clamp: 2;
+				-webkit-box-orient: vertical;
+				overflow-wrap: anywhere;
 			}
 			.tp-user {
 				color: var(--tp-muted);
@@ -139,6 +147,18 @@ export const dropdownStyles = html`
 				border-radius: 999px;
 			}
 				flex-shrink: 0;
+			/* Compact rows are one line: a text badge ("Hier verwendet", 102px) leaves the name
+			   almost nothing at 320px. A dot keeps the meaning (and the title/accessible text)
+			   without stealing the width; normal rows keep the words. */
+			.tp-item-compact .tp-badge {
+				width: 8px;
+				height: 8px;
+				padding: 0;
+				border-radius: 999px;
+				font-size: 0;
+				color: transparent;
+				background: var(--tp-muted);
+			}
 				display: flex;
 				align-items: center;
 				color: var(--tp-muted);
@@ -171,6 +191,14 @@ export const dropdownStyles = html`
 				font-size: 14px;
 				letter-spacing: 0.5px;
 			}
+			/* The note under a capped list. Not a row: no hover, no key target. */
+			.tp-more {
+				padding: 6px 10px 4px;
+				text-align: center;
+				font-size: 11px;
+				line-height: 1.3;
+				color: var(--tp-muted);
+			}
 			.tp-regenerate {
 				margin-left: auto;
 				flex-shrink: 0;
@@ -192,6 +220,43 @@ export const dropdownStyles = html`
 					background: color-mix(in oklab, var(--tp-foreground) 12%, transparent);
 					color: var(--tp-foreground);
 				}
+			}
+			/* Compact: one line per entry, with a small monogram so the row still reads as Bramble.
+			   The old avatar-less version was faster to scan but felt like a debug list. */
+			.tp-item-compact {
+				padding: 8px 10px;
+				gap: 8px;
+				min-height: 54px;
+			}
+			.tp-avatar-compact {
+				width: 30px;
+				height: 30px;
+				font-size: 11px;
+				border-radius: clamp(6px, calc(var(--tp-radius) - 2px), 10px);
+			}
+			.tp-text-compact {
+				flex-direction: row;
+				align-items: baseline;
+				gap: 0;
+			}
+			.tp-text-compact .tp-name {
+				font-size: 13.5px;
+			}
+			.tp-text-compact .tp-user {
+				font-size: 12px;
+				margin: 0;
+				min-width: 0;
+			}
+			.tp-text-compact .tp-user::before {
+				content: "·";
+				margin: 0 6px;
+				opacity: 0.55;
+			}
+			.tp-text-compact .tp-user:empty::before {
+				content: none;
+			}
+			.tp-compact .tp-item-compact + .tp-item-compact {
+				margin-top: 2px;
 			}
 			@keyframes tp-unfold {
 				from {

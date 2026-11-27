@@ -253,6 +253,9 @@ export const extensionShell: ShellAdapter = {
 		if (!this.isDetached()) window.close();
 		return true;
 	},
+	async setAutofillDensity(density) {
+		await api.runtime.sendMessage({ type: "AUTOFILL_SET_DENSITY", payload: { density } });
+	},
 	// Reports failure, unlike setAutofillEnabled above: turning this on can genuinely fail
 	// (another extension holds the WebAuthn proxy), and a switch that says "on" while nothing is
 	// attached is worse than an error.

@@ -190,5 +190,9 @@
 		"message": "Accesso salvato",
 		"description": "Primary label for an entry with no name and no username, e.g. from an import."
 	},
+	"menuMore": {
+		"message": "Continua a digitare per restringere l'elenco",
+		"description": "Note at the end of the picker when only the first 50 matches are rendered."
+	},
 	}
 }

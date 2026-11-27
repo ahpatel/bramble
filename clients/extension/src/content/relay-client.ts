@@ -43,6 +43,8 @@ export type RelayRender =
 			alias?: AliasRowState;
 			carriedId?: string;
 			skin?: DropdownSkin;
+			// The match list was capped; draw the "keep typing" note after the rows.
+			more?: boolean;
 			newLogin?: boolean;
 	  }
 	| { kind: "locked"; skin?: DropdownSkin };
@@ -111,6 +113,7 @@ function flush(): void {
 		alias: render.alias,
 		carriedId: render.carriedId,
 		skin: render.skin,
+		more: render.more === true,
 	});
 }
 

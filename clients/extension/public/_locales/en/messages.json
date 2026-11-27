@@ -190,5 +190,9 @@
 		"message": "Saved login",
 		"description": "Primary label for an entry with no name and no username, e.g. from an import."
 	},
+	"menuMore": {
+		"message": "Keep typing to narrow the list",
+		"description": "Note at the end of the picker when only the first 50 matches are rendered."
+	},
 	}
 }

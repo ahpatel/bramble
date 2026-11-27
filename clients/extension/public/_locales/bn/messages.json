@@ -190,5 +190,9 @@
 		"message": "সেভ করা লগইন",
 		"description": "Primary label for an entry with no name and no username, e.g. from an import."
 	},
+	"menuMore": {
+		"message": "তালিকা ছোট করতে টাইপ চালিয়ে যান",
+		"description": "Note at the end of the picker when only the first 50 matches are rendered."
+	},
 	}
 }

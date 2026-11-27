@@ -248,6 +248,56 @@ test("the compact menu follows a rounded field", async ({ context, extensionId }
 	expect(skin.surface).toBe("rgb(252, 251, 253)");
 });
 
+test("the dropdown rows setting switches the menu between comfortable and compact", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedLogin(popup, "Bank of America - Dad", "dad@example.com", "s3cr3t-pw-01");
+	await seedLogin(popup, "Bank of America - Mom", "mom@example.com", "s3cr3t-pw-02");
+	await popup.getByRole("button", { name: "Settings" }).click();
+	await popup.getByRole("button", { name: "General", exact: true }).click();
+	// The fixture starts in focus mode with comfortable rows; this spec drives both controls.
+	await popup.getByRole("combobox", { name: "Show" }).selectOption("icon");
+	const rows = popup.getByRole("combobox", { name: "Rows" });
+	await expect(rows).toHaveValue("comfortable");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await clickMark(page);
+	await expect.poll(() => pickerFrame(page), { timeout: 10_000 }).toBeDefined();
+	const frame = pickerFrame(page)!;
+	// Comfortable gives each title its own row, so the two accounts are distinguishable.
+	await expect(frame.locator(".tp-item")).toHaveCount(2, { timeout: 10_000 });
+	await expect(frame.locator(".tp-item-compact")).toHaveCount(0);
+	await expect(frame.locator(".tp-name", { hasText: "Bank of America - Dad" })).toBeVisible();
+	await expect(frame.locator(".tp-name", { hasText: "Bank of America - Mom" })).toBeVisible();
+
+	// The open menu follows the setting without a reopen.
+	await rows.selectOption("compact");
+	await expect.poll(() => frame.locator(".tp-item-compact").count(), { timeout: 10_000 }).toBe(2);
+	await expect(
+		frame.locator(".tp-item-compact .tp-name", { hasText: "Bank of America - Dad" }),
+	).toHaveAttribute("title", "Bank of America - Dad");
+
+	// A page that loads with compact already saved must still open on the mark's first click.
+	// The density sync must not open a menu for a merely focused field: the mark would read that
+	// click as "close" and the page would look like the picker never opened.
+	const fresh = await context.newPage();
+	await serve(fresh, SQUARE_LOGIN);
+	await fresh.goto("https://example.com/");
+	await fresh.locator("#user").click();
+	await clickMark(fresh);
+	await expect.poll(() => pickerFrame(fresh), { timeout: 10_000 }).toBeDefined();
+	await expect(pickerFrame(fresh)!.locator(".tp-item-compact")).toHaveCount(2, {
+		timeout: 10_000,
+	});
+});
+
 test("a field near the bottom opens the menu above it, fully inside the viewport", async ({
 	context,
 	extensionId,

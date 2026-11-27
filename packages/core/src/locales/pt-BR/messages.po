@@ -1337,6 +1337,19 @@ msgstr "Os códigos têm vida curta intencionalmente. Gere um novo quando o outr
 msgid "Combine into one"
 msgstr "Combinar em um"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Comfortable"
+msgstr "Confortável"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid ""
+"Comfortable gives each saved login the full row for its title, so a long name "
+"stays readable, with the username on the next line. Compact fits more rows."
+msgstr ""
+"Confortável dá a cada login salvo a linha inteira para o título, para que um "
+"nome longo continue legível, com o nome de usuário na linha seguinte. "
+"Compacto cabe mais linhas."
+
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Coming soon"
 msgstr "Em breve"
@@ -1344,6 +1357,10 @@ msgstr "Em breve"
 #: packages/core/src/app/components/PasswordGenerator.tsx
 msgid "Comma (,)"
 msgstr "Vírgula (,)"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Compact"
+msgstr "Compacto"
 
 #: packages/core/src/app/screens/EntryDetail/ConflictBanner.tsx
 msgid "Compare versions"
@@ -1943,6 +1960,10 @@ msgstr "Baixando…"
 #: packages/core/src/app/screens/Settings/components/UpdatesSection.tsx
 msgid "Downloads and restarts Bramble. Your vault is untouched."
 msgstr "Baixa e reinicia o Bramble. Seu cofre permanece intacto."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Dropdown rows"
+msgstr "Linhas do menu"
 
 #: packages/core/src/app/screens/Settings/components/SshAgentSection.tsx
 msgid "DSA keys aren't supported"
@@ -3928,6 +3949,10 @@ msgstr "A rotação falhou e nada foi alterado. Desbloqueie e tente novamente."
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 #~ msgid "Runs on schedule even while Bramble is locked"
 #~ msgstr "Executa conforme programado mesmo com o Bramble bloqueado"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Rows"
+msgstr "Linhas"
 
 #: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
 msgid "Runs quietly in the menu bar so scheduled backups happen without you opening the app."

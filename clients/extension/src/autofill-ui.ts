@@ -40,6 +40,8 @@ type Inbound =
 			// The tallest the list may draw in the current viewport, so it scrolls instead of
 			// clipping against the window edge.
 			maxHeight?: number;
+			// The match list was capped; draw the "keep typing" note after the rows.
+			more?: boolean;
 	  }
 	| {
 			type: "RENDER_LOCKED";
@@ -240,6 +242,15 @@ const STYLE = `
 				line-height: 1.3;
 				unicode-bidi: plaintext;
 			}
+			/* Comfortable rows give the title the full row and let it take a second line when it
+			   needs one, so a distinguishing suffix is not the part that gets clipped. */
+			.tp-item:not(.tp-item-compact) .tp-name {
+				white-space: normal;
+				display: -webkit-box;
+				-webkit-line-clamp: 2;
+				-webkit-box-orient: vertical;
+				overflow-wrap: anywhere;
+			}
 			.tp-user {
 				color: var(--tp-muted);
 				font-size: 13px;
@@ -276,6 +287,14 @@ const STYLE = `
 				font-size: 14px;
 				letter-spacing: 0.5px;
 			}
+			/* The note under a capped list. Not a row: no hover, no key target. */
+			.tp-more {
+				padding: 6px 10px 4px;
+				text-align: center;
+				font-size: 11px;
+				line-height: 1.3;
+				color: var(--tp-muted);
+			}
 			.tp-regenerate {
 				margin-left: auto;
 				flex-shrink: 0;
@@ -297,6 +316,43 @@ const STYLE = `
 					background: color-mix(in oklab, var(--tp-foreground) 12%, transparent);
 					color: var(--tp-foreground);
 				}
+			}
+			/* Compact: one line per entry, with a small monogram so the row still reads as Bramble.
+			   The old avatar-less version was faster to scan but felt like a debug list. */
+			.tp-item-compact {
+				padding: 8px 10px;
+				gap: 8px;
+				min-height: 54px;
+			}
+			.tp-avatar-compact {
+				width: 30px;
+				height: 30px;
+				font-size: 11px;
+				border-radius: clamp(6px, calc(var(--tp-radius) - 2px), 10px);
+			}
+			.tp-text-compact {
+				flex-direction: row;
+				align-items: baseline;
+				gap: 0;
+			}
+			.tp-text-compact .tp-name {
+				font-size: 13.5px;
+			}
+			.tp-text-compact .tp-user {
+				font-size: 12px;
+				margin: 0;
+				min-width: 0;
+			}
+			.tp-text-compact .tp-user::before {
+				content: "·";
+				margin: 0 6px;
+				opacity: 0.55;
+			}
+			.tp-text-compact .tp-user:empty::before {
+				content: none;
+			}
+			.tp-compact .tp-item-compact + .tp-item-compact {
+				margin-top: 2px;
 			}
 			@keyframes tp-unfold {
 				from {
@@ -328,6 +384,28 @@ const STYLE = `
 					border: 1px solid CanvasText;
 				}
 			}
+			/* The menu can be as narrow as 152px at 200% zoom on a 320px screen. The avatar and
+			   the text badge are the first things to go: the entry name is the identifier. */
+			@container (max-width: 320px) {
+				.tp-badge {
+					width: 8px;
+					height: 8px;
+					padding: 0;
+					border-radius: 999px;
+					font-size: 0;
+					color: transparent;
+					background: var(--tp-badge-dot-bg, var(--tp-muted));
+				}
+			}
+			@container (max-width: 260px) {
+				.tp-text-compact { flex-direction: column; align-items: stretch; }
+				.tp-text-compact .tp-user { margin-top: 2px; }
+				.tp-text-compact .tp-user::before { content: none; }
+			}
+			@container (max-width: 220px) {
+				.tp-item { padding: 8px; gap: 8px; }
+				.tp-avatar { display: none; }
+			}
 		`;
 
 function matchRow(m: MatchSummary, carried: boolean, compact: boolean): string {
@@ -335,6 +413,17 @@ function matchRow(m: MatchSummary, carried: boolean, compact: boolean): string {
 	// label covers the rare row with neither. Twin of content/html/dropdown-item.ts.
 	const primary = m.name || m.secondary || t("savedLogin");
 	const detail = m.name ? m.secondary : "";
+	if (compact) {
+		return html`
+		<div class="tp-item tp-item-compact" data-entry-id="${m.id}" role="option" aria-selected="false">
+			<div class="tp-avatar tp-avatar-compact" aria-hidden="true">${initials(primary)}</div>
+			<div class="tp-text tp-text-compact">
+				<span class="tp-name" title="${primary}">${primary}</span>
+				<span class="tp-user" title="${detail}">${detail}</span>
+			</div>
+		</div>
+	`;
+	}
 	return html`
 		<div class="tp-item" data-entry-id="${m.id}" role="option" aria-selected="false">
 			<div class="tp-avatar" aria-hidden="true">${initials(primary)}</div>
@@ -443,6 +532,11 @@ function suggestRow(password: string): string {
 			</button>
 		</div>
 	`;
+}
+
+/** The note after a capped match list. Not a row: it takes no keys and no clicks. */
+function moreRow(): string {
+	return html`<div class="tp-more" id="tp-more-note" role="note">${t("menuMore")}</div>`;
 }
 
 /** Twin of content/html/dropdown-new-login.ts. Both must change together; see template-parity.
@@ -684,7 +778,9 @@ function handleInbound(msg: Inbound | undefined): void {
 			}
 			for (const m of msg.matches) {
 				rows.push({ kind: "match", id: m.id });
+				body.push(matchRow(m, m.id === msg.carriedId, msg.skin?.compact === true));
 			}
+			if (msg.more) body.push(moreRow());
 			if (msg.newLogin) body.push(newLoginRow());
 			render(body.join(""), msg.skin, msg.animate === true, msg.above === true, msg.maxHeight);
 			settledAt = performance.now();

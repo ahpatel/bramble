@@ -1,4 +1,6 @@
 import type { PasskeyCredential } from "../hooks/useVault";
+import type { AutofillDensity } from "../util/autofill-density";
+import type { AutofillTrigger } from "../util/autofill-trigger";
 import type { SshKeyForAgent } from "../vault/ssh-keys";
 
 export type SubdomainMatchMode = "etld1" | "exact" | "subdomain";
@@ -103,6 +105,13 @@ export interface QueryResult {
 	/** The user switched page autofill off: show nothing at all, not even the locked hint or a
 	 * generated-password suggestion, and stop querying until told otherwise. Extension only. */
 	disabled?: boolean;
+	/** How the in-page list is opened on this install (Settings -> General). Extension only. */
+	trigger?: AutofillTrigger;
+	/** The in-page list's row layout (Settings -> General). Extension only. */
+	density?: AutofillDensity;
+	/** Show the one-time "what is this mark?" hint. Sent until the page reports it was shown,
+	 * then never again. Extension only. */
+	hint?: boolean;
 	/** A password shaped by the user's generator settings, for a signup form's suggestion. Sent
 	 * with the query itself so the suggestion has one to draw the moment it paints. Extension
 	 * only; absent when the page has no login field. */

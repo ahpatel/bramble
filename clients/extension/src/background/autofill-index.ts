@@ -13,6 +13,8 @@ type BrowserIndexEntry = Exclude<IndexEntry, { type: "unlock-key" }>;
 
 import { AliasError } from "@core/aliases";
 import { decodeEntriesPayload } from "@core/sync";
+import { type AutofillDensity, isAutofillDensity } from "@core/util/autofill-density";
+import { type AutofillTrigger, isAutofillTrigger } from "@core/util/autofill-trigger";
 import { parseTotp, totpAt } from "@core/util/totp";
 import { loginHosts } from "@core/vault/autofill-index";
 import { normalizeEntryData } from "@core/vault/entry-normalize";
@@ -45,7 +47,11 @@ import {
 } from "./launch-fill";
 import { sendToOffscreen } from "./offscreen-client";
 import { generateSuggestion } from "./password-gen";
-import { getAutofillEnabled } from "./prefs";
+import {
+	getAutofillDensity,
+	getAutofillEnabled,
+	getAutofillTrigger,
+} from "./prefs";
 import { extensionOnly, type MessageEnvelope, on } from "./router";
 import {
 	type AutofillSessionCapability,
@@ -264,7 +270,7 @@ function cardSecondary(entry: Extract<BrowserIndexEntry, { type: "card" }>): str
 
 /** What a page is told while the autofill switch is off: nothing to show, and don't ask again.
  * Deliberately not `locked`, which would put the "unlock to autofill" row back on screen. */
-function disabledResult(): QueryResult {
+function disabledResult(trigger: AutofillTrigger, density: AutofillDensity): QueryResult {
 	return {
 		logins: [],
 		cards: [],
@@ -272,6 +278,8 @@ function disabledResult(): QueryResult {
 		locked: false,
 		hasPotentialMatch: false,
 		disabled: true,
+		trigger,
+		density,
 	};
 }
 
@@ -727,8 +735,13 @@ async function autofillQuery(
 		// Master switch (Settings -> General). Enforced here rather than only in the page: a content
 		// script is not a trusted context, so the answer a page gets must not depend on it asking.
 		// Or the fill shortcut, pressed in this tab: the browser alone delivers it (fill-shortcut.ts).
-		if (!(await getAutofillEnabled()) && !shortcutGrantLive(sender.tab?.id)) {
-			return { ok: true, data: disabledResult() };
+		const [enabled, trigger, density] = await Promise.all([
+			getAutofillEnabled(),
+			getAutofillTrigger(),
+			getAutofillDensity(),
+		]);
+		if (!enabled && !shortcutGrantLive(sender.tab?.id)) {
+			return { ok: true, data: disabledResult(trigger, density) };
 		}
 		await hydrateAutofillIndexFromDisk();
 		const hasLogin = message.hasLogin !== false;
@@ -737,6 +750,7 @@ async function autofillQuery(
 		const result = queryResult(page.hostname, effectivePort(page), hasLogin, hasCard, hasOtp);
 		result.sameSiteAsTop = sameSiteAsTop(sender);
 		if (hasLogin && !result.locked && launchGrantFor(sender, page)) result.launch = true;
+		result.density = density;
 		if (hasCard && !result.locked) {
 			// Only ever an id this very response already carries, so the page learns nothing it
 			// could not read off `cards` itself.
@@ -1117,6 +1131,33 @@ async function broadcastAutofillEnabled(enabled: boolean): Promise<void> {
 	} catch {}
 }
 
+/** Push a new trigger mode to every tab, so a page focused before the setting changed swaps
+ * its affordance without a reload. Best-effort, like the switch push above. */
+async function broadcastAutofillTrigger(trigger: AutofillTrigger): Promise<void> {
+	try {
+		const tabs = await api.tabs.query({});
+		for (const tab of tabs) {
+			if (tab.id === undefined) continue;
+			void api.tabs
+				.sendMessage(tab.id, { type: "AUTOFILL_TRIGGER", payload: { trigger } })
+				.catch(() => {});
+		}
+	} catch {}
+}
+
+/** Push a new row density to every tab, so an open menu swaps its rows without a reload. */
+async function broadcastAutofillDensity(density: AutofillDensity): Promise<void> {
+	try {
+		const tabs = await api.tabs.query({});
+		for (const tab of tabs) {
+			if (tab.id === undefined) continue;
+			void api.tabs
+				.sendMessage(tab.id, { type: "AUTOFILL_DENSITY", payload: { density } })
+				.catch(() => {});
+		}
+	} catch {}
+}
+
 // Settings toggle: persisting it is usePrefs' job (and the pref is what every query reads);
 // this only applies it to tabs that are already open.
 on(
@@ -1128,6 +1169,18 @@ on(
 	}),
 );
 
+// Row density: same shape as the trigger push, applied to pages that are already open.
+on(
+	"AUTOFILL_SET_DENSITY",
+	extensionOnly(async (message) => {
+		const { density } = (message.payload ?? {}) as { density?: unknown };
+		if (!isAutofillDensity(density)) {
+			return { ok: false, error: "invalid_request" };
+		}
+		await broadcastAutofillDensity(density);
+		return { ok: true, data: null };
+	}),
+);
 /** Create one alias for the page the sender is on. The site comes from the VERIFIED sender, not
  * from the message: it reaches the provider and lands in the user's dashboard, and a page must
  * not be able to name a different one. */

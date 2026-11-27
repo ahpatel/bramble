@@ -13,6 +13,7 @@ import uiSource from "../autofill-ui.ts?raw";
 import { html as uiHtml } from "../autofill-ui-template";
 import aliasSource from "./html/dropdown-alias.ts?raw";
 import itemSource from "./html/dropdown-item.ts?raw";
+import moreSource from "./html/dropdown-more.ts?raw";
 import newLoginSource from "./html/dropdown-new-login.ts?raw";
 import stylesSource from "./html/dropdown-styles.ts?raw";
 import skinSource from "./skin.ts?raw";
@@ -142,5 +143,21 @@ describe("the corner-radius ceiling is the same in both renderers", () => {
 	it("matches content/skin.ts", () => {
 		expect(value(uiSource)).toBeDefined();
 		expect(value(uiSource)).toBe(value(skinSource));
+	});
+});
+
+// The note after a capped match list. Added to one renderer only, a user on a COEP page sees 50
+// rows with no explanation, or the other sees a note with no cap.
+describe("the capped-list note is in both renderers", () => {
+	it("is drawn by the iframe renderer", () => {
+		expect(uiSource).toContain('class="tp-more"');
+		expect(uiSource).toContain('t("menuMore")');
+		expect(uiSource).toContain(".tp-more {");
+	});
+
+	it("is drawn by the shadow renderer", () => {
+		expect(moreSource).toContain('class="tp-more"');
+		expect(moreSource).toContain('t("menuMore")');
+		expect(stylesSource).toContain(".tp-more {");
 	});
 });

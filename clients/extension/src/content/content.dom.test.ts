@@ -1004,6 +1004,50 @@ describe("content: username filter on login picker", () => {
 	});
 });
 
+describe("content: row density", () => {
+	const LOGIN = { id: "1", name: "Bank of America - Dad", secondary: "dad@example.com" };
+
+	beforeEach(() => {
+		showMatches.mockClear();
+		pickerState.host = null;
+		pickerState.anchor = null;
+		pendingQueryResponses.length = 0;
+		document.body.innerHTML = `
+			<form>
+				<input id="user" type="email" name="email" autocomplete="username" />
+				<input id="pass" type="password" name="password" autocomplete="current-password" />
+			</form>`;
+		invalidatePageFields();
+	});
+
+	const skinOf = (call: unknown[] | undefined) =>
+		(call?.[2] as { skin?: { compact?: boolean } } | undefined)?.skin;
+
+	function openWith(density: "compact" | "comfortable"): void {
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.focus();
+		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
+		send({ type: "AUTOFILL_MATCHES", payload: result({ logins: [LOGIN], density }) });
+	}
+
+	it("draws the comfortable two-row skin by default", () => {
+		openWith("comfortable");
+		expect(skinOf(showMatches.mock.calls.at(-1))?.compact).not.toBe(true);
+	});
+
+	it("draws compact rows when the query says compact", () => {
+		openWith("compact");
+		expect(skinOf(showMatches.mock.calls.at(-1))?.compact).toBe(true);
+	});
+
+	it("re-renders an open menu when the density push changes", () => {
+		openWith("comfortable");
+		showMatches.mockClear();
+		send({ type: "AUTOFILL_DENSITY", payload: { density: "compact" } });
+		expect(skinOf(showMatches.mock.calls.at(-1))?.compact).toBe(true);
+	});
+});
+
 describe("content: direct select response binding", () => {
 	beforeEach(() => {
 		fillForm.mockClear();
@@ -1841,6 +1885,40 @@ describe("content: locked vault on a signup form's email field", () => {
 	});
 });
 
+describe("content: the rendered match list is capped", () => {
+	beforeEach(() => {
+		showMatches.mockClear();
+		pendingQueryResponses.length = 0;
+		document.body.innerHTML = `
+			<form>
+				<input id="user" type="text" autocomplete="username" />
+				<input id="pass" type="password" autocomplete="current-password" />
+			</form>`;
+		invalidatePageFields();
+		// Drop the previous suite's cached result so the focus below takes a fresh query.
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: false } });
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: true } });
+	});
+
+	it("keeps the top 50 and tells the renderer there are more", () => {
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.focus();
+		pendingQueryResponses.pop()?.({
+			ok: true,
+			data: result({
+				logins: Array.from({ length: 51 }, (_, i) => ({
+					id: `login-${i}`,
+					name: `Account ${i}`,
+					secondary: `user${i}@example.com`,
+				})),
+			}),
+		});
+
+		const call = showMatches.mock.calls.at(-1);
+		expect(call?.[0]).toHaveLength(50);
+		expect(call?.[2]).toEqual(expect.objectContaining({ more: true }));
+	});
+});
 describe("content: launch and fill", () => {
 	const FILL = {
 		ok: true,

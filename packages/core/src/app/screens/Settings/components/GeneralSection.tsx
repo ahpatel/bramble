@@ -6,6 +6,7 @@ import {
 	KeyRound,
 	Lock,
 	Power,
+	Rows3,
 	ShieldCheck,
 	SlidersHorizontal,
 	TextCursorInput,
@@ -15,7 +16,10 @@ import {
 import { useEffect, useState } from "react";
 import { useCan, usePlatform } from "../../../../context/PlatformContext";
 import { useAutostart } from "../../../../hooks/useAutostart";
-import { usePrefs } from "../../../../hooks/usePrefs";
+import {
+	isAutofillDensity,
+	usePrefs,
+} from "../../../../hooks/usePrefs";
 import { useVaultActions } from "../../../../hooks/useVault";
 import { useVaultRegistry } from "../../../../hooks/useVaultRegistry";
 import { Button } from "../../../components/ui/button";
@@ -367,6 +371,30 @@ export function GeneralSection() {
 				</Row>
 			)}
 
+
+			<Row
+				icon={<Rows3 className="w-4 h-4 text-primary" />}
+				title={t`Dropdown rows`}
+				subtitle={t`Comfortable gives each saved login the full row for its title, so a long name stays readable, with the username on the next line. Compact fits more rows.`}
+			>
+				<div className="w-44">
+					<SelectField
+						label={t`Rows`}
+						value={prefs.autofillDensity}
+						onChange={(e) => {
+							const next = e.target.value;
+							if (!isAutofillDensity(next)) return;
+							void (async () => {
+								await update("autofillDensity", next);
+								await shell.setAutofillDensity?.(next);
+							})();
+						}}
+					>
+						<option value="compact">{t`Compact`}</option>
+						<option value="comfortable">{t`Comfortable`}</option>
+					</SelectField>
+				</div>
+			</Row>
 			{/* The extensions' corner card, or Android's own save prompt. */}
 			{canSaveCapture && (
 				<Row

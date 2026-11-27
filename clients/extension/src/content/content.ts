@@ -5,6 +5,7 @@
 // (the cached query result and the auto-open silence flag); the picker reports
 // user actions back through callbacks.
 
+import type { AutofillDensity } from "@core/util/autofill-density";
 import { maybeCommitCapture, onPasswordEnter } from "./capture";
 import { api } from "./content-api";
 import { handleCornerField, handleCornerPromptShow, queryCornerPrompt } from "./corner-prompt";
@@ -71,6 +72,13 @@ import type {
 	QueryResult,
 } from "./types";
 
+/** The entries a field's kind would show, before the typed-login filter and the card carry. */
+function entriesForKind(result: QueryResult, kind: ReturnType<typeof kindOf>): MatchSummary[] {
+	if (kind === "card") return result.cards;
+	if (kind === "otp") return result.otps ?? [];
+	return result.logins;
+}
+
 let mutationObserver: MutationObserver | null = null;
 
 // `null` until the first query response: distinguishes "unknown" from "queried,
@@ -82,6 +90,13 @@ let cachedResult: QueryResult | null = null;
 // querying until it's turned back on. The background refuses the same requests regardless; this
 // is what keeps a disabled page from asking, and from drawing anything the answer can't reach.
 let autofillDisabled = false;
+// The list's row layout. "comfortable" gives the title its own row and the username the next;
+// "compact" puts both on one line. Learned from every query response and pushed on change.
+let autofillDensity: AutofillDensity = "comfortable";
+
+function isAutofillDensity(value: unknown): value is AutofillDensity {
+	return value === "compact" || value === "comfortable";
+}
 // Set when the user explicitly closes the popover; suppresses redisplay from
 // re-queries until they re-engage (focus, type, or mousedown on a field).
 let silenceAutoOpen = false;
@@ -255,6 +270,9 @@ function skinFor(field: HTMLInputElement): DropdownSkin {
 	return skin;
 }
 
+/** The menu shows this many matches at most; the rest are reachable by typing. A site with 1,000
+ *  saved logins should not put 1,000 rows in the iframe for a menu that shows six. */
+const MAX_MENU_ROWS = 50;
 
 function showMatchesFor(
 	matches: MatchSummary[],
@@ -270,7 +288,24 @@ function showMatchesFor(
 	},
 ): void {
 	if (matches.length === 0 && !opts?.suggest && !opts?.alias) return;
+	const shown = matches.length > MAX_MENU_ROWS ? matches.slice(0, MAX_MENU_ROWS) : matches;
+	const more = shown.length < matches.length;
 	const base = opts?.skin ?? skinFor(field);
+	// The compact density puts the name and username on one line; comfortable gives the title its
+	// own row (and a second line when it needs one). The trigger mode only decides when the list
+	// opens, not how its rows are drawn.
+	const skin = autofillDensity === "compact" ? { ...base, compact: true } : base;
+	// A first-paint height so a low field opens above the caret rather than flashing below. The
+	// UI's real height replaces it on the resize.
+	const rowHeight = skin.compact ? 54 : 56;
+	const estimatedHeight = Math.min(
+		380,
+		shown.length * rowHeight +
+			(opts?.suggest ? 60 : 0) +
+			(opts?.alias ? 60 : 0) +
+			(more ? 24 : 0) +
+			14,
+	);
 	const where = placement(field);
 	if (where === "none") {
 		removePicker();
@@ -278,19 +313,21 @@ function showMatchesFor(
 	}
 	if (where === "local") {
 		dropRelayed();
-		picker.showMatches(matches, field, opts);
+		picker.showMatches(shown, field, { ...opts, skin, more, estimatedHeight });
 		return;
 	}
 	picker.remove();
 	relayedField = field;
 	showRelayed(rectOf(field), {
 		kind: "matches",
-		matches,
+		matches: shown,
 		otpOnly: opts?.otpOnly === true,
 		suggest: opts?.suggest,
 		alias: opts?.alias,
 		carriedId: opts?.carriedId,
-		newLogin: opts?.newLogin,
+		skin,
+		more,
+		newLogin: opts?.newLogin === true,
 	});
 	armRelayFallback(() => showMatchesFor(matches, field, opts));
 }
@@ -901,6 +938,15 @@ function focusedCandidate(): HTMLInputElement | null {
 		: null;
 }
 
+/** Apply a row density. Only an already-open menu needs to change: the mark and completion do
+ *  not depend on it, and opening one for a merely focused field would turn a settings sync into
+ *  an unasked-for menu (the mark then read the next click as "close"). */
+function applyAutofillDensity(density: AutofillDensity): void {
+	if (autofillDensity === density) return;
+	autofillDensity = density;
+	if (autofillDisabled || !pickerIsOpen()) return;
+}
+
 function isQueryResult(v: unknown): v is QueryResult {
 	return (
 		typeof v === "object" &&
@@ -929,6 +975,7 @@ function handleResult(result: QueryResult | undefined): void {
 	holdGeneratedPassword(result.generated);
 	if (result.launch) launchWatch = true;
 	if (claimLaunch()) return;
+	if (isAutofillDensity(result.density)) applyAutofillDensity(result.density);
 
 	// User dismissed/selected: don't resurrect the dropdown from a re-query until
 	// they re-engage. cachedResult is still updated so the next focus sees fresh data.
@@ -1027,7 +1074,7 @@ function showFor(field: HTMLInputElement): void {
 		return;
 	}
 	if (kind === "otp") {
-		const otps = cachedResult.otps ?? [];
+		const otps = entriesForKind(cachedResult, "otp");
 		if (otps.length === 0) {
 			queryAutofill();
 		} else if (otps.length > 1 || !field.value) {

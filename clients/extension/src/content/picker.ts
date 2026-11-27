@@ -6,6 +6,7 @@ import { hostOffset } from "./host-offset";
 import { type AliasRowState, dropdownAlias } from "./html/dropdown-alias";
 import { dropdownItem } from "./html/dropdown-item";
 import { dropdownLocked } from "./html/dropdown-locked";
+import { dropdownMore } from "./html/dropdown-more";
 import { dropdownNewLogin } from "./html/dropdown-new-login";
 import { dropdownStyles } from "./html/dropdown-styles";
 import { dropdownSuggest } from "./html/dropdown-suggest";
@@ -413,6 +414,8 @@ function mountDropdown(
 ): ShadowRoot {
 	removeDropdown();
 	setAnchorField(field);
+	pickerCompact = opts?.skin?.compact === true;
+	pickerEstimate = opts?.estimatedHeight ?? 0;
 
 	const root = document.createElement("div");
 	root.id = DROPDOWN_ID;
@@ -461,6 +464,16 @@ function buildDropdown(matches: MatchSummary[], field: HTMLInputElement, opts?: 
 	const parts: string[] = [];
 	if (opts?.alias) parts.push(dropdownAlias(opts.alias));
 	if (opts?.suggest) parts.push(dropdownSuggest(opts.suggest.password));
+	for (const m of matches) {
+		parts.push(
+			dropdownItem({
+				...m,
+				carried: m.id === opts?.carriedId,
+				compact: opts?.skin?.compact === true,
+			}),
+		);
+	}
+	if (opts?.more) parts.push(dropdownMore());
 	if (opts?.newLogin) parts.push(dropdownNewLogin());
 	// A changed list on an already-open menu (the user typing) re-mounts the host; only a fresh
 	// open gets the entrance animation, or every keystroke would replay it.
@@ -552,6 +565,8 @@ type IframeRender =
 			alias?: AliasRowState;
 			carriedId?: string;
 			skin?: DropdownSkin;
+			// The match list was capped; draw the "keep typing" note after the rows.
+			more?: boolean;
 			// A trailing "new login" row, under a login field's matches (#213).
 			newLogin?: boolean;
 			// True only for a fresh open; a filtered re-render stays still.
@@ -679,6 +694,7 @@ function flushPendingRender(): void {
 			alias: render.alias,
 			carriedId: render.carriedId,
 			skin: render.skin,
+			more: render.more === true,
 			newLogin: render.newLogin === true,
 			animate: render.animate === true,
 			above: render.above === true,
@@ -712,6 +728,7 @@ function armReadinessTimeout(): void {
 					// Carried over, or falling back to the shadow renderer silently drops whichever
 					suggest: render.suggest,
 					alias: render.alias,
+					more: render.more === true,
 					newLogin: render.newLogin === true,
 					skin: render.skin,
 				});
@@ -726,6 +743,7 @@ function iframeShow(field: HTMLInputElement, render: IframeRender): void {
 	if (!wasVisible) pickerHeight = 0;
 	if (!iframeHostEl) return;
 	setAnchorField(field);
+	pickerCompact = render.kind === "matches" && render.skin?.compact === true;
 	pickerEstimate = render.estimatedHeight ?? 0;
 	render.animate = !wasVisible;
 	positionHostElement(iframeHostEl, field);
@@ -741,6 +759,7 @@ function iframeShow(field: HTMLInputElement, render: IframeRender): void {
 					suggest: render.suggest,
 					alias: render.alias,
 					carriedId: render.carriedId,
+					more: render.more === true,
 					newLogin: render.newLogin === true,
 					skin: render.skin,
 				})
@@ -822,6 +841,7 @@ function showMatchesUi(matches: MatchSummary[], field: HTMLInputElement, opts?: 
 		alias: opts?.alias,
 		carriedId: opts?.carriedId,
 		skin: opts?.skin,
+		more: opts?.more === true,
 		newLogin: opts?.newLogin === true,
 		estimatedHeight: opts?.estimatedHeight,
 	});

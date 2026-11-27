@@ -190,5 +190,9 @@
 		"message": "Login salvo",
 		"description": "Primary label for an entry with no name and no username, e.g. from an import."
 	},
+	"menuMore": {
+		"message": "Continue digitando para refinar a lista",
+		"description": "Note at the end of the picker when only the first 50 matches are rendered."
+	},
 	}
 }
