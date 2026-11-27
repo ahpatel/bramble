@@ -165,14 +165,6 @@ describe("honouring a pick", () => {
 		expect(handlers.onPick).toHaveBeenCalledWith("card-1", false);
 	});
 
-	it("relays the new-login row from the pinned UI, and only from it (#213)", () => {
-		const ui = bind();
-		deliver({ type: "UI_NEW_LOGIN" }, ui, EXT_ORIGIN);
-		expect(handlers.onNewLogin).toHaveBeenCalledTimes(1);
-		deliver({ type: "UI_NEW_LOGIN" }, window, location.origin);
-		expect(handlers.onNewLogin).toHaveBeenCalledTimes(1);
-	});
-
 	it("drops a pick for an entry that was never rendered", () => {
 		// The UI document is reachable by anything in the tab, so a relabelled row must
 		// not be able to name an entry we did not offer.

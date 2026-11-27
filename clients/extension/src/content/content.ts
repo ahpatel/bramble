@@ -37,8 +37,8 @@ import {
 } from "./fill";
 import { installFrameRelay, type RelayRect } from "./frame-relay";
 import type { AliasRowState } from "./html/dropdown-alias";
-import { isLegible } from "./legibility";
 import { t } from "./i18n";
+import { hostIsTrustworthy } from "./legibility";
 import { onTeardown, safeRequest, safeSendMessage } from "./lifecycle";
 import {
 	holdGeneratedPassword,
@@ -536,7 +536,7 @@ function payloadMatchesTarget(
 function delayedSubmitIsEligible(
 	passwordField: HTMLInputElement,
 	generation: number,
-	pageIsLive: () => boolean,
+	pageIsLive: () => boolean = documentIsActive,
 ): boolean {
 	invalidatePageFields();
 	return (
@@ -555,7 +555,7 @@ async function continueAutoSubmit(
 	passwordField: HTMLInputElement,
 	generation: number,
 	sessionGeneration: number,
-	pageIsLive: () => boolean,
+	pageIsLive: () => boolean = documentIsActive,
 ): Promise<void> {
 	if (!delayedSubmitIsEligible(passwordField, generation, pageIsLive)) return;
 	const response = await safeRequest<AutofillSubmitRevalidationResponse>({
@@ -582,9 +582,8 @@ function applySelectResponse(
 	activeFill = null;
 	if (!response?.ok) return false;
 	const data = responsePayload(response.data);
-	if (!data || !pageIsLive() || currentTargetKind(intent.target) !== intent.targetKind) {
+	if (!data || !pageIsLive() || currentTargetKind(intent.target) !== intent.targetKind)
 		return false;
-	}
 	if (!payloadMatchesTarget(intent.targetKind, data.payload, data.otpOnly)) return false;
 
 	picker.removeDropdown();
@@ -723,11 +722,17 @@ async function regenerateInto(field: HTMLInputElement): Promise<string> {
  * value longer than what's typed so far. Entry name is not matched: the user is typing a
  * username into a username box, not addressing an entry by its label.
  */
+const lowerSecondary = new WeakMap<MatchSummary, string>();
+
 function filterLoginsByQuery(logins: MatchSummary[], query: string): MatchSummary[] {
 	const q = query.trim().toLowerCase();
 	if (!q) return logins;
 	return logins.filter((m) => {
-		const secondary = m.secondary.toLowerCase();
+		let secondary = lowerSecondary.get(m);
+		if (secondary === undefined) {
+			secondary = m.secondary.toLowerCase();
+			lowerSecondary.set(m, secondary);
+		}
 		return secondary.startsWith(q) || q.startsWith(secondary);
 	});
 }
@@ -1088,7 +1093,7 @@ function launchTopCheck(size: { frameWidth: number; frameHeight: number }): {
 			(frame) =>
 				Math.abs(frame.clientWidth - size.frameWidth) <= 2 &&
 				Math.abs(frame.clientHeight - size.frameHeight) <= 2 &&
-				isLegible(frame),
+				hostIsTrustworthy(frame),
 		),
 	};
 }
@@ -1501,8 +1506,8 @@ function isQueryResult(v: unknown): v is QueryResult {
 
 /**
  * Caches the query result and surfaces the picker if a candidate field is focused.
- * SECURITY: never fills without an explicit user gesture; secrets are fetched only on
- * AUTOFILL_SELECT, or AUTOFILL_LAUNCH_CLAIM after the user chose "Open website" for this login.
+ * SECURITY: never fills without an explicit user gesture; secrets are fetched only
+ * on AUTOFILL_SELECT, so a password is never injected into the DOM on load.
  */
 function handleResult(result: QueryResult | undefined): void {
 	// Background forwards `undefined` when offscreen erred; keep the last good
@@ -1515,6 +1520,8 @@ function handleResult(result: QueryResult | undefined): void {
 	cachedResult = result;
 	if (result.launch) launchWatch = true;
 	if (claimLaunch()) return;
+	// Rides on the query so the suggestion below has a settings-shaped password to draw at once.
+	holdGeneratedPassword(result.generated);
 	autofillHintDue = result.hint === true && !autofillHintShown;
 	if (isAutofillTrigger(result.trigger)) applyAutofillTrigger(result.trigger);
 	if (isAutofillDensity(result.density)) applyAutofillDensity(result.density);
@@ -2013,120 +2020,198 @@ document.addEventListener(
 		// Drive the open iframe dropdown with the keyboard first.
 		if (picker.handleKey(e)) return;
 		if (handleRelayedKey(e)) return;
+		// WAI-ARIA combobox convention: Alt+ArrowDown opens the list from the field without moving
+		// the caret. Once it is open, the picker's own arrows/Enter/Escape take over above. This is
+		// the keyboard path into the menu in icon mode, where the mark is pointer-only.
+		if (e.altKey && e.key === "ArrowDown" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+			const target = focusedCandidate();
+			if (target) {
+				e.preventDefault();
+				openMenuFor(target);
+				return;
+			}
+		}
+		// A typed username in the anchored field makes Enter take the top filtered login and fill
+		// both fields. The picker's own highlighted-row path above wins when the user has arrowed;
+		// an empty field keeps Enter as submit. Tab is untouched: it keeps its native focus move.
+		const plainKey = !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+		if (plainKey && e.key === "Enter" && pickTopForTypedQuery()) {
+			e.preventDefault();
+			return;
+		}
+		// With the menu closed, Enter takes the visible inline completion. This is the quiet mode's
+		// keyboard path: type part of a username, the ghost shows the rest, Enter fills the login.
+		// A pre-filled field still submits, because the completion is gated on real typing.
+		if (plainKey && e.key === "Enter" && acceptInlineSuggestion()) {
+			e.preventDefault();
+			return;
+		}
+		// A fully typed username has no ghost to accept, but it is still a saved-login selection:
+		// Enter fills its password when the password field is empty, rather than submitting.
+		if (plainKey && e.key === "Enter" && acceptTypedUsername()) {
+			e.preventDefault();
+			return;
+		}
 		onPasswordEnter(e.key, composedTarget(e));
 	},
 	true,
 );
 
-api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-	if (message?.type === "CORNER_PROMPT_SHOW") {
-		handleCornerPromptShow(message.payload as CornerPromptPayload);
-		sendResponse({ ok: true });
-		return false;
-	}
-
-	if (message?.type === "CORNER_FIELD") {
-		sendResponse(handleCornerField(message.payload));
-		return false;
-	}
-
-	if (message?.type === "DESKTOP_FILL") {
-		// A credential the desktop app is filling on this browser's behalf. It does NOT go through
-		// AUTOFILL_SELECT: that reads this browser's own index, which is empty while locked, and
-		// not having to unlock twice is the entire reason the link exists. The app authorized this
-		// one — the user chose the entry there, against a page this browser reported.
-		const fill = message.payload as
-			| { username?: string; password?: string; totp?: string | null }
-			| undefined;
-		// Re-read the page rather than trusting the cached model. The model is only dropped when a
-		// mutation moves something field-shaped (issue #59), so a field that changed in a way this
-		// frame never observed - an input whose type flipped to password, say - would leave a fill the
-		// user explicitly asked for in the desktop app answering "no field to fill". This runs once,
-		// on a deliberate action, where a stale answer costs more than the parse.
-		invalidatePageFields();
-		// The field the user left focused, else the page's own login field.
-		const fields = getPageFields().login;
-		const into = focusedCandidate() ?? fields.username ?? fields.password;
-		const kind = into ? currentTargetKind(into) : null;
-		if (!fill?.password || !into || !kind) {
-			sendResponse({ ok: false, error: "no field to fill" });
+try {
+	api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+		if (message?.type === "CORNER_FIELD") {
+			sendResponse(handleCornerField(message.payload));
 			return false;
 		}
-		cancelFill();
-		picker.remove();
-		dropRelayed();
-		fillForm(fill.username ?? "", fill.password, false, into);
-		if (fill.totp) fillOtp(fill.totp);
-		sendResponse({ ok: true });
-		return false;
-	}
 
-	if (message?.type === "AUTOFILL_SHORTCUT") {
-		void fillFromShortcut();
-		sendResponse({ ok: true });
-		return false;
-	}
-
-	if (message?.type === "AUTOFILL_FILL_ENTRY") {
-		const entryId = (message.payload as { entryId?: unknown } | undefined)?.entryId;
-		if (window !== window.top || typeof entryId !== "string") return false;
-		void fillChosenLogin(entryId).then((ok) => sendResponse({ ok }));
-		return true;
-	}
-
-	if (message?.type === "AUTOFILL_LAUNCH_TOP_CHECK") {
-		sendResponse(launchTopCheck(message.payload));
-		return false;
-	}
-
-	if (message?.type === "AUTOFILL_ENABLED") {
-		// The Settings toggle, applied to a page that is already open.
-		const enabled = (message.payload as { enabled?: boolean } | undefined)?.enabled !== false;
-		applyAutofillEnabled(enabled);
-		sendResponse({ ok: true });
-		return false;
-	}
-
-	if (message?.type === "VAULT_LOCK_STATE") {
-		// Either direction invalidates local response and delayed-submit work. A lock→unlock
-		// ABA cannot revive a request that began before the transition: cancellation invalidates
-		// both the pending fill identity and delayed-submit generation.
-		cancelOperations();
-		// The background pushes lock changes here since content scripts can't watch
-		// storage.session. Keep the cached flag honest and refresh whatever is open so a
-		// stale "Vault locked" row clears on unlock (and stale matches hide on lock).
-		const locked = (message.payload as { locked?: boolean } | undefined)?.locked === true;
-		if (cachedResult) cachedResult.locked = locked;
-		const focused = focusedCandidate();
-		if (locked) {
-			// Lock only matters when a picker is open: swap to the "Vault locked" row on the focused
-			// field (or keep the strong-password suggestion, which needs no vault), or hide stale
-			// matches when focus has left. A fresh lock invalidates any pending unlock.
-			if (pickerIsOpen()) {
-				if (focused) showLockedPicker(focused, cachedResult?.hasPotentialMatch ?? false);
-				else removePicker();
-			}
-			pendingUnlockField = null;
-		} else {
-			// Unlock: re-surface matches on the focused field, the open picker's anchor (toolbar/pop-out
-			// unlock leaves the locked row up but moves focus off the page — issue #20), or the field the
-			// user clicked "unlock" from (that click dismissed the picker, so there's no active host).
-			const anchor = pickerIsOpen() ? anchorField() : null;
-			const pending = pendingUnlockField?.isConnected ? pendingUnlockField : null;
-			pendingUnlockField = null;
-			const field = focused ?? anchor ?? pending;
-			removePicker();
-			if (field) {
-				reshowField = field;
-				queryAutofill();
-			}
+		if (message?.type === "CORNER_PROMPT_SHOW") {
+			handleCornerPromptShow(message.payload as CornerPromptPayload);
+			sendResponse({ ok: true });
+			return false;
 		}
-		sendResponse({ ok: true });
-		return false;
-	}
 
-	return false;
-});
+		if (message?.type === "DESKTOP_FILL") {
+			// A credential the desktop app is filling on this browser's behalf. It does NOT go through
+			// AUTOFILL_SELECT: that reads this browser's own index, which is empty while locked, and
+			// not having to unlock twice is the entire reason the link exists. The app authorized this
+			// one: the user chose the entry there, against a page this browser reported.
+			const fill = message.payload as
+				| { username?: string; password?: string; totp?: string | null }
+				| undefined;
+			// Re-read the page rather than trusting the cached model. The model is only dropped when a
+			// mutation moves something field-shaped (issue #59), so a field that changed in a way this
+			// frame never observed - an input whose type flipped to password, say - would leave a fill the
+			// user explicitly asked for in the desktop app answering "no field to fill". This runs once,
+			// on a deliberate action, where a stale answer costs more than the parse.
+			invalidatePageFields();
+			// The field the user left focused, else the page's own login field.
+			const fields = getPageFields().login;
+			const into = focusedCandidate() ?? fields.username ?? fields.password;
+			const kind = into ? currentTargetKind(into) : null;
+			if (!fill?.password || !into || !kind) {
+				sendResponse({ ok: false, error: "no field to fill" });
+				return false;
+			}
+			cancelFill();
+			picker.remove();
+			dropRelayed();
+			fillForm(fill.username ?? "", fill.password, false, into);
+			if (fill.totp) fillOtp(fill.totp);
+			sendResponse({ ok: true });
+			return false;
+		}
+
+		if (message?.type === "AUTOFILL_LAUNCH_TOP_CHECK") {
+			sendResponse(launchTopCheck(message.payload));
+			return false;
+		}
+
+		if (message?.type === "AUTOFILL_ENABLED") {
+			// The Settings toggle, applied to a page that is already open. The same push carries the
+			// click-behaviour mode, so changing either setting lands without a reload. Only a real
+			// switch change re-arms the query loop; a trigger-only push must not cost a round trip.
+			const payload = message.payload as { enabled?: boolean; trigger?: string } | undefined;
+			const enabled = payload?.enabled !== false;
+			if (enabled === autofillDisabled) applyAutofillEnabled(enabled);
+			pushAutofillTrigger(payload?.trigger);
+			sendResponse({ ok: true });
+			return false;
+		}
+
+		if (message?.type === "AUTOFILL_TRIGGER") {
+			// The trigger-only push from Settings. It must not touch the enabled switch: an
+			// `AUTOFILL_ENABLED` without a trigger would default `enabled` to true and turn
+			// autofill back on.
+			pushAutofillTrigger((message.payload as { trigger?: unknown } | undefined)?.trigger);
+			sendResponse({ ok: true });
+			return false;
+		}
+
+		if (message?.type === "AUTOFILL_DENSITY") {
+			// The density-only push from Settings, same contract as the trigger push above.
+			pushAutofillDensity((message.payload as { density?: unknown } | undefined)?.density);
+			sendResponse({ ok: true });
+			return false;
+		}
+
+		if (message?.type === "AUTOFILL_CYCLE") {
+			// A browser command, relayed by the background. It reached every frame in the tab; only
+			// the one with a focused candidate field acts.
+			cycleAutofill((message.payload as { back?: boolean } | undefined)?.back === true);
+			sendResponse({ ok: true });
+			return false;
+		}
+
+		if (message?.type === "AUTOFILL_SHORTCUT") {
+			// The fill shortcut (#215). Like the cycle command it reaches every frame; only the
+			// focused one answers, and it asks the background fresh so the shortcut works even with
+			// page autofill switched off.
+			void fillFromShortcut();
+			sendResponse({ ok: true });
+			return false;
+		}
+
+		if (message?.type === "AUTOFILL_FILL_ENTRY") {
+			const entryId = (message.payload as { entryId?: unknown } | undefined)?.entryId;
+			if (window !== window.top || typeof entryId !== "string") return false;
+			void fillChosenLogin(entryId).then((ok) => sendResponse({ ok }));
+			return true;
+		}
+
+		if (message?.type === "VAULT_LOCK_STATE") {
+			// Either direction invalidates local response and delayed-submit work. A lock→unlock
+			// ABA cannot revive a request that began before the transition: cancellation invalidates
+			// both the pending fill identity and delayed-submit generation.
+			cancelOperations();
+			// The background pushes lock changes here since content scripts can't watch
+			// storage.session. Keep the cached flag honest and refresh whatever is open so a
+			// stale "Vault locked" row clears on unlock (and stale matches hide on lock).
+			const locked = (message.payload as { locked?: boolean } | undefined)?.locked === true;
+			if (cachedResult) cachedResult.locked = locked;
+			const focused = focusedCandidate();
+			if (locked) {
+				// Lock only matters when a picker is open: swap to the "Vault locked" row on the focused
+				// field (or keep the strong-password suggestion, which needs no vault), or hide stale
+				// matches when focus has left. A fresh lock invalidates any pending unlock.
+				clearInlineSuggestion();
+				if (pickerIsOpen()) {
+					if (focused) showLockedPicker(focused, cachedResult?.hasPotentialMatch ?? false);
+					else removePicker();
+				}
+				// The mark stays on the field in front of the user, now offering the unlock row.
+				if (focused) updateAffordance(focused);
+				pendingUnlockField = null;
+			} else {
+				// Unlock: re-surface matches on the focused field, the open picker's anchor (toolbar/pop-out
+				// unlock leaves the locked row up but moves focus off the page (issue #20), or the field the
+				// user clicked "unlock" from (that click dismissed the picker, so there's no active host).
+				const anchor = pickerIsOpen() ? anchorField() : null;
+				const pending = pendingUnlockField?.isConnected ? pendingUnlockField : null;
+				pendingUnlockField = null;
+				const field = focused ?? anchor ?? pending;
+				// An unlock the user asked for from a field is explicit; a toolbar unlock is not. In the
+				// quiet modes only the explicit one reopens the panel - otherwise the mark updates and
+				// the user clicks it when they are ready.
+				const explicit = !!anchor || !!pending;
+				removePicker();
+				if (field) {
+					if (autofillTrigger === "focus" || explicit) reshowField = field;
+					else {
+						updateAffordance(field);
+						updateInlinePreview(field);
+					}
+					queryAutofill();
+				}
+			}
+			sendResponse({ ok: true });
+			return false;
+		}
+
+		return false;
+	});
+} catch {
+	// The extension context can be gone before a late injection; there is no background to serve.
+}
 
 /** Runs initial queries and wires up the focus/input/mousedown/scroll listeners that drive the dropdown. */
 function bootstrap(): void {

@@ -460,9 +460,10 @@ test("the strong-password suggestion renders and regenerates in the iframe", asy
 	const suggest = frame.locator("[data-tp-suggest]");
 	await expect(suggest).toBeVisible({ timeout: 10_000 });
 
-	// Regenerate swaps the offered password for a different one (a fresh RENDER_MATCHES).
+	// The row shows a first/last preview, not the whole secret. Regenerate swaps it for a different
+	// one (a fresh RENDER_MATCHES), which is the visible feedback that the password changed.
 	const first = (await frame.locator(".tp-suggest-pw").textContent())?.trim() ?? "";
-	expect(first).toMatch(STRONG_CHARS);
+	expect(first).toContain("…");
 	await frame.locator("[data-tp-regenerate]").click();
 	await expect
 		.poll(async () => (await frame.locator(".tp-suggest-pw").textContent())?.trim(), {
@@ -470,11 +471,15 @@ test("the strong-password suggestion renders and regenerates in the iframe", asy
 		})
 		.not.toBe(first);
 
-	// Using the suggestion fills the field with the password shown, and offers to save it.
-	const shown = (await frame.locator(".tp-suggest-pw").textContent())?.trim() ?? "";
+	// Using the suggestion fills the field with the full password the preview stands for.
+	const second = (await frame.locator(".tp-suggest-pw").textContent())?.trim() ?? "";
+	const [head = "", tail = ""] = second.split("…");
 	await waitOutPickerClickGuard(page);
 	await suggest.click();
-	await expect(page.locator("#pass")).toHaveValue(shown, { timeout: 10_000 });
+	await expect(page.locator("#pass")).toHaveValue(STRONG_CHARS, { timeout: 10_000 });
+	const filled = await page.locator("#pass").inputValue();
+	expect(filled.startsWith(head)).toBe(true);
+	expect(filled.endsWith(tail)).toBe(true);
 	await expect(page.locator("#bramble-corner-prompt")).toBeAttached({ timeout: 10_000 });
 });
 

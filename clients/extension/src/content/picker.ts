@@ -11,8 +11,8 @@ import { dropdownMore } from "./html/dropdown-more";
 import { dropdownNewLogin } from "./html/dropdown-new-login";
 import { dropdownStyles } from "./html/dropdown-styles";
 import { dropdownSuggest } from "./html/dropdown-suggest";
-import { EARLY_CLICK_MS, isLegible } from "./legibility";
 import { t } from "./i18n";
+import { EARLY_CLICK_MS, hostIsTrustworthy } from "./legibility";
 import { onTeardown } from "./lifecycle";
 import { MENU_COLLAPSE_MS, MENU_FADE_MS, maxMenuHeight, pickerWidth } from "./placement";
 import { type DropdownSkin, skinKey } from "./skin";
@@ -603,10 +603,17 @@ function buildLockedDropdown(field: HTMLInputElement, skin?: DropdownSkin): void
 
 // --- Iframe renderer (primary); the shadow path above is the COEP fallback. ---
 
-const AUTOFILL_UI_URL = api.runtime.getURL("autofill-ui.html");
+const AUTOFILL_UI_URL = (() => {
+	try {
+		return api.runtime.getURL("autofill-ui.html");
+	} catch {
+		// An orphaned injection has no runtime; leave the URL empty and use the shadow renderer.
+		return "";
+	}
+})();
 // The extension url scheme (chrome-extension: / moz-extension:), the one thing about the iframe's
 // origin we can know up front.
-const EXT_SCHEME = new URL(AUTOFILL_UI_URL).protocol;
+const EXT_SCHEME = AUTOFILL_UI_URL ? new URL(AUTOFILL_UI_URL).protocol : "";
 // Our end of the private channel handed to the iframe at its READY. The page shares the window
 // both of us would otherwise talk on, so everything after READY rides this port. READY's origin
 // pins the hand-over, and it is NOT always the origin of the url we set as src: under Chromium's
@@ -718,6 +725,7 @@ function destroyIframeHost(): void {
 
 /** Create the iframe host (closed-shadow wrapper around the extension-origin iframe), or un-hide it if it exists. */
 function ensureIframeHost(): void {
+	if (!AUTOFILL_UI_URL) return;
 	if (iframeHostEl) {
 		if (iframeHostEl.style.display === "none") markPickerMoved();
 		iframeHostEl.style.display = "block";
@@ -857,12 +865,7 @@ function iframeShow(field: HTMLInputElement, render: IframeRender): void {
 /** Gate for anything that fills: a click must also have waited out EARLY_CLICK_MS. */
 function pickAllowed(host: HTMLElement | null, pointer: unknown): boolean {
 	if (pointer === true && clickIsEarly()) return false;
-	return pickIsTrustworthy(host);
-}
-
-/** Pick-time anti-clickjacking: reject a pick when the host is hidden, clipped, overlaid, or off-field. */
-function pickIsTrustworthy(host: HTMLElement | null): boolean {
-	return !!host && isLegible(host);
+	return hostIsTrustworthy(host);
 }
 
 // --- The visible host (shadow or iframe), positioning, and dismissal ---
@@ -1188,8 +1191,16 @@ function handleShadowKey(e: KeyboardEvent): boolean {
 	return false;
 }
 
+/** Arrow/Enter/Escape navigation for the open dropdown; returns true if the key was consumed. */
 function handleDropdownKey(e: KeyboardEvent): boolean {
 	if (document.activeElement !== anchorField) return false;
+	if (uiMode === "iframe") return handleIframeKey(e);
+	return handleShadowKey(e);
+}
+
+/** The iframe half of the keyboard path. */
+function handleIframeKey(e: KeyboardEvent): boolean {
+	if (!iframeReady || !iframeHostEl || iframeHostEl.style.display === "none") return false;
 	if (!iframeEl?.contentWindow) return false;
 	if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 		e.preventDefault();

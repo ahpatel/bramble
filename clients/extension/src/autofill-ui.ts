@@ -8,6 +8,10 @@ import type { DropdownSkin } from "./content/skin";
 // chunk shared with the content script, which loads as a classic script. template-parity.test.ts
 // asserts the two constants stay equal.
 const MAX_RADIUS = 16;
+// A click this soon after the rows appear or move may have been aimed at whatever was there
+// before. The content script enforces the same window for the local renderer; a relayed pick
+// never passes through it, so the UI holds its own.
+const EARLY_CLICK_MS = 500;
 
 interface MatchSummary {
 	id: string;
@@ -72,11 +76,6 @@ const ANNOUNCE_ATTEMPTS = 25;
 const MAX_FRAME_DEPTH = 8;
 const MAX_FRAMES_VISITED = 128;
 let peer: { win: Window; origin: string } | null = null;
-// Relayed picks go straight to the field's frame, past the content script's early-click guard, so
-// it is kept here: a click counts only once the rows have sat still this long. The host frame
-// reports each move (UI_MOVED), forged ones included, and a new render restarts it too.
-const EARLY_CLICK_MS = 500;
-let settledAt = Number.NEGATIVE_INFINITY;
 
 let otpOnly = false;
 // Navigable rows in render order: an optional leading "suggest a password" row,
@@ -88,6 +87,7 @@ type NavRow =
 	| { kind: "locked" };
 let rows: NavRow[] = [];
 let highlight = -1;
+let settledAt = performance.now();
 
 function post(message: unknown): void {
 	if (RELAYED) {
@@ -643,15 +643,21 @@ function aliasRow(row: AliasRowState): string {
 	`;
 }
 
+/** First and last few characters, not the whole secret. Twin of
+ *  content/html/dropdown-suggest.ts's previewPassword; both must change together. */
+function previewPassword(password: string): string {
+	if (password.length <= 12) return password;
+	return `${password.slice(0, 6)}…${password.slice(-4)}`;
+}
+
 function suggestRow(password: string): string {
 	return html`
-		<div class="tp-item tp-suggest" data-tp-suggest="1" role="option">
 		<div class="tp-item tp-suggest" data-tp-suggest="1" role="option" aria-selected="false">
 			<div class="tp-avatar tp-avatar-suggest">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"></circle><path d="M10.7 12.3 20 3"></path><path d="m16 6 3 3"></path><path d="m14 8 3 3"></path></svg>
 			</div>
 			<div class="tp-text">
-				<span class="tp-name tp-suggest-pw">${password}</span>
+				<span class="tp-name tp-suggest-pw">${previewPassword(password)}</span>
 				<span class="tp-user">${t("suggestPasswordUse")}</span>
 			</div>
 			<button class="tp-regenerate" data-tp-regenerate="1" type="button" aria-label="${t("suggestPasswordRegenerate")}">
@@ -727,6 +733,13 @@ function render(
 	else list.removeAttribute("aria-describedby");
 	list.style.transformOrigin = above ? "bottom center" : "top center";
 	applySkin(list, skin);
+	// A webfont, a browser zoom or a scrollbar can change the list's height after the first paint.
+	// Without this the parent keeps the pre-font height and the last row (or the bottom border) is
+	// cut off on exactly the sites whose form fonts arrive late.
+	if (!sizeObserver && typeof ResizeObserver !== "undefined") {
+		sizeObserver = new ResizeObserver(() => reportHeight());
+		sizeObserver.observe(list);
+	}
 	const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 	if (animate && !reduced && typeof list.animate === "function") {
 		list.animate(
@@ -749,7 +762,18 @@ function render(
 const BOTTOM_INSET = 2;
 let lastReportedHeight = -1;
 function reportHeight(): void {
+	// A timer, not rAF: the iframe is 0px tall until this first report, and a zero-height frame
+	// can have its animation frames throttled, so the report that gives it a height would never
+	// run. A 0ms timer runs after layout and gives the frame its first height.
+	setTimeout(() => {
 		const list = document.body.querySelector(".tp-list");
+		const height = list ? Math.ceil(list.getBoundingClientRect().height) + BOTTOM_INSET : 0;
+		// The host re-posts its gap cap on every height report. Without this dedupe that becomes
+		// cap -> report -> cap, a loop for as long as the menu is open.
+		if (height === lastReportedHeight) return;
+		lastReportedHeight = height;
+		postHeight(height);
+	}, 0);
 }
 
 // Chromium can vouch that this frame is unobscured and unfiltered on screen (IntersectionObserver
@@ -774,6 +798,10 @@ if (TRACKS_VISIBILITY) {
 /** Whether a click may fill; when it may not, say how to fill from the keyboard instead. */
 function clickAllowed(): boolean {
 	if (RELAYED && performance.now() - settledAt < EARLY_CLICK_MS) return false;
+	// A relayed pick is checked by the relay host's watchdog in the page that hosts it; this
+	// document cannot see that page's compositing (a filtered section around the frame would
+	// otherwise refuse every click), so the browser-vouched check is for the local renderer.
+	if (RELAYED) return true;
 	if (!TRACKS_VISIBILITY || vouchedVisible) return true;
 	const list = document.body.querySelector(".tp-list");
 	if (list && !list.querySelector(".tp-hint")) {

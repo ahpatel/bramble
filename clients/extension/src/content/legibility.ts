@@ -1,8 +1,6 @@
 // Shared legibility checks for the autofill host. The picker and the relayed host run in different
 // frames but the same content-script bundle, so the trust rule lives in one place.
 
-/** A click this soon after the UI appeared may have been aimed at whatever was there before. */
-export const EARLY_CLICK_MS = 500;
 /** Opacity contributed by `filter: opacity(...)`; other filters are allowed (Dark Reader inverts). */
 export function filterOpacity(filter: string): number {
 	let out = 1;
@@ -24,8 +22,12 @@ export function effectiveOpacity(el: Element): number {
 	return out;
 }
 
-/** Whether `host` is on screen, near-opaque, unfiltered, unclipped and topmost at its centre. */
-export function isLegible(host: HTMLElement): boolean {
+/** A click this soon after the UI appeared may have been aimed at whatever was there before. */
+export const EARLY_CLICK_MS = 500;
+
+/** True when `host` is on screen, opaque counting ancestors, unclipped, and topmost at its centre. */
+export function hostIsTrustworthy(host: HTMLElement | null): boolean {
+	if (!host) return false;
 	const rect = host.getBoundingClientRect();
 	if (rect.width < 60 || rect.height < 20) return false;
 	if (

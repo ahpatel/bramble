@@ -98,7 +98,7 @@ test("attaches a file from the list's menu (#260)", async ({ context, extensionI
 	await expect(popup.getByText("Attached receipt.pdf")).toBeVisible();
 
 	await popup.getByRole("button", { name: "Open Example Login" }).click();
-	await expect(popup.getByText("receipt.pdf")).toBeVisible();
+	await expect(popup.getByText("receipt.pdf", { exact: true })).toBeVisible();
 });
 
 test("the attached popup's menu attaches in a window, on that login", async ({

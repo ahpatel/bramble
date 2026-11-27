@@ -90,8 +90,9 @@ function frameElementFor(doc: Document, source: MessageEventSource | null): HTML
 
 /**
  * Child rect -> this frame's coords, kept inside the child's box, or null when it misses that box.
- * Border/padding count: the child's origin is the content box. The clamp is what stops a frame
- * from having the picker drawn anywhere on its embedder's page.
+ * Border/padding count: the child's origin is the content box. The clamp stops a frame from having
+ * the picker drawn anywhere on its embedder's page; the menu itself may extend below a short frame,
+ * because only the anchor rect is clamped.
  */
 function translate(rect: RelayRect, frameEl: HTMLElement, view: Window): RelayRect | null {
 	const box = frameEl.getBoundingClientRect();

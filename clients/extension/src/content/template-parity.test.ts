@@ -146,6 +146,23 @@ describe("the corner-radius ceiling is the same in both renderers", () => {
 	});
 });
 
+// The avatar initials live twice for the same reason the escaper does. A name that produces a
+// broken surrogate in one renderer and a whole emoji in the other is exactly the drift this
+// catches; keep the two functions byte-identical.
+describe("the avatar initials are identical in both renderers", () => {
+	function initialsSource(src: string): string {
+		const start = src.indexOf("function initials(");
+		expect(start).toBeGreaterThan(-1);
+		const end = src.indexOf("\n}\n", start);
+		expect(end).toBeGreaterThan(start);
+		return src.slice(start, end + 3);
+	}
+
+	it("renders the same initials", () => {
+		expect(initialsSource(uiSource)).toBe(initialsSource(itemSource));
+	});
+});
+
 // The note after a capped match list. Added to one renderer only, a user on a COEP page sees 50
 // rows with no explanation, or the other sees a note with no cap.
 describe("the capped-list note is in both renderers", () => {

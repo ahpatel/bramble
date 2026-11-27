@@ -1,27 +1,26 @@
 /// <reference types="chrome" />
 
-// Top-frame side of the relayed picker. This frame owns only the iframe ELEMENT:
-// it creates it, parks it at the relayed rect, applies the height the UI asks for,
-// and destroys it. It never sees match summaries or picks, which travel directly
-// between the field's frame and the UI document. See docs/autofill.md.
-//
-// SECURITY: because this frame controls the element's geometry, it also owns the
-// anti-clickjacking guard. The non-relayed picker checks trust at pick time, which is
-// impossible here (the pick never passes through this frame), so the guard runs
-// continuously and tears the host down the moment it stops being legible. You cannot
-// click what is not there, and a page cannot suppress the teardown: the verdict comes
-// from computed style this frame reads itself, not from any message.
+// Top-frame side of the relayed picker. This frame owns only the iframe element and the
+// anti-clickjacking guard; match data travels directly between the field's frame and the UI.
 
 import { api } from "./content-api";
 import { isExtensionOrigin } from "./ext-origin";
 import type { RelayedAnchor, RelayRect } from "./frame-relay";
 import { hostOffset } from "./host-offset";
-import { isLegible } from "./legibility";
+import { hostIsTrustworthy } from "./legibility";
 import { onTeardown } from "./lifecycle";
-const AUTOFILL_UI_URL = api.runtime.getURL("autofill-ui.html");
 import { MARK_INSET } from "./mark";
 import { MENU_COLLAPSE_MS, MENU_FADE_MS, maxMenuHeight, relayWidth } from "./placement";
 
+const AUTOFILL_UI_URL = (() => {
+	try {
+		return api.runtime.getURL("autofill-ui.html");
+	} catch {
+		// Orphaned injection: no relayed host can be created, and the field's frame will time out
+		// to its own renderer.
+		return "";
+	}
+})();
 const MAX_HEIGHT = 400;
 type Hosted = {
 	relayId: string;
@@ -102,14 +101,16 @@ export function destroyRelayHost(): void {
 }
 
 // A zero-height frame is the normal pre-render state, so the guard only starts
-// policing once the UI has reported a real height.
+// policing once the UI has reported a real height. The pick goes straight from the UI to the
+// field's frame, so this frame's watchdog is the page-side check and must run every frame:
+// Firefox has no IntersectionObserver vouch behind it.
 function startWatchdog(): void {
 	if (watchdog !== null) return;
 	const tick = (): void => {
 		watchdog = null;
 		if (!hosted) return;
 		const measurable = hosted.frame.getBoundingClientRect().height >= 20;
-		if (measurable && !isLegible(hosted.host)) {
+		if (measurable && !hostIsTrustworthy(hosted.host)) {
 			destroyRelayHost();
 			return;
 		}

@@ -6,7 +6,7 @@ import { saveLoginBody } from "./html/save-login-body";
 import { savePasskeyBody } from "./html/save-passkey-body";
 import { updateLoginBody } from "./html/update-login-body";
 import { t } from "./i18n";
-import { EARLY_CLICK_MS, isLegible } from "./legibility";
+import { EARLY_CLICK_MS, hostIsTrustworthy } from "./legibility";
 import { isExtensionAlive, markExtensionDead, onTeardown, safeSendMessage } from "./lifecycle";
 import { html } from "./template";
 import type { CornerPromptPayload } from "./types";
@@ -49,7 +49,7 @@ let saving = false;
 const PASSKEY_CONSENT = new Set(["passkey-approve", "passkey-pick"]);
 
 function consentClickCounts(): boolean {
-	if (!cornerPromptEl || !isLegible(cornerPromptEl)) return false;
+	if (!cornerPromptEl || !hostIsTrustworthy(cornerPromptEl)) return false;
 	return Date.now() - cornerShownAt >= EARLY_CLICK_MS;
 }
 

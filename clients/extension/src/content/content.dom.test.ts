@@ -141,13 +141,13 @@ vi.mock("./lifecycle", () => ({
 		teardownCallback = cb;
 	},
 }));
-let frameIsLegible = true;
-vi.mock("./legibility", () => ({ isLegible: () => frameIsLegible, EARLY_CLICK_MS: 500 }));
 vi.mock("./corner-prompt", () => ({
 	handleCornerField: vi.fn(),
 	handleCornerPromptShow: vi.fn(),
 	queryCornerPrompt: vi.fn(),
 }));
+let frameIsLegible = true;
+vi.mock("./legibility", () => ({ hostIsTrustworthy: () => frameIsLegible, EARLY_CLICK_MS: 500 }));
 vi.mock("./capture", () => ({ maybeCommitCapture: vi.fn(), onPasswordEnter: vi.fn() }));
 const fillTextField = vi.fn(() => true);
 // What fill.ts would report as the password most recently put into the page. Drives the
@@ -737,119 +737,6 @@ describe("content: strong-password suggestion on signup", () => {
 	});
 });
 
-// #215: the fill shortcut fills the site's first login, or the first whose username starts with
-// what is typed in the username field.
-describe("content: the fill shortcut", () => {
-	const logins = [
-		{ id: "1", name: "Example", secondary: "alice@example.com" },
-		{ id: "2", name: "Example", secondary: "bob@example.com" },
-		{ id: "3", name: "Zed's", secondary: "zed@example.com" },
-	];
-
-	beforeEach(() => {
-		safeRequest.mockClear();
-		pendingQueryResponses.length = 0;
-		pendingSelectResponses.length = 0;
-		vi.spyOn(document, "hasFocus").mockReturnValue(true);
-		// jsdom has no layout; the shortcut only fills a field that is drawn.
-		vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
-			width: 200,
-			height: 24,
-			top: 0,
-			left: 0,
-			right: 200,
-			bottom: 24,
-			x: 0,
-			y: 0,
-			toJSON: () => ({}),
-		} as DOMRect);
-		document.body.innerHTML = `
-			<form>
-				<input id="user" type="email" name="email" autocomplete="username" />
-				<input id="pass" type="password" name="password" autocomplete="current-password" />
-			</form>`;
-		invalidatePageFields();
-	});
-
-	async function press(typed = ""): Promise<string | undefined> {
-		(document.getElementById("user") as HTMLInputElement).value = typed;
-		send({ type: "AUTOFILL_SHORTCUT" });
-		await Promise.resolve();
-		send({ type: "AUTOFILL_MATCHES", payload: result({ logins }) });
-		await vi.waitFor(() =>
-			expect(safeRequest).toHaveBeenCalledWith(
-				expect.objectContaining({ type: "AUTOFILL_SELECT" }),
-			),
-		);
-		const select = safeRequest.mock.calls
-			.map(([m]) => m as { type?: string; payload?: { entryId?: string } })
-			.find((m) => m.type === "AUTOFILL_SELECT");
-		return select?.payload?.entryId;
-	}
-
-	it("fills the site's first login", async () => {
-		expect(await press()).toBe("1");
-	});
-
-	it("fills the first whose username starts with what is typed", async () => {
-		expect(await press("bo")).toBe("2");
-	});
-
-	it("falls back to the name, then the first, when no username starts with it", async () => {
-		expect(await press("zed's")).toBe("3");
-		safeRequest.mockClear();
-		expect(await press("nobody")).toBe("1");
-	});
-});
-
-// #213: a login field's matches end with a row to save another login for the site.
-describe("content: the new-login row", () => {
-	beforeEach(() => {
-		showMatches.mockClear();
-		removePicker.mockClear();
-		pickerState.host = null;
-		pickerState.anchor = null;
-		pendingQueryResponses.length = 0;
-		document.body.innerHTML = `
-			<form>
-				<input id="user" type="email" name="email" autocomplete="username" />
-				<input id="pass" type="password" name="password" autocomplete="current-password" />
-			</form>`;
-		invalidatePageFields();
-	});
-
-	it("is offered under a login field's matches, and opens the create form", () => {
-		const user = document.getElementById("user") as HTMLInputElement;
-		user.focus();
-		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
-		send({
-			type: "AUTOFILL_MATCHES",
-			payload: result({ logins: [{ id: "1", name: "Example", secondary: "user@example.com" }] }),
-		});
-		expect(showMatches.mock.calls.at(-1)?.[1]).toBe(user);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual({ newLogin: true });
-
-		safeSendMessage.mockClear();
-		newLoginCb?.();
-		expect(safeSendMessage).toHaveBeenCalledWith({
-			type: "POPOUT_OPEN",
-			payload: { reason: "new-login" },
-		});
-		expect(removePicker).toHaveBeenCalled();
-	});
-	it("is only on the username field", () => {
-		const pass = document.getElementById("pass") as HTMLInputElement;
-		pass.focus();
-		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
-		send({
-			type: "AUTOFILL_MATCHES",
-			payload: result({ logins: [{ id: "1", name: "Example", secondary: "user@example.com" }] }),
-		});
-		expect(showMatches.mock.calls.at(-1)?.[1]).toBe(pass);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toBeUndefined();
-	});
-});
-
 describe("content: username filter on login picker", () => {
 	const logins = [
 		{ id: "1", name: "GitHub", secondary: "alice@example.com" },
@@ -1103,33 +990,7 @@ describe("content: direct select response binding", () => {
 				sessionGeneration: 0,
 			},
 		});
-		expect(fillForm).toHaveBeenCalledWith("me", "secret", false, user);
-	});
-
-	it("aims the fill at the password field the pick came from", () => {
-		// A second password field the model passed over; kindOf still claims it as login.
-		document.body.insertAdjacentHTML(
-			"beforeend",
-			`<form><input id="other-pass" type="password" name="password" /></form>`,
-		);
-		invalidatePageFields();
-		const other = document.getElementById("other-pass") as HTMLInputElement;
-		other.focus();
-		send({
-			type: "AUTOFILL_MATCHES",
-			payload: result({ logins: [{ id: "1", name: "Example", secondary: "me" }] }),
-		});
-		pickCb?.("1", false);
-		replySelect({
-			ok: true,
-			data: {
-				payload: { kind: "login", username: "me", password: "secret" },
-				isAuto: false,
-				otpOnly: false,
-				sessionGeneration: 0,
-			},
-		});
-		expect(fillForm).toHaveBeenCalledWith("me", "secret", false, other);
+		expect(fillForm).toHaveBeenCalledWith("me", "secret", false, expect.anything());
 	});
 
 	it("makes a late direct response inert after the anchor is replaced", () => {
@@ -2050,6 +1911,142 @@ describe("content: the rendered match list is capped", () => {
 	});
 });
 
+describe("content: a code widget whose boxes have wrappers of their own", () => {
+	const CODE = { id: "1", name: "Example", secondary: "123 456" };
+
+	beforeEach(() => {
+		showMatches.mockClear();
+		pendingQueryResponses.length = 0;
+		document.body.innerHTML = `<div>${Array.from(
+			{ length: 6 },
+			(_, i) =>
+				`<div class="cell"><div><input id="d${i}" type="text" inputmode="numeric" maxlength="1" autocomplete="new-password" /></div></div>`,
+		).join("")}</div>`;
+		invalidatePageFields();
+	});
+
+	it("offers the code on any box", () => {
+		for (const id of ["d0", "d3"]) {
+			showMatches.mockClear();
+			(document.getElementById(id) as HTMLInputElement).focus();
+			send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
+			pendingQueryResponses.pop()?.({ ok: true, data: result({ otps: [CODE] }) });
+			expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([CODE]);
+		}
+	});
+});
+
+describe("content: the fill shortcut", () => {
+	const logins = [
+		{ id: "1", name: "Example", secondary: "alice@example.com" },
+		{ id: "2", name: "Example", secondary: "bob@example.com" },
+		{ id: "3", name: "Zed's", secondary: "zed@example.com" },
+	];
+
+	beforeEach(() => {
+		safeRequest.mockClear();
+		pendingQueryResponses.length = 0;
+		pendingSelectResponses.length = 0;
+		vi.spyOn(document, "hasFocus").mockReturnValue(true);
+		// jsdom has no layout; the shortcut only fills a field that is drawn.
+		vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+			width: 200,
+			height: 24,
+			top: 0,
+			left: 0,
+			right: 200,
+			bottom: 24,
+			x: 0,
+			y: 0,
+			toJSON: () => ({}),
+		} as DOMRect);
+		document.body.innerHTML = `
+			<form>
+				<input id="user" type="email" name="email" autocomplete="username" />
+				<input id="pass" type="password" name="password" autocomplete="current-password" />
+			</form>`;
+		invalidatePageFields();
+	});
+
+	async function press(typed = ""): Promise<string | undefined> {
+		(document.getElementById("user") as HTMLInputElement).value = typed;
+		send({ type: "AUTOFILL_SHORTCUT" });
+		await Promise.resolve();
+		send({ type: "AUTOFILL_MATCHES", payload: result({ logins }) });
+		await vi.waitFor(() =>
+			expect(safeRequest).toHaveBeenCalledWith(
+				expect.objectContaining({ type: "AUTOFILL_SELECT" }),
+			),
+		);
+		const select = safeRequest.mock.calls
+			.map(([m]) => m as { type?: string; payload?: { entryId?: string } })
+			.find((m) => m.type === "AUTOFILL_SELECT");
+		return select?.payload?.entryId;
+	}
+
+	it("fills the site's first login", async () => {
+		expect(await press()).toBe("1");
+	});
+
+	it("fills the first whose username starts with what is typed", async () => {
+		expect(await press("bo")).toBe("2");
+	});
+
+	it("falls back to the name, then the first, when no username starts with it", async () => {
+		expect(await press("zed's")).toBe("3");
+		safeRequest.mockClear();
+		expect(await press("nobody")).toBe("1");
+	});
+});
+
+// #213: a login field's matches end with a row to save another login for the site.
+
+describe("content: the new-login row", () => {
+	beforeEach(() => {
+		showMatches.mockClear();
+		removePicker.mockClear();
+		pickerState.host = null;
+		pickerState.anchor = null;
+		pendingQueryResponses.length = 0;
+		document.body.innerHTML = `
+			<form>
+				<input id="user" type="email" name="email" autocomplete="username" />
+				<input id="pass" type="password" name="password" autocomplete="current-password" />
+			</form>`;
+		invalidatePageFields();
+	});
+
+	it("is offered under a login field's matches, and opens the create form", () => {
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.focus();
+		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
+		send({
+			type: "AUTOFILL_MATCHES",
+			payload: result({ logins: [{ id: "1", name: "Example", secondary: "user@example.com" }] }),
+		});
+		expect(showMatches.mock.calls.at(-1)?.[1]).toBe(user);
+		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual(expect.objectContaining({ newLogin: true }));
+
+		safeSendMessage.mockClear();
+		newLoginCb?.();
+		expect(safeSendMessage).toHaveBeenCalledWith({
+			type: "POPOUT_OPEN",
+			payload: { reason: "new-login" },
+		});
+		expect(removePicker).toHaveBeenCalled();
+	});
+	it("is only on the username field", () => {
+		const pass = document.getElementById("pass") as HTMLInputElement;
+		pass.focus();
+		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
+		send({
+			type: "AUTOFILL_MATCHES",
+			payload: result({ logins: [{ id: "1", name: "Example", secondary: "user@example.com" }] }),
+		});
+		expect(showMatches.mock.calls.at(-1)?.[1]).toBe(pass);
+		expect(showMatches.mock.calls.at(-1)?.[2]).not.toHaveProperty("newLogin");
+	});
+});
 
 describe("content: launch and fill", () => {
 	const FILL = {

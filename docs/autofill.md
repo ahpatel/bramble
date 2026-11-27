@@ -171,11 +171,6 @@ URL and the existing matcher takes over, with no new matching path, no network
 call, and the guess visible to the person who can confirm it. `appIdFromUri`
 exists for this and has no other caller.
 
-Distinct from the two built app-URI features: the native matcher reads them for
-exact package equality, and "fill and save" (mobile only; docs/mobile-port.md)
-records one on a confirmed pick. This editor feature would offer a reversed-package
-website guess for the user to confirm, at edit time.
-
 ## The fill model: secrets fetched only on explicit pick
 
 A single login match does **not** auto-inject the password on page load. Doing so
@@ -524,24 +519,6 @@ view of the vault. Capturing new logins has its own toggle ("Offer to save login
 `DESKTOP_FILL` is exempt as well: that is a credential the user picked in the desktop app,
 aimed at this page, and silently dropping it would leave that action unexplained.
 
-### The fill shortcut
-
-**Fill login** (`fill-login`, Ctrl+Shift+L, Cmd+Shift+L on a Mac, rebindable at
-`chrome://extensions/shortcuts`) fills the page's login, and is the way to fill with the
-switch off (#215). Only the browser delivers a command, so pressing it is the user's intent
-the way a dropdown pick is. `fill-shortcut.ts` arms a grant for that tab, bound to the
-unlocked session and good for 30 seconds, and sends `AUTOFILL_SHORTCUT` to the tab. While
-it lives, `AUTOFILL_QUERY` and `AUTOFILL_SELECT` from that tab pass the switch; the first
-select spends it, a lock or the tab closing ends it, and no other tab gains anything.
-Locked, the shortcut opens the unlock view instead and arms nothing.
-
-Every frame gets the message, and only the frame holding focus answers (one whose focused
-element isn't an iframe). It asks afresh, since with the switch off it holds no result,
-then fills one login like a pick: the first whose username starts with what is in the
-username field, else whose name does, else the site's first (`shortcutPick`). So typing
-"ab" and pressing it fills that account. The host check in `authorizeFill` applies as for
-any pick.
-
 ### The new-login row
 
 A username field's matches end with a small **New login** link (#213), so a site that already
@@ -652,24 +629,6 @@ route change when nothing scrolled.
 `pagehide` takes the picker down too. bfcache freezes the DOM as it stands, and a
 picker restored on the return trip would be showing a match set - and a lock
 state - from before the trip.
-
-### Where the host's coordinates start
-
-Every picker host (local, shadow fallback, relayed) is a `position: absolute` child
-of `<body>` placed by a translate, and a field's rect is in viewport coordinates.
-The translate counts from the host's **containing block**, which is usually the
-document, so adding `window.scrollX/Y` used to be enough. It is not when the page
-positions `<html>` or `<body>`. Angular CDK's scroll-block does exactly that while
-a Material dialog is open: `<html>` becomes `position: fixed` at `top: -scrollY`
-and `window.scrollY` reads 0. On nannyservices.ca's Stripe payment dialog that
-drew the relayed card picker 441px above the field, and the relay watchdog then
-removed it as illegible, so nothing showed.
-
-`host-offset.ts` measures the origin instead of assuming it: a zero-size,
-untranslated probe beside the host shares its containing block, so its rect is
-that origin exactly. Reading the host's own rect back and subtracting the
-translate would also work, but the read-back translate is rounded, and the
-tracking loop would see that noise as the field moving.
 
 ## Writing a value into a field
 
@@ -808,61 +767,6 @@ away before the prompt is shown, the next page picks the stash back up. The
 commit itself goes through the background, which writes directly to
 `chrome.storage.local` (headless, no gesture; see [storage.md](storage.md)).
 
-### Typing on the card
-
-The card sits in a closed shadow root in the page. That hides its DOM from the
-page and nothing else. The events a browser dispatches for a keystroke are
-composed: they pass through the page's `window` and `document` on the way in and
-on the way out, retargeted to the card's host. With the Username box in that
-shadow root, a page heard every key typed into it (`keydown` through `input`,
-each carrying the character) from a listener at `window` capture, which runs
-before anything inside the card can call `stopPropagation`. It could also read
-the box whole (`document.execCommand("selectAll")`, then `getSelection()`) and
-write into it (`execCommand("insertText")`), because the box belonged to the
-page's document. A Discourse forum answering "c" with its composer is how it was
-noticed.
-
-So the box the user types in is an **extension-origin frame**
-(`corner-field.html`, `corner-field.ts`), the same boundary the picker has: a
-keystroke inside a cross-origin frame never reaches the parent document, and the
-page can neither select in the frame nor edit it. The card keeps a read-only
-copy of the box in its own shadow root and shows that until the frame reports
-in. Where the frame cannot load, the read-only box is what stays: the captured
-username still saves, and can be corrected in the vault afterwards. Chromium
-blocks the frame under `Cross-Origin-Embedder-Policy`; Firefox 160 loads it
-there, and under a `frame-src 'none'` CSP too.
-
-The frame and the card do not talk over the page's window, which the page
-shares. Everything the frame says rides extension messaging, which a page can
-neither read nor forge:
-
-- The card mounts the frame with a random `id` in its url, known to nothing else
-  in the tab.
-- The frame sends `CORNER_FIELD` to the background, which passes the payload to
-  the tab's top frame, where the card is (`cornerFieldRelay`). It is a relay
-  because Firefox gives an embedded extension frame no `tabs` API. The background
-  takes the message only from `corner-field.html` framed in a tab, and forwards
-  nothing but the payload.
-- `open` is answered with the captured username. The frame shows it and reports
-  `value`, and the card swaps the frame in on that first report. Every edit is
-  another `value`.
-- **Save** wants the text as it stands at the click, and a report still in
-  flight would cost the last keystroke. The card posts a counter to the frame
-  (`CORNER_FIELD_FLUSH`, the one thing sent over a window, and it carries
-  nothing), waits for the `value` that echoes it, and only then replies to the
-  background. If none comes within a second it saves the last text reported.
-
-A page can embed `corner-field.html` itself, since it is web-accessible. Such a
-copy has no `id` a card answers to, and the page cannot read what is typed into
-it either.
-
-Moving the card's host element reloads the frame inside it, which any page
-script may do. `open` then returns the text last reported, not the captured
-username, so the typing survives.
-
-`e2e/extension/corner-prompt-typing.spec.ts` holds this with a page that listens
-from its first script, at `window` capture.
-
 ### Suppressing the browser's own dropdown, without blinding ourselves
 
 While the picker is anchored to a field it writes `autocomplete="off"` on it, so
@@ -975,16 +879,6 @@ the field, and therefore below the frame's viewport, and an iframe cannot paint
 outside its own box. The field was always detected; there was simply nowhere to
 draw, so nothing appeared at all.
 
-A frame with room had a quieter version of the same problem. Zoom embeds Zuora's
-hosted payment page in a 548x332 frame; a picker drawn inside it inherits whatever
-Zoom does around that frame, and any opacity or filter there costs it the
-browser's visibility vouch and with it every click (see the threat model). It also
-never heard a click on Zoom's page, and focus leaving the frame for that page
-looks the same as focus leaving the window, which keeps a picker up on purpose, so
-it stayed open while the user went on scrolling. Both come from the picker living
-in the frame, so card pickers are now hosted by the top frame from **every**
-frame, whatever its size.
-
 The fix splits **who owns the element** from **who owns the conversation**:
 
 - The **top frame** creates, parks, sizes and destroys the iframe element
@@ -1016,6 +910,14 @@ is the `contentWindow` of a frame element in that document, which a script in th
 frame cannot impersonate. **Only geometry and an opaque relay id travel this way**:
 every hop is a `message` event on a window the page shares with us, so summaries,
 entry ids and secrets must never ride it.
+
+The relayed rect is clamped to the child frame's content box, and a rect that misses
+that box is dropped: a frame's word for where its field is cannot park the picker
+anywhere on the merchant's page. Only the anchor rect is clamped, so the menu still
+extends below a 47px frame when it has to. Ownership is the second boundary: the UI
+announces its relay id to every frame in the tab, so the relay chain records which
+frame opened each id and rejects an anchor or withdrawal from any other frame; a
+sibling that learns the id cannot move or close another frame's picker.
 
 The **UI announces itself** and the field's frame **pins the announcement whose
 `event.origin` is one of our own extension origins**. That check is the whole trust
@@ -1057,47 +959,6 @@ through the top frame, `pickIsTrustworthy()` cannot run at pick time, so
 destroys the host the moment it stops being legible. That is prevention rather than
 detection, and the page cannot suppress it: the verdict comes from computed style
 the top frame reads itself, not from any message.
-
-#### Which frames relay, and what keeps a frame from abusing it
-
-`placement()` in `content.ts` decides, per field:
-
-- **Cards relay from every frame.** Cards are offered on every site, so the top
-  page learns nothing from a hosted card picker beyond how many cards there are
-  and whether the vault is locked.
-- **Logins relay only from a same-site frame.** The top page can read a picker it
-  hosts off its own DOM (it appears, it has a height), which for a sign-in frame
-  from another site would say whether the user has logins saved for that site.
-  Same-site is decided by the background from the browser's account of the sender
-  (`sameSiteAsTop`, eTLD+1 including the private PSL section, and the scheme), never
-  by the content script. A cross-site sign-in frame keeps its picker inside it,
-  even when that frame is too short to show it.
-- **No host upstairs falls back here.** If the top frame never brings the UI up
-  (COEP blocks it there, or no content script runs there) within two seconds, the
-  frame stops asking for the rest of the page's life and draws its own picker,
-  when it has room for one.
-
-Hosting a frame's picker in the top page lets that frame reach outside its own
-box, so three more rules apply to the relayed path:
-
-- **An anchor stays inside the frame it came from.** Each hop clamps the rect to
-  the content box of the frame element it arrived through and drops one that misses
-  that box, so a frame can only have the picker drawn against its own edge.
-- **A relay belongs to the frame that opened it.** The UI announces its relay id to
-  every frame in the tab, so any frame can learn it; each hop binds a relay id to
-  the child frame element that opened it and ignores anchors and withdrawals for it
-  from anywhere else.
-- **Clicks wait for the picker to sit still.** The pick goes straight from the UI to
-  the field's frame, past the content script's early-click guard, so the UI keeps it:
-  a click counts only 500 ms after the last render or move. The host frame reports
-  every move it makes (`UI_MOVED`), forged ones included; a forged report only ever
-  delays a click.
-
-And a click on an embedding page dismisses: each frame tells its child frames
-(`tp-relay-dismiss`, carrying nothing) when a trusted mousedown lands in its own
-document, a frame takes that only from its parent, and the top frame drops a
-picker it hosts at once. This reaches the in-frame pickers of cross-site sign-in
-frames too. Scrolling alone does not dismiss, as with every other picker.
 
 Keyboard nav works without moving focus off the page field: when the iframe is
 open, the content script forwards only Up/Down/Enter/Escape to it as `UI_KEY`
@@ -1186,13 +1047,12 @@ legibly sized, opaque (counting ancestors), unclipped, and not overlaid
 fallback too, which a page can force by keeping the iframe from loading.
 
 Two more gates apply to **clicks** only. Keyboard picks (↓ then Enter in the
-focused field) are deliberate and skip both:
+focused field, or the cycle command) are deliberate and skip both:
 
 - **Early clicks.** A click is dropped until the picker has sat still for 500 ms,
   and the clock restarts whenever it appears, un-hides or moves. A page that can
   open the picker (script focus) or move its field can otherwise put it under a
-  click the user is already making, a double-click lure being the classic. On the
-  relayed path the UI applies it, from the host frame's move reports.
+  click the user is already making, a double-click lure being the classic.
 - **Browser-vouched visibility (Chromium).** Hit testing skips an overlay with
   `pointer-events: none`, so a decoy painted over the picker passes
   `elementFromPoint` while the user's click goes straight through it to a row.
@@ -1236,7 +1096,8 @@ it is a flat bundle with no cross-package runtime imports.
 When the user focuses a password field that looks like account creation or a
 password rotation (see [field-detection.md](field-detection.md), "Signup
 detection"), the dropdown shows a **generated-password row** above any matches: the
-suggested password in monospace with a "Use suggested password" caption and a
+suggested password previewed as its first six and last four characters in monospace, with a "Use
+suggested password" caption and a
 regenerate button. Both renderers carry it (`content/html/dropdown-suggest.ts` for
 the shadow fallback, `suggestRow` in `autofill-ui.ts` for the iframe), navigable by
 keyboard like any other row.
