@@ -194,6 +194,10 @@
 		"message": "Continuez à taper pour affiner la liste",
 		"description": "Note at the end of the picker when only the first 50 matches are rendered."
 	},
+	"usedHere": {
+		"message": "Utilisé ici",
+		"description": "Badge on the picker row for the card or login already used on this site. A card carry is per tab; a login carry is per registrable domain."
+	},
 	"openEntryDetails": {
 		"message": "Ouvrir dans Bramble",
 		"description": "Row action that opens the entry's details in a Bramble window."

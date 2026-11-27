@@ -57,11 +57,13 @@ export function dropdownItem({
 	// One-line row with a small monogram, for the compact menu. Mirrors autofill-ui.ts's matchRow.
 	compact?: boolean;
 }) {
-	const badge = carried ? html`<span class="tp-badge">${t("cardUsedHere")}</span>` : "";
 	// A nameless entry (possible through an import) still needs a primary line. The username is
 	// the only identifier it has; when that is empty too, a generic label beats a blank row.
 	const primary = name || secondary || t("savedLogin");
 	const detail = name ? secondary : "";
+	const badge = carried
+		? html`<span class="tp-badge" title="${t("usedHere")}">${t("usedHere")}</span>`
+		: "";
 	// A row action, not a second fill target: the mousedown handler checks it before the row's
 	// entry id. It opens the full Bramble window on this entry, for fields the picker doesn't fill.
 	// It shares the trailing slot with the badge and appears on hover or row highlight, so the row

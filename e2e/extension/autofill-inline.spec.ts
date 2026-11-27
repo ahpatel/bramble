@@ -298,6 +298,45 @@ test("the dropdown rows setting switches the menu between comfortable and compac
 	});
 });
 
+test("the login last used on the site leads the next menu", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedLogin(popup, "Work account", "alice@example.com", "work-pw-01");
+	await seedLogin(popup, "Personal", "alice.personal@example.com", "home-pw-02");
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+
+	// Pick the second login explicitly, not whichever happens to be first.
+	const frame = pickerFrame(page)!;
+	await expect(frame.locator(".tp-item-compact")).toHaveCount(2, { timeout: 10_000 });
+	await waitOutPickerClickGuard(page);
+	await frame.getByText("Personal", { exact: true }).click();
+	await expect(page.locator("#user")).toHaveValue("alice.personal@example.com", {
+		timeout: 10_000,
+	});
+
+	// The pick refreshes the cache behind the closed menu; give that round trip a moment, then
+	// reopen. The site's last-used login must lead, marked "Used here".
+	await page.waitForTimeout(400);
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const reopened = pickerFrame(page)!;
+	const first = reopened.locator(".tp-item-compact").first();
+	await expect(first).toContainText("Personal", { timeout: 10_000 });
+	await expect(first).toContainText("Used here");
+});
+
 test("a row's open action opens the entry details without filling", async ({
 	context,
 	extensionId,

@@ -286,13 +286,15 @@ describe("content: the tab's last-filled card leads the card list", () => {
 	it("puts the carried card first and names it to the renderer", () => {
 		query({ cards: [VISA, MC], carriedCardId: "mc" });
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([MC, VISA]);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual({ carriedId: "mc" });
+		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual(
+			expect.objectContaining({ carriedId: "mc" }),
+		);
 	});
 
 	it("leaves the list alone when nothing was carried", () => {
 		query({ cards: [VISA, MC] });
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([VISA, MC]);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toBeUndefined();
+		expect(showMatches.mock.calls.at(-1)?.[2]).not.toHaveProperty("carriedId");
 	});
 
 	it("re-asks on focus, so a pick made in another frame reaches this one", () => {
@@ -314,14 +316,16 @@ describe("content: the tab's last-filled card leads the card list", () => {
 			data: result({ cards: [VISA, MC], carriedCardId: "mc" }),
 		});
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([MC, VISA]);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual({ carriedId: "mc" });
+		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual(
+			expect.objectContaining({ carriedId: "mc" }),
+		);
 	});
 
 	it("ignores a carried card that is no longer in the list", () => {
 		// Deleted between the pick and this frame's query.
 		query({ cards: [VISA], carriedCardId: "mc" });
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([VISA]);
-		expect(showMatches.mock.calls.at(-1)?.[2]).toBeUndefined();
+		expect(showMatches.mock.calls.at(-1)?.[2]).not.toHaveProperty("carriedId");
 	});
 });
 
@@ -1885,6 +1889,52 @@ describe("content: locked vault on a signup form's email field", () => {
 	});
 });
 
+describe("content: the site's last-used login leads the list", () => {
+	const WORK = { id: "work", name: "Work", secondary: "alice@example.com" };
+	const PERSONAL = { id: "personal", name: "Personal", secondary: "alice.personal@example.com" };
+
+	beforeEach(() => {
+		showMatches.mockClear();
+		pendingQueryResponses.length = 0;
+		document.body.innerHTML = `
+			<form>
+				<input id="user" type="text" autocomplete="username" />
+				<input id="pass" type="password" autocomplete="current-password" />
+			</form>`;
+		invalidatePageFields();
+		// The module is shared across this file. Cycling the master switch is the supported way to
+		// drop the cached result, so the focus below takes a fresh query instead of painting the
+		// previous suite's answer.
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: false } });
+		send({ type: "AUTOFILL_ENABLED", payload: { enabled: true } });
+	});
+
+	it("moves the carried login first and marks it", () => {
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.focus();
+		pendingQueryResponses.pop()?.({
+			ok: true,
+			data: result({ logins: [WORK, PERSONAL], carriedLoginId: "personal" }),
+		});
+		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([PERSONAL, WORK]);
+		expect(showMatches.mock.calls.at(-1)?.[2]).toEqual(
+			expect.objectContaining({ carriedId: "personal" }),
+		);
+	});
+
+	it("leaves the order alone when the carry is not among the matches", () => {
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.focus();
+		pendingQueryResponses.pop()?.({
+			ok: true,
+			data: result({ logins: [WORK, PERSONAL], carriedLoginId: "gone" }),
+		});
+		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([WORK, PERSONAL]);
+		expect(showMatches.mock.calls.at(-1)?.[2]).not.toHaveProperty("carriedId");
+	});
+});
+
+
 describe("content: the rendered match list is capped", () => {
 	beforeEach(() => {
 		showMatches.mockClear();
@@ -1919,6 +1969,8 @@ describe("content: the rendered match list is capped", () => {
 		expect(call?.[2]).toEqual(expect.objectContaining({ more: true }));
 	});
 });
+
+
 describe("content: launch and fill", () => {
 	const FILL = {
 		ok: true,

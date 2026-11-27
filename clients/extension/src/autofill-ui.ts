@@ -270,6 +270,16 @@ const STYLE = `
 				line-height: 1.3;
 				unicode-bidi: plaintext;
 			}
+			.tp-badge {
+				font-size: 11px;
+				font-weight: 500;
+				letter-spacing: 0.2px;
+				padding: 3px 8px;
+				border-radius: 999px;
+				color: var(--tp-foreground);
+				background: color-mix(in oklab, var(--tp-foreground) 7%, transparent);
+				transition: opacity 0.08s ease;
+			}
 			/* The trailing slot. The carried badge and the open action share one cell and swap on
 			   hover or row highlight, the way the vault list's rows do, so the right edge never
 			   moves. Touch has no hover to swap on, so both stay visible there. */

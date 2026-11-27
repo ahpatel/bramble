@@ -119,6 +119,10 @@ type TargetKind = "login" | "card" | "otp";
 type ActiveFill = {
 	target: HTMLInputElement;
 	targetKind: TargetKind;
+	// Whether a successful login fill should re-query behind the scenes. A pick from the menu
+	// does, so the next open leads with the login just used; a rapid keyboard cycle does not,
+	// because reordering the list under the cycle would make the next press repeat an entry.
+	refresh: boolean;
 	/** A launch claim, which nobody clicked for, so a page script moving focus doesn't cancel it. */
 	launch?: boolean;
 };
@@ -559,6 +563,9 @@ function applySelectResponse(
 	);
 	fillCustomFields(data.payload.customFields, data.isAuto);
 	fillOtp(data.payload.totp);
+	// Refresh the cache so the site's "last used" carry reaches the next menu open. `silenceAutoOpen`
+	// is set by the pick, so the result updates the cache without reopening the panel.
+	if (intent.refresh) queryAutofill();
 	if (!filled || !data.payload.autoSubmit || !passwordField) return true;
 	const generation = ++submitGeneration;
 	setTimeout(() => {
@@ -667,12 +674,54 @@ function filterLoginsByQuery(logins: MatchSummary[], query: string): MatchSummar
 // the user has typed anything themselves; only a genuine keystroke should narrow the list.
 const typedUsernameQuery = new WeakMap<HTMLInputElement, string>();
 
+// One keystroke asks for the visible list three times (the mark's count, the completion, the
+// menu). The answer depends only on the field, the typed query and the cached result, so keep the
+// last one. A query change or a new result invalidates it by identity.
+let visibleCache: {
+	field: HTMLInputElement;
+	query: string;
+	logins: MatchSummary[];
+	out: MatchSummary[];
+} | null = null;
+
 /** Logins to offer on `field`: all matches, or filtered by what the user has actually typed. */
 function visibleLoginsForField(field: HTMLInputElement, logins: MatchSummary[]): MatchSummary[] {
 	if (field !== getPageFields().login.username) return logins;
 	const query = typedUsernameQuery.get(field);
 	if (!query) return logins;
-	return filterLoginsByQuery(logins, query);
+	if (
+		visibleCache &&
+		visibleCache.field === field &&
+		visibleCache.query === query &&
+		visibleCache.logins === logins
+	) {
+		return visibleCache.out;
+	}
+	const out = filterLoginsByQuery(logins, query);
+	visibleCache = { field, query, logins, out };
+	return out;
+}
+
+/**
+ * The list as the user should see it: the site's last-used login leads, marked "Used here".
+ *
+ * The carry is an id the query response already contains; this only reorders and labels a row.
+ * It is applied after the typed filter, so a carry the query no longer matches disappears with
+ * the rest instead of being pinned into a filtered list.
+ */
+function loginRows(
+	field: HTMLInputElement,
+	logins: MatchSummary[],
+): { matches: MatchSummary[]; carriedId?: string } {
+	const visible = visibleLoginsForField(field, logins);
+	const carriedId = cachedResult?.carriedLoginId;
+	if (!carriedId) return { matches: visible };
+	const carried = visible.find((m) => m.id === carriedId);
+	if (!carried) return { matches: visible };
+	return {
+		matches: [carried, ...visible.filter((m) => m.id !== carriedId)],
+		carriedId,
+	};
 }
 
 /** Shows the login picker for `field`: existing matches, or ONLY the strong-password row on a signup/rotation form. */
@@ -694,20 +743,19 @@ function showLoginPicker(field: HTMLInputElement, logins: MatchSummary[]): void 
 	}
 	// Otherwise the same policy as before: the rest of an account-creation form gets nothing.
 	if (isCreationField(field)) return;
-	const visible = visibleLoginsForField(field, logins);
-	if (visible.length === 0) {
+	const rows = loginRows(field, logins);
+	if (rows.matches.length === 0) {
 		// Full dismissal, not picker.removeDropdown(): that only tears down the shadow-DOM
 		// (COEP-fallback) renderer and is a no-op against the primary iframe renderer, and it
 		// leaves any relayed (cross-origin iframe) picker painted too.
 		removePicker();
 		return;
 	}
-	// Under the site's logins, a way to save another one (#213), where accounts are chosen.
-	showMatchesFor(
-		visible,
-		field,
-		field === getPageFields().login.username ? { newLogin: true } : undefined,
-	);
+	showMatchesFor(rows.matches, field, {
+		...(rows.carriedId ? { carriedId: rows.carriedId } : {}),
+		// Under the site's logins, a way to save another one (#213), where accounts are chosen.
+		...(field === getPageFields().login.username ? { newLogin: true } : {}),
+	});
 }
 
 /**
@@ -760,10 +808,11 @@ function selectMatch(
 	otpOnly = false,
 	into: HTMLInputElement | null = anchorField(),
 	pageIsLive: () => boolean = documentIsActive,
-): void {
+	opts?: { refresh?: boolean },
+): Promise<boolean> {
 	const target = into;
 	const targetKind = target ? currentTargetKind(target) : null;
-	if (!target || !targetKind) return;
+	if (!target || !targetKind) return Promise.resolve(false);
 	// Manual selection counts as an explicit dismissal; silence auto-redisplay
 	// (e.g. a re-query landing mid-fill) until the user re-engages a field.
 	if (!isAuto) silenceAutoOpen = true;
@@ -772,12 +821,13 @@ function selectMatch(
 	const intent: ActiveFill = {
 		target,
 		targetKind,
+		refresh: opts?.refresh !== false,
 	};
 	cancelFill();
 	activeFill = intent;
 	picker.remove();
 	dropRelayed();
-	void safeRequest<AutofillSelectResponse>({
+	return safeRequest<AutofillSelectResponse>({
 		type: "AUTOFILL_SELECT",
 		payload: { entryId, isAuto, otpOnly },
 	}).then((response) => applySelectResponse(intent, response, pageIsLive));
@@ -850,7 +900,7 @@ function claimLaunch(): boolean {
 	const target = launchField();
 	const targetKind = target ? currentTargetKind(target) : null;
 	if (!target || targetKind !== "login") return false;
-	const intent: ActiveFill = { target, targetKind, launch: true };
+	const intent: ActiveFill = { target, targetKind, launch: true, refresh: false };
 	activeFill = intent;
 	removePicker();
 	const size = inFrame

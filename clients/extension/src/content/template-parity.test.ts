@@ -100,13 +100,13 @@ describe("the email-alias row is identical in both renderers", () => {
 describe("the carried-card badge is in both renderers", () => {
 	it("is drawn by the iframe renderer", () => {
 		expect(uiSource).toContain('class="tp-badge"');
-		expect(uiSource).toContain('t("cardUsedHere")');
+		expect(uiSource).toContain('t("usedHere")');
 		expect(uiSource).toContain(".tp-badge {");
 	});
 
 	it("is drawn by the shadow renderer", () => {
 		expect(itemSource).toContain('class="tp-badge"');
-		expect(itemSource).toContain('t("cardUsedHere")');
+		expect(itemSource).toContain('t("usedHere")');
 		expect(stylesSource).toContain(".tp-badge {");
 	});
 });

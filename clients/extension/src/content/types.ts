@@ -27,6 +27,9 @@ export interface QueryResult {
 	// The card last filled in this tab, shown first and marked so the other frames of a
 	// hosted-fields checkout default to it. Absent from an older background.
 	carriedCardId?: string;
+	// The login last filled on this site, shown first and marked. Always an id `logins` already
+	// carries; absent from an older background or when there is no carry.
+	carriedLoginId?: string;
 	// Hostname-matched logins with a TOTP key (offered on a one-time-code field).
 	otps: MatchSummary[];
 	locked: boolean;

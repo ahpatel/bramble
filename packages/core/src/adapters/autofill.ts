@@ -97,6 +97,10 @@ export interface QueryResult {
 	 * that lands there is then the same card rather than whatever heads the list. Extension
 	 * only; always an id the same response already carries. */
 	carriedCardId?: string;
+	/** The login last filled on this site, when it is still one of `logins`. The content script
+	 * moves it to the head of the list and marks it; it is always an id the same response already
+	 * carries, so ordering never widens what a page is offered. Extension only. */
+	carriedLoginId?: string;
 	/** Hostname-matched logins carrying a TOTP key, offered when the page has a one-time-code field. */
 	otps: MatchSummary[];
 	locked: boolean;
