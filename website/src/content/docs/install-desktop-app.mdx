@@ -1,6 +1,6 @@
 ---
 title: Install the desktop app
-description: Get Bramble on your Mac or Linux computer, keep it up to date, and start it when you log in.
+description: Get the Bramble desktop app, keep it up to date, and start it when you log in.
 section: desktop
 kind: guide
 order: 0
@@ -32,6 +32,9 @@ keywords:
   - Windows
   - windows support
   - Windows version
+  - installer
+  - setup.exe
+  - exe
   - update
   - upgrade
   - new version
@@ -50,7 +53,7 @@ keywords:
 updatedDate: 2026-11-08
 ---
 
-The desktop app runs on macOS and Linux. There's no Windows version yet.
+The desktop app runs on macOS<Since commit="51e90026" on="desktop">, Windows</Since> and Linux.<Until commit="51e90026" on="desktop"> There's no Windows version yet.</Until>
 
 Download it from [bramble.sh](/), or install it with one of the commands below.
 
@@ -63,6 +66,10 @@ Or install it with Homebrew:
 ```bash
 brew install --cask bramble
 ```
+
+## Windows
+
+<Since commit="51e90026" on="desktop">Download the installer from [bramble.sh](/) and run it. It installs Bramble for your account only, so it doesn't need administrator rights. It runs on Windows 10 and 11.</Since><Until commit="51e90026" on="desktop">There's no Windows version yet. The browser extension works there today.</Until>
 
 ## Linux
 
@@ -121,7 +128,7 @@ How Bramble updates depends on how you installed it:
 | Installed with | How it updates |
 | --- | --- |
 | `.dmg` or Homebrew | Bramble updates itself. |
-| AppImage | Bramble updates itself. |
+| AppImage<Since commit="51e90026" on="desktop"> or the Windows installer</Since> | Bramble updates itself. |
 | APT | Your system updates it with everything else, for example with `sudo apt upgrade`. |
 | Nix | It updates when you upgrade your Nix profile or system. |
 | `.rpm` | It doesn't update itself. Install the new `.rpm` from the releases page. |
@@ -136,7 +143,7 @@ To stop the automatic check, turn off **Check for updates when Bramble opens** i
 
 Open **Settings → General** and turn on **Start Bramble at login**.
 
-Bramble then starts in the menu bar (or the system tray on Linux) without opening a window. Keep it on if you use [scheduled backups](/docs/back-up-your-vault): they only run while Bramble is running.
+Bramble then starts in the menu bar (or the system tray on Linux<Since commit="51e90026" on="desktop"> and Windows</Since>) without opening a window. Keep it on if you use [scheduled backups](/docs/back-up-your-vault): they only run while Bramble is running.
 
 On a Mac, it shows up as Bramble in the Login Items list in System Settings.
 
