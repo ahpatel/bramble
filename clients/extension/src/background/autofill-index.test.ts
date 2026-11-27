@@ -776,6 +776,37 @@ describe("autofill trigger mode", () => {
 		expect(bg.state.tabMessages).toEqual([]);
 	});
 });
+
+describe("the autofill-cycle command", () => {
+	it("forwards to the active tab while autofill is on", async () => {
+		const bg = await loadBackground({
+			sessionSeed: { [VEK_KEY]: "SEED" },
+			localSeed: { "pref.autofillEnabled": true },
+			openTabs: [{ id: 7, url: "https://example.com/login" }],
+		});
+		bg.fireCommand("autofill-cycle");
+		await bg.flush();
+		expect(bg.state.tabMessages).toEqual([
+			{
+				tabId: 7,
+				message: { type: "AUTOFILL_CYCLE", payload: { back: false } },
+				options: undefined,
+			},
+		]);
+	});
+
+	it("stays quiet while the master switch is off", async () => {
+		const bg = await loadBackground({
+			sessionSeed: { [VEK_KEY]: "SEED" },
+			localSeed: { "pref.autofillEnabled": false },
+			openTabs: [{ id: 7, url: "https://example.com/login" }],
+		});
+		bg.fireCommand("autofill-cycle");
+		await bg.flush();
+		expect(bg.state.tabMessages.filter((m) => m.message.type === "AUTOFILL_CYCLE")).toEqual([]);
+	});
+});
+
 describe("AUTOFILL_SELECT session transitions", () => {
 	it("fails a select held across lock, including lock-to-unlock ABA", async () => {
 		const bg = await unlockedWithIndex();

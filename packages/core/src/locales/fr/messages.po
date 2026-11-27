@@ -1765,6 +1765,10 @@ msgstr "Champs personnalisés"
 msgid "CVV"
 msgstr "CVV"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Cycle logins with the keyboard"
+msgstr "Parcourir les connexions au clavier"
+
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Daily"
 msgstr "Quotidiennement"
@@ -3114,6 +3118,12 @@ msgstr "Aucune carte sauvegardée sur ce site. Supprimer pour relancer la demand
 msgid "No security key registered on this vault."
 msgstr "Aucune clé de sécurité n’est enregistrée sur ce coffre."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "No shortcut is set. Set one in your browser's extension shortcuts."
+msgstr ""
+"Aucun raccourci n'est défini. Définissez-en un dans les raccourcis "
+"d'extensions de votre navigateur."
+
 #. placeholder {0}: shell.appName
 #: packages/core/src/app/screens/Import/ImportShell.tsx
 msgid "No transfer is waiting. Start one from the other app and pick {0}."
@@ -3627,6 +3637,12 @@ msgstr "Détacher dans une fenêtre pour joindre des fichiers"
 #: packages/core/src/app/screens/Settings/components/MailboxAccount.tsx
 msgid "Posting is paused for this account"
 msgstr "La publication est en pause pour ce compte"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Press {autofillShortcut} in a login field to fill the next saved login."
+msgstr ""
+"Appuyez sur {autofillShortcut} dans un champ de connexion pour remplir la "
+"connexion enregistrée suivante."
 
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Press Enter / submit the form right after the credentials are filled in."

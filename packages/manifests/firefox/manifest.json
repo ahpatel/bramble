@@ -60,6 +60,12 @@
 		},
 		"lock-vault": {
 			"description": "__MSG_cmdLockVault__"
+		},
+		"autofill-cycle": {
+			"description": "__MSG_cmdAutofillCycle__"
+		},
+		"autofill-cycle-back": {
+			"description": "__MSG_cmdAutofillCycleBack__"
 		}
 	},
 	"content_security_policy": {

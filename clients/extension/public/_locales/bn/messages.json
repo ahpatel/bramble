@@ -7,6 +7,10 @@
 		"message": "Bramble লক করুন",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
+	"cmdAutofillCycle": {
+		"message": "পরবর্তী সেভ করা লগইন পূরণ করুন",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
 	"cmdFillLogin": {
 		"message": "লগইন পূরণ করুন",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts. Fills the saved login for the page."
@@ -182,6 +186,11 @@
 	"cardUsedHere": {
 		"message": "এখানে ব্যবহৃত",
 		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	},
+	"cmdAutofillCycleBack": {
+		"message": "আগের সেভ করা লগইন পূরণ করুন",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
 	"autofillOpenMenu": {
 		"message": "Bramble: ভল্ট থেকে পূরণ করুন",
 		"description": "Accessible name for the small Bramble mark inside a login field."

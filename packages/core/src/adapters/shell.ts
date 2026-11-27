@@ -205,6 +205,11 @@ export interface ShellAdapter {
 	/** Apply a new row density to open tabs now (extension only). Persisting the pref is the
 	 * caller's job. */
 	setAutofillDensity?(density: AutofillDensity): Promise<void>;
+	/** The browser's current key binding for the autofill cycle command, or null when unassigned.
+	 * Extension only; used to show the real shortcut in Settings rather than a guess. */
+	getAutofillShortcut?(): Promise<string | null>;
+	/** Open the browser's extension-shortcuts page, best effort (extension only). */
+	openShortcutSettings?(): Promise<void>;
 	/** Open a login's website in a new tab and fill it there once (extension only). See
 	 * docs/launch-and-fill.md. */
 	launchLogin?(entryId: string, url: string): Promise<void>;

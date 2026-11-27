@@ -1760,6 +1760,10 @@ msgstr "কাস্টম ফিল্ড"
 msgid "CVV"
 msgstr "CVV"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Cycle logins with the keyboard"
+msgstr "কীবোর্ড দিয়ে লগইন পরিবর্তন করুন"
+
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Daily"
 msgstr "প্রতিদিন"
@@ -3113,6 +3117,11 @@ msgstr "এই সাইটে সেভ করার পপআপ দেখা�
 msgid "No security key registered on this vault."
 msgstr "এই ভল্টে কোনো সিকিউরিটি কি রেজিস্টার করা নেই।"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "No shortcut is set. Set one in your browser's extension shortcuts."
+msgstr ""
+"কোনো শর্টকাট সেট করা নেই। আপনার ব্রাউজারের এক্সটেনশন শর্টকাটে একটি সেট করুন।"
+
 #. placeholder {0}: shell.appName
 #: packages/core/src/app/screens/Import/ImportShell.tsx
 msgid "No transfer is waiting. Start one from the other app and pick {0}."
@@ -3624,6 +3633,10 @@ msgstr "ফাইল সংযুক্ত করতে আলাদা উই�
 #: packages/core/src/app/screens/Settings/components/MailboxAccount.tsx
 msgid "Posting is paused for this account"
 msgstr "এই অ্যাকাউন্টের জন্য পোস্টিং স্থগিত আছে"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Press {autofillShortcut} in a login field to fill the next saved login."
+msgstr "পরবর্তী সংরক্ষিত লগইন পূরণ করতে লগইন ফিল্ডে {autofillShortcut} চাপুন।"
 
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Press Enter / submit the form right after the credentials are filled in."

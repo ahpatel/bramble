@@ -26,7 +26,7 @@ import { isSyncGroupKey } from "../sync/sync-config";
 import { indexHydration } from "./autofill-index";
 import { CLIPBOARD_ALARM, runClipboardClear } from "./clipboard";
 import { ensureOffscreen, sendToOffscreen } from "./offscreen-client";
-import { getLockOnScreenLock, PREF_AUTOLOCK_MINUTES } from "./prefs";
+import { getAutofillEnabled, getLockOnScreenLock, PREF_AUTOLOCK_MINUTES } from "./prefs";
 import { setReady } from "./router";
 import "./desktop-link";
 import { openDesktopLink } from "./desktop-link";
@@ -130,11 +130,36 @@ api.alarms.onAlarm.addListener((alarm) => {
 	}
 });
 
-// Manual lock via the user-bound `lock-vault` shortcut (declared without a default chord).
-api.commands?.onCommand.addListener((command) => {
-	if (command !== "lock-vault") return;
-	void lockFromBackground("lock command");
+// Manual lock via the user-bound `lock-vault` shortcut (declared without a default chord), and the
+// autofill cycle shortcuts. A command is a genuine user gesture, so it may fill; the content
+// script still requires a focused candidate field in the tab it names.
+api.commands?.onCommand.addListener((command, tab) => {
+	if (command === "lock-vault") {
+		void lockFromBackground("lock command");
+		return;
+	}
+	if (command === "autofill-cycle" || command === "autofill-cycle-back") {
+		void sendAutofillCycle(tab, command === "autofill-cycle-back");
+	}
 });
+
+/**
+ * Hand a cycle command to the tab the user is looking at. Only the tab is named here: the content
+ * script in the frame that owns the focused field is the one that knows what to cycle, and every
+ * other frame's listener does nothing. No summaries, ids or secrets cross this message.
+ */
+async function sendAutofillCycle(tab: chrome.tabs.Tab | undefined, back: boolean): Promise<void> {
+	// The cycle is part of page autofill; with the master switch off there is no list to step.
+	if (!(await getAutofillEnabled())) return;
+	const target =
+		tab?.id !== undefined
+			? tab
+			: (await api.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []))[0];
+	if (target?.id === undefined) return;
+	await api.tabs
+		.sendMessage(target.id, { type: "AUTOFILL_CYCLE", payload: { back } })
+		.catch(() => {});
+}
 
 // "Immediate" auto-lock: lock when the last extension view (popup / pop-out / options)
 // closes. The browser analog of mobile's lock-on-background.

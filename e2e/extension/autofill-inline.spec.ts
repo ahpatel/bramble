@@ -476,6 +476,49 @@ test("the compact menu follows a rounded field", async ({ context, extensionId }
 	expect(skin.surface).toBe("rgb(252, 251, 253)");
 });
 
+test("the keyboard command cycles through the site's logins", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedLogin(popup, "Work account", "alice@example.com", "work-pw-01");
+	await seedLogin(popup, "Personal", "alice.personal@example.com", "home-pw-02");
+	await setTrigger(popup, "icon");
+
+	// The command ships with a default chord and is visible to the browser's shortcuts page.
+	const sw = context.serviceWorkers()[0];
+	const commands = await sw!.evaluate(() => chrome.commands.getAll());
+	const cycleCommand = commands.find((c) => c.name === "autofill-cycle");
+	expect(cycleCommand).toBeDefined();
+	// The command ships unbound: Alt+Shift+L duplicated fill-login's chord class and took over
+	// the macOS Option+Shift+L keystroke on every page. Settings offers the shortcuts page instead.
+	expect(cycleCommand!.shortcut).toBe("");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	// The mark proves the query result (and its match list) has landed; the command reads that
+	// cache, so cycling before it arrives would do nothing.
+	await expect(markHost(page)).toHaveCount(1);
+
+	await cycle(context);
+	await expect(page.locator("#user")).toHaveValue("alice@example.com", { timeout: 10_000 });
+	await expect(page.locator("#pass")).toHaveValue("work-pw-01");
+
+	// A press that lands while the previous fill is still in flight is dropped by design, so the
+	// poll re-sends until the second entry arrives rather than assuming one press was enough.
+	await expect
+		.poll(
+			async () => {
+				await cycle(context);
+				return page.locator("#user").inputValue();
+			},
+			{ timeout: 10_000 },
+		)
+		.toBe("alice.personal@example.com");
+	await expect(page.locator("#pass")).toHaveValue("home-pw-02");
+});
+
 test("focus mode still opens the panel on focus; shortcut mode draws nothing", async ({
 	context,
 	extensionId,
@@ -513,6 +556,42 @@ test("focus mode still opens the panel on focus; shortcut mode draws nothing", a
 			{ timeout: 10_000 },
 		)
 		.toBe("alice@example.com");
+});
+
+test("Settings exposes the click behaviour, the row density and the bound shortcut", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await popup.getByRole("button", { name: "Settings" }).click();
+	await popup.getByRole("button", { name: "General", exact: true }).click();
+
+	const select = popup.getByRole("combobox", { name: "Show" });
+	// The shared fixture starts every panel-policy spec in focus mode with comfortable rows.
+	await expect(select).toHaveValue("focus");
+	const rows = popup.getByRole("combobox", { name: "Rows" });
+	await expect(rows).toHaveValue("comfortable");
+	await expect(popup.getByText("Cycle logins with the keyboard")).toBeVisible();
+	await expect(popup.getByRole("button", { name: "Change" })).toBeVisible();
+
+	await select.selectOption("icon");
+	await rows.selectOption("compact");
+	await expect
+		.poll(() =>
+			popup.evaluate(() =>
+				chrome.storage.local.get("pref.autofillTrigger").then((r) => r["pref.autofillTrigger"]),
+			),
+		)
+		.toBe("icon");
+	await expect
+		.poll(() =>
+			popup.evaluate(() =>
+				chrome.storage.local.get("pref.autofillDensity").then((r) => r["pref.autofillDensity"]),
+			),
+		)
+		.toBe("compact");
 });
 
 test("changing the click behaviour updates an open page without a reload", async ({

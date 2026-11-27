@@ -7,6 +7,10 @@
 		"message": "Lock Bramble",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
+	"cmdAutofillCycle": {
+		"message": "Fill the next saved login",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
 	"cmdFillLogin": {
 		"message": "Fill login",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts. Fills the saved login for the page."
@@ -182,6 +186,11 @@
 	"cardUsedHere": {
 		"message": "Used here",
 		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	},
+	"cmdAutofillCycleBack": {
+		"message": "Fill the previous saved login",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
 	"autofillOpenMenu": {
 		"message": "Bramble: fill from vault",
 		"description": "Accessible name for the small Bramble mark inside a login field."

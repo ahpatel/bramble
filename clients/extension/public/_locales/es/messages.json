@@ -7,6 +7,10 @@
 		"message": "Bloquear Bramble",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
+	"cmdAutofillCycle": {
+		"message": "Rellenar el siguiente inicio de sesión guardado",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
 	"cmdFillLogin": {
 		"message": "Rellenar inicio de sesión",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts. Fills the saved login for the page."
@@ -182,6 +186,11 @@
 	"cardUsedHere": {
 		"message": "Usada aquí",
 		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	},
+	"cmdAutofillCycleBack": {
+		"message": "Rellenar el inicio de sesión guardado anterior",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
 	"autofillOpenMenu": {
 		"message": "Bramble: rellenar desde la bóveda",
 		"description": "Accessible name for the small Bramble mark inside a login field."

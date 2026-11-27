@@ -7,6 +7,10 @@
 		"message": "Bloquear Bramble",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
+	"cmdAutofillCycle": {
+		"message": "Preencher o próximo login salvo",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
 	"cmdFillLogin": {
 		"message": "Preencher login",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts. Fills the saved login for the page."
@@ -182,6 +186,11 @@
 	"cardUsedHere": {
 		"message": "Usado aqui",
 		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	},
+	"cmdAutofillCycleBack": {
+		"message": "Preencher o login salvo anterior",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
 	"autofillOpenMenu": {
 		"message": "Bramble: preencher do cofre",
 		"description": "Accessible name for the small Bramble mark inside a login field."

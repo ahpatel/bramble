@@ -1771,6 +1771,10 @@ msgstr "Custom fields"
 msgid "CVV"
 msgstr "CVV"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Cycle logins with the keyboard"
+msgstr "Cycle logins with the keyboard"
+
 #: packages/core/src/app/screens/Settings/components/BackupSection.tsx
 msgid "Daily"
 msgstr "Daily"
@@ -3128,6 +3132,10 @@ msgstr "No save card on this site. Remove to start prompting again."
 msgid "No security key registered on this vault."
 msgstr "No security key registered on this vault."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "No shortcut is set. Set one in your browser's extension shortcuts."
+msgstr "No shortcut is set. Set one in your browser's extension shortcuts."
+
 #. placeholder {0}: shell.appName
 #: packages/core/src/app/screens/Import/ImportShell.tsx
 msgid "No transfer is waiting. Start one from the other app and pick {0}."
@@ -3640,6 +3648,11 @@ msgstr "Popout to window to attach files"
 #: packages/core/src/app/screens/Settings/components/MailboxAccount.tsx
 msgid "Posting is paused for this account"
 msgstr "Posting is paused for this account"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Press {autofillShortcut} in a login field to fill the next saved login."
+msgstr ""
+"Press {autofillShortcut} in a login field to fill the next saved login."
 
 #: packages/core/src/app/entry-modes/login.tsx
 msgid "Press Enter / submit the form right after the credentials are filled in."

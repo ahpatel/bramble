@@ -61,6 +61,21 @@ export function GeneralSection() {
 	// Turning the passkey provider on can fail in the background (another extension already holds
 	// the browser's WebAuthn proxy), so the switch reverts and says why.
 	const [passkeyProviderError, setPasskeyProviderError] = useState<string | null>(null);
+	// The chord the browser actually has bound to the autofill cycle command. Read rather than
+	// assumed: the user can rebind or clear it in the browser's own shortcuts page, and that page
+	// is the only place the binding is stored.
+	const [autofillShortcut, setAutofillShortcut] = useState<string | null>(null);
+	useEffect(() => {
+		if (!hasAutofillToggle) return;
+		let cancelled = false;
+		void shell.getAutofillShortcut?.().then((shortcut) => {
+			if (!cancelled) setAutofillShortcut(shortcut);
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [hasAutofillToggle, shell]);
+
 	/** What the chosen click behaviour means, in the row's own words. */
 	const autofillTriggerHint = (trigger: AutofillTrigger): string => {
 		if (trigger === "focus") return t`Saved logins open as soon as you click into a field.`;
@@ -436,6 +451,36 @@ export function GeneralSection() {
 					</SelectField>
 				</div>
 			</Row>
+
+			{/* The browser owns the binding; this row reports what it is and sends the user to the
+			    page that can change it. A shortcut that says nothing here is a shortcut nobody
+			    will find, which is why the cycle command ships with a default chord. */}
+			{hasAutofillToggle && prefs.autofillEnabled && (
+				<Row
+					icon={<Keyboard className="w-4 h-4 text-primary" />}
+					title={t`Cycle logins with the keyboard`}
+					subtitle={
+						autofillShortcut
+							? t`Press ${autofillShortcut} in a login field to fill the next saved login.`
+							: t`No shortcut is set. Set one in your browser's extension shortcuts.`
+					}
+				>
+					<div className="flex items-center gap-2">
+						{autofillShortcut && (
+							<kbd className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+								{autofillShortcut}
+							</kbd>
+						)}
+						<Button
+							variant="secondary"
+							size="sm"
+							onClick={() => void shell.openShortcutSettings?.()}
+						>
+							{t`Change`}
+						</Button>
+					</div>
+				</Row>
+			)}
 
 			{/* The extensions' corner card, or Android's own save prompt. */}
 			{canSaveCapture && (

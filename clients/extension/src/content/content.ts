@@ -902,6 +902,86 @@ function selectMatch(
 	}).then((response) => applySelectResponse(intent, response, pageIsLive));
 }
 
+/** The entry the shortcut filled last, so repeated presses advance instead of restarting. */
+let cycleState: {
+	field: HTMLInputElement;
+	key: string;
+	index: number;
+	at: number;
+} | null = null;
+// A fill is a round trip; a second press before it lands would skip an entry the user never saw.
+let cyclePending = false;
+const CYCLE_RESET_MS = 6000;
+
+/** The entries the shortcut would cycle for `field`, in the order the panel would show them. */
+function cycleEntries(
+	field: HTMLInputElement,
+): { matches: MatchSummary[]; otpOnly: boolean } | null {
+	if (!cachedResult) return null;
+	const kind = kindOf(getPageFields(), field);
+	if (kind === "card") {
+		const cards = cardRows(cachedResult);
+		return cards.matches.length > 0 ? { matches: cards.matches, otpOnly: false } : null;
+	}
+	if (kind === "otp") {
+		const otps = entriesForKind(cachedResult, "otp");
+		return otps.length > 0 ? { matches: otps, otpOnly: true } : null;
+	}
+	const rows = loginRows(field, cachedResult.logins);
+	return rows.matches.length > 0 ? { matches: rows.matches, otpOnly: false } : null;
+}
+
+/**
+ * Fill the next (or previous) entry for the field the user is in, driven by the browser command.
+ *
+ * A command is a genuine user gesture - the page cannot synthesize one - so this fills directly
+ * rather than opening a panel. The background still re-checks that a login matches the verified
+ * page origin before returning any secret, exactly as it does for a click.
+ *
+ * Only the focused field is served. A frame with no focused candidate does nothing, which is what
+ * keeps the message (sent to every frame in the tab) from filling a form nobody is looking at.
+ */
+function cycleAutofill(back: boolean): void {
+	if (autofillDisabled || cyclePending) return;
+	if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+	const field = focusedCandidate() ?? (pickerIsOpen() ? anchorField() : null);
+	if (!field) return;
+	if (cachedResult?.locked) {
+		showLockedPicker(field, cachedResult.hasPotentialMatch);
+		return;
+	}
+	if (!cachedResult) {
+		queryAutofill();
+		return;
+	}
+	const list = cycleEntries(field);
+	if (!list) return;
+	const kind = kindOf(getPageFields(), field);
+	if (!kind) return;
+	const key = list.matches.map((m) => m.id).join("\0");
+	const total = list.matches.length;
+	const now = Date.now();
+	const same =
+		cycleState !== null &&
+		cycleState.field === field &&
+		cycleState.key === key &&
+		now - cycleState.at < CYCLE_RESET_MS;
+	// A new cycle starts before the first entry (forward) or after the last (back), so one
+	// press lands on the expected end without special-casing the wrap below.
+	const base = same ? cycleState!.index : back ? 0 : -1;
+	const index = (base + (back ? -1 : 1) + total) % total;
+	const entry = list.matches[index];
+	if (!entry) return;
+	cyclePending = true;
+	void selectMatch(entry.id, false, list.otpOnly, field, undefined, { refresh: false }).then(
+		(filled) => {
+			cyclePending = false;
+			if (!filled) return;
+			cycleState = { field, key, index, at: Date.now() };
+			affordance.flash(field, entry.name, `${index + 1}/${total}`, { quick: true });
+		},
+	);
+}
 
 /**
  * Open the full Bramble window on `entryId`, for fields the picker does not fill.

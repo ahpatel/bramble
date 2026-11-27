@@ -7,6 +7,10 @@
 		"message": "Bramble sperren",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
 	},
+	"cmdAutofillCycle": {
+		"message": "Nächste gespeicherte Anmeldung ausfüllen",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
 	"cmdFillLogin": {
 		"message": "Login ausfüllen",
 		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts. Fills the saved login for the page."
@@ -182,6 +186,11 @@
 	"cardUsedHere": {
 		"message": "Hier verwendet",
 		"description": "Badge on the autofill dropdown row for the card already filled elsewhere on this page (a hosted-fields checkout asks once per frame)."
+	},
+	"cmdAutofillCycleBack": {
+		"message": "Vorherige gespeicherte Anmeldung ausfüllen",
+		"description": "Keyboard-shortcut command label shown in chrome://extensions/shortcuts."
+	},
 	"autofillOpenMenu": {
 		"message": "Bramble: aus dem Tresor ausfüllen",
 		"description": "Accessible name for the small Bramble mark inside a login field."
