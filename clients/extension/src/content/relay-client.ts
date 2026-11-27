@@ -53,7 +53,7 @@ export type RelayRender =
 export interface RelayClientHandlers {
 	onPick(entryId: string, otpOnly: boolean): void;
 	onPopout(): void;
-	onHighlight(active: boolean): void;
+	onHighlight(active: boolean, label?: string): void;
 	onUseSuggested(): void;
 	onRegenerate(): void;
 	onNewLogin(): void;
@@ -140,8 +140,8 @@ export function repositionRelayed(rect: RelayRect): void {
 }
 
 /** Withdraw the relayed picker and forget the UI binding. */
-export function closeRelayed(): void {
-	if (relay && relayId) relay.close(relayId);
+export function closeRelayed(collapse = false): void {
+	if (relay && relayId) relay.close(relayId, collapse);
 	relayId = null;
 	uiWindow = null;
 	uiOrigin = null;
@@ -181,9 +181,11 @@ function handleMessage(e: MessageEvent): void {
 			handlers?.onPick(entryId, otpOnlyFlag);
 			break;
 		}
-		case "UI_HIGHLIGHT":
-			handlers?.onHighlight(!!(data as { active?: unknown }).active);
+		case "UI_HIGHLIGHT": {
+			const d = data as { active?: unknown; label?: unknown };
+			handlers?.onHighlight(!!d.active, typeof d.label === "string" ? d.label : undefined);
 			break;
+		}
 		case "UI_POPOUT":
 			handlers?.onPopout();
 			break;

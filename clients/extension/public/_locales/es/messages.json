@@ -186,6 +186,30 @@
 		"message": "Bramble: rellenar desde la bóveda",
 		"description": "Accessible name for the small Bramble mark inside a login field."
 	},
+	"hintLogins": {
+		"message": "Inicios de sesión guardados para este sitio",
+		"description": "One-time hint beside the in-field Bramble mark when the site has saved logins."
+	},
+	"hintLocked": {
+		"message": "Bloqueado: haz clic para desbloquear y rellenar",
+		"description": "One-time hint beside the in-field Bramble mark while the vault is locked."
+	},
+	"hintCards": {
+		"message": "Tarjetas guardadas para el pago",
+		"description": "One-time hint beside the in-field Bramble mark on a payment form."
+	},
+	"hintOtp": {
+		"message": "Códigos de un solo uso guardados",
+		"description": "One-time hint beside the in-field Bramble mark on a one-time-code field."
+	},
+	"hintGeneratedPassword": {
+		"message": "Hay una contraseña segura lista",
+		"description": "One-time hint beside the in-field Bramble mark on a signup password field."
+	},
+	"hintAlias": {
+		"message": "Crear un alias de correo",
+		"description": "One-time hint beside the in-field Bramble mark on a signup email field."
+	},
 	"savedLogin": {
 		"message": "Inicio de sesión guardado",
 		"description": "Primary label for an entry with no name and no username, e.g. from an import."
@@ -202,5 +226,8 @@
 		"message": "Abrir en Bramble",
 		"description": "Row action that opens the entry's details in a Bramble window."
 	},
+	"hudFillRefused": {
+		"message": "No se pudo rellenar",
+		"description": "HUD shown when a keyboard pick cannot fill, such as when the vault is locked or the site no longer matches."
 	}
 }

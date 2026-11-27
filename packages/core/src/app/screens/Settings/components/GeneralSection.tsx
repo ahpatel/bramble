@@ -5,6 +5,7 @@ import {
 	Keyboard,
 	KeyRound,
 	Lock,
+	MousePointerClick,
 	Power,
 	Rows3,
 	ShieldCheck,
@@ -17,7 +18,9 @@ import { useEffect, useState } from "react";
 import { useCan, usePlatform } from "../../../../context/PlatformContext";
 import { useAutostart } from "../../../../hooks/useAutostart";
 import {
+	type AutofillTrigger,
 	isAutofillDensity,
+	isAutofillTrigger,
 	usePrefs,
 } from "../../../../hooks/usePrefs";
 import { useVaultActions } from "../../../../hooks/useVault";
@@ -58,6 +61,14 @@ export function GeneralSection() {
 	// Turning the passkey provider on can fail in the background (another extension already holds
 	// the browser's WebAuthn proxy), so the switch reverts and says why.
 	const [passkeyProviderError, setPasskeyProviderError] = useState<string | null>(null);
+	/** What the chosen click behaviour means, in the row's own words. */
+	const autofillTriggerHint = (trigger: AutofillTrigger): string => {
+		if (trigger === "focus") return t`Saved logins open as soon as you click into a field.`;
+		if (trigger === "shortcut") {
+			return t`Nothing is drawn on the page. Use the keyboard shortcut to fill a login.`;
+		}
+		return t`A small Bramble mark appears in the field. Click it to see saved logins, or type a username to see it completed.`;
+	};
 
 	// The current vault's name, edited inline, and renamed on every device in its sync group.
 	const { vaults, activeId } = useVaultRegistry();
@@ -371,6 +382,36 @@ export function GeneralSection() {
 				</Row>
 			)}
 
+			{/* How the dropdown is reached. "Icon" is the quiet default: a mark in the field, a
+			    completion while typing, and no panel until asked. Persisting is the background's
+			    contract; setAutofillTrigger only moves what is already on screen. The rows are
+			    hidden with autofill off: there is nothing to reach. */}
+			{hasAutofillToggle && prefs.autofillEnabled && (
+				<Row
+					icon={<MousePointerClick className="w-4 h-4 text-primary" />}
+					title={t`When you click a login field`}
+					subtitle={autofillTriggerHint(prefs.autofillTrigger)}
+				>
+					<div className="w-44">
+						<SelectField
+							label={t`Show`}
+							value={prefs.autofillTrigger}
+							onChange={(e) => {
+								const next = e.target.value;
+								if (!isAutofillTrigger(next)) return;
+								void (async () => {
+									await update("autofillTrigger", next);
+									await shell.setAutofillTrigger?.(next);
+								})();
+							}}
+						>
+							<option value="icon">{t`Bramble icon`}</option>
+							<option value="focus">{t`Open on focus`}</option>
+							<option value="shortcut">{t`Shortcut only`}</option>
+						</SelectField>
+					</div>
+				</Row>
+			)}
 
 			<Row
 				icon={<Rows3 className="w-4 h-4 text-primary" />}
@@ -395,6 +436,7 @@ export function GeneralSection() {
 					</SelectField>
 				</div>
 			</Row>
+
 			{/* The extensions' corner card, or Android's own save prompt. */}
 			{canSaveCapture && (
 				<Row

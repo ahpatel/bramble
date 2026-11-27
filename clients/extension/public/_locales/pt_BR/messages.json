@@ -186,6 +186,30 @@
 		"message": "Bramble: preencher do cofre",
 		"description": "Accessible name for the small Bramble mark inside a login field."
 	},
+	"hintLogins": {
+		"message": "Logins salvos para este site",
+		"description": "One-time hint beside the in-field Bramble mark when the site has saved logins."
+	},
+	"hintLocked": {
+		"message": "Bloqueado: clique para desbloquear e preencher",
+		"description": "One-time hint beside the in-field Bramble mark while the vault is locked."
+	},
+	"hintCards": {
+		"message": "Cartões salvos para o pagamento",
+		"description": "One-time hint beside the in-field Bramble mark on a payment form."
+	},
+	"hintOtp": {
+		"message": "Códigos de uso único salvos",
+		"description": "One-time hint beside the in-field Bramble mark on a one-time-code field."
+	},
+	"hintGeneratedPassword": {
+		"message": "Uma senha forte está pronta",
+		"description": "One-time hint beside the in-field Bramble mark on a signup password field."
+	},
+	"hintAlias": {
+		"message": "Criar um alias de e-mail",
+		"description": "One-time hint beside the in-field Bramble mark on a signup email field."
+	},
 	"savedLogin": {
 		"message": "Login salvo",
 		"description": "Primary label for an entry with no name and no username, e.g. from an import."
@@ -202,5 +226,8 @@
 		"message": "Abrir no Bramble",
 		"description": "Row action that opens the entry's details in a Bramble window."
 	},
+	"hudFillRefused": {
+		"message": "Não foi possível preencher",
+		"description": "HUD shown when a keyboard pick cannot fill, such as when the vault is locked or the site no longer matches."
 	}
 }

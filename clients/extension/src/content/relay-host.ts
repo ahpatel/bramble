@@ -19,6 +19,7 @@ import { hostOffset } from "./host-offset";
 import { isLegible } from "./legibility";
 import { onTeardown } from "./lifecycle";
 const AUTOFILL_UI_URL = api.runtime.getURL("autofill-ui.html");
+import { MARK_INSET } from "./mark";
 import { MENU_COLLAPSE_MS, MENU_FADE_MS, maxMenuHeight, relayWidth } from "./placement";
 
 const MAX_HEIGHT = 400;
@@ -33,6 +34,7 @@ type Hosted = {
 
 let hosted: Hosted | null = null;
 let watchdog: number | null = null;
+let relayExit: Animation | null = null;
 
 /**
  * A relayed rect is in this frame's VIEWPORT coordinates, but the host is
@@ -75,8 +77,23 @@ function stopWatchdog(): void {
 	}
 }
 
+/** Cancel a collapse-to-mark exit and restore the host's normal transform. */
+function cancelRelayExit(): void {
+	if (relayExit) {
+		relayExit.cancel();
+		relayExit = null;
+	}
+	if (hosted) {
+		hosted.host.style.transformOrigin = "";
+		// The base host style is pointer-events: auto (a modal's body can be none). Clearing it
+		// would inherit the modal's none and make the repositioned menu unclickable.
+		hosted.host.style.pointerEvents = "auto";
+	}
+}
+
 /** Drop the hosted picker. Called on withdrawal, teardown, or a failed trust check. */
 export function destroyRelayHost(): void {
+	cancelRelayExit();
 	stopWatchdog();
 	if (hosted) {
 		hosted.host.remove();
@@ -103,10 +120,14 @@ function startWatchdog(): void {
 
 /** Create or re-park the hosted picker for a descendant's relayed anchor. */
 export function showRelayHost(anchor: RelayedAnchor): void {
+	if (!AUTOFILL_UI_URL) return;
 	if (hosted && hosted.relayId !== anchor.relayId) destroyRelayHost();
 	if (hosted) {
+		// A new query during the 240ms exit (the user re-opened the field) takes the host back.
+		cancelRelayExit();
 		hosted.rect = anchor.rect;
 		position(hosted);
+		startWatchdog();
 		return;
 	}
 	const host = document.createElement("div");
@@ -139,9 +160,55 @@ export function hostedFrameForTest(): HTMLIFrameElement | null {
 	return hosted?.frame ?? null;
 }
 
-/** Withdraw the host for `relayId`, ignoring a stale id from an already-replaced relay. */
-export function closeRelayHost(relayId: string): void {
-	if (hosted?.relayId === relayId) destroyRelayHost();
+/** Withdraw the host for `relayId`, ignoring a stale id from an already-replaced relay.
+ *  `collapse` is a pick: shrink the card into the field's in-field mark before destroying it.
+ *  A plain dismissal still closes instantly. */
+export function closeRelayHost(relayId: string, collapse = false): void {
+	if (hosted?.relayId !== relayId) return;
+	const h = hosted;
+	if (!collapse || typeof h.host.animate !== "function") {
+		destroyRelayHost();
+		return;
+	}
+	const rect = h.host.getBoundingClientRect();
+	if (rect.width < 1 || rect.height < 1) {
+		destroyRelayHost();
+		return;
+	}
+	stopWatchdog();
+	cancelRelayExit();
+	h.host.style.pointerEvents = "none";
+	const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+	if (reduced) {
+		relayExit = h.host.animate([{ opacity: 1 }, { opacity: 0 }], {
+			duration: MENU_FADE_MS,
+			easing: "ease-out",
+			fill: "forwards",
+		});
+	} else {
+		const markX = h.rect.rtl
+			? h.rect.x + MARK_INSET + 13
+			: h.rect.x + h.rect.width - MARK_INSET - 13;
+		const markY = h.rect.y + h.rect.height / 2;
+		h.host.style.transformOrigin = `${markX - rect.left}px ${markY - rect.top}px`;
+		const base = getComputedStyle(h.host).transform;
+		const baseTransform = base && base !== "none" ? base : "";
+		relayExit = h.host.animate(
+			[
+				{ transform: `${baseTransform} scale(1)`.trim(), opacity: 1 },
+				{ transform: `${baseTransform} scale(0.02)`.trim(), opacity: 0 },
+			],
+			{ duration: MENU_COLLAPSE_MS, easing: "cubic-bezier(0.4, 0, 0.2, 1)", fill: "forwards" },
+		);
+	}
+	relayExit.onfinish = () => {
+		// Same as picker.ts: release the fill-forwards end state. The host element is removed
+		// below so today the stuck fill dies with it, but cancel anyway so a future reuse of
+		// the host cannot inherit a collapsed animation.
+		relayExit?.cancel();
+		relayExit = null;
+		destroyRelayHost();
+	};
 }
 
 // The only message this frame accepts from the UI is its height. It must come from

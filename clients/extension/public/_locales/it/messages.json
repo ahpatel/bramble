@@ -186,6 +186,30 @@
 		"message": "Bramble: compila dalla cassaforte",
 		"description": "Accessible name for the small Bramble mark inside a login field."
 	},
+	"hintLogins": {
+		"message": "Accessi salvati per questo sito",
+		"description": "One-time hint beside the in-field Bramble mark when the site has saved logins."
+	},
+	"hintLocked": {
+		"message": "Bloccato: fai clic per sbloccare e compilare",
+		"description": "One-time hint beside the in-field Bramble mark while the vault is locked."
+	},
+	"hintCards": {
+		"message": "Carte salvate per il pagamento",
+		"description": "One-time hint beside the in-field Bramble mark on a payment form."
+	},
+	"hintOtp": {
+		"message": "Codici monouso salvati",
+		"description": "One-time hint beside the in-field Bramble mark on a one-time-code field."
+	},
+	"hintGeneratedPassword": {
+		"message": "Una password forte è pronta",
+		"description": "One-time hint beside the in-field Bramble mark on a signup password field."
+	},
+	"hintAlias": {
+		"message": "Crea un alias email",
+		"description": "One-time hint beside the in-field Bramble mark on a signup email field."
+	},
 	"savedLogin": {
 		"message": "Accesso salvato",
 		"description": "Primary label for an entry with no name and no username, e.g. from an import."
@@ -202,5 +226,8 @@
 		"message": "Apri in Bramble",
 		"description": "Row action that opens the entry's details in a Bramble window."
 	},
+	"hudFillRefused": {
+		"message": "Impossibile compilare",
+		"description": "HUD shown when a keyboard pick cannot fill, such as when the vault is locked or the site no longer matches."
 	}
 }

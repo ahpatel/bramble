@@ -1,11 +1,10 @@
-// Anti-clickjacking for Bramble's page-level UI (the picker, the relayed picker, the passkey card):
-// a host the page has hidden, faded, clipped, moved off screen or covered can't take a click.
+// Shared legibility checks for the autofill host. The picker and the relayed host run in different
+// frames but the same content-script bundle, so the trust rule lives in one place.
 
 /** A click this soon after the UI appeared may have been aimed at whatever was there before. */
 export const EARLY_CLICK_MS = 500;
-
-/** Product of the `opacity()` functions in a computed filter (1 when there are none). */
-function filterOpacity(filter: string): number {
+/** Opacity contributed by `filter: opacity(...)`; other filters are allowed (Dark Reader inverts). */
+export function filterOpacity(filter: string): number {
 	let out = 1;
 	for (const m of filter.matchAll(/opacity\(\s*([\d.]+)(%?)\s*\)/g)) {
 		out *= Number(m[1]) / (m[2] ? 100 : 1);
@@ -13,10 +12,9 @@ function filterOpacity(filter: string): number {
 	return out;
 }
 
-/** The opacity `el` is painted at: neither `opacity` nor `filter` inherits, so an ancestor's
- * never shows in the element's own computed style. Other ancestor filters are allowed (Dark
- * Reader's filter mode inverts every page's root). */
-function effectiveOpacity(el: Element): number {
+/** The opacity the picker is painted at: neither `opacity` nor `filter` inherits, so an ancestor's
+ *  never shows in the host's own computed style. */
+export function effectiveOpacity(el: Element): number {
 	let out = 1;
 	for (let node: Element | null = el; node; node = node.parentElement) {
 		const cs = getComputedStyle(node);

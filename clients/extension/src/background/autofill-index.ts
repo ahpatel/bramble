@@ -50,7 +50,9 @@ import { generateSuggestion } from "./password-gen";
 import {
 	getAutofillDensity,
 	getAutofillEnabled,
+	getAutofillIconHintSeen,
 	getAutofillTrigger,
+	markAutofillIconHintSeen,
 } from "./prefs";
 import { extensionOnly, type MessageEnvelope, on } from "./router";
 import {
@@ -826,7 +828,11 @@ async function autofillQuery(
 		const result = queryResult(page.hostname, effectivePort(page), hasLogin, hasCard, hasOtp);
 		result.sameSiteAsTop = sameSiteAsTop(sender);
 		if (hasLogin && !result.locked && launchGrantFor(sender, page)) result.launch = true;
+		// How the list is asked for rides on the same answer, so the content script never has to
+		// make a second storage-shaped request to draw the right affordance.
+		result.trigger = trigger;
 		result.density = density;
+		result.hint = !(await getAutofillIconHintSeen());
 		if (hasCard && !result.locked) {
 			// Only ever an id this very response already carries, so the page learns nothing it
 			// could not read off `cards` itself.
@@ -1255,6 +1261,18 @@ on(
 	}),
 );
 
+on(
+	"AUTOFILL_SET_TRIGGER",
+	extensionOnly(async (message) => {
+		const { trigger } = (message.payload ?? {}) as { trigger?: unknown };
+		if (!isAutofillTrigger(trigger)) {
+			return { ok: false, error: "invalid_request" };
+		}
+		await broadcastAutofillTrigger(trigger);
+		return { ok: true, data: null };
+	}),
+);
+
 // Row density: same shape as the trigger push, applied to pages that are already open.
 on(
 	"AUTOFILL_SET_DENSITY",
@@ -1267,6 +1285,15 @@ on(
 		return { ok: true, data: null };
 	}),
 );
+
+// The one-time hint was shown on a page. Stored here rather than read by the content script so
+// the pref has one writer, and a page that never shows the hint cannot make it vanish elsewhere.
+on("AUTOFILL_HINT_SEEN", async (_message, sender) => {
+	if (!pageSenderHostname(sender)) return { ok: false, error: "forbidden" };
+	await markAutofillIconHintSeen();
+	return { ok: true, data: null };
+});
+
 /** Create one alias for the page the sender is on. The site comes from the VERIFIED sender, not
  * from the message: it reaches the provider and lands in the user's dashboard, and a page must
  * not be able to name a different one. */

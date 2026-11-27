@@ -223,6 +223,278 @@ is suppressed when an interactive captcha is present (see
 TOTP codes are computed in the background; only the resulting digits are filled,
 never the seed. See [totp.md](totp.md).
 
+## Reaching the list: quiet by default
+
+`pref.autofillTrigger` (Settings -> General -> **When you click a login field**) chooses how the
+picker is reached. It is device-scoped because the background reads it on every query, including
+while the vault is locked.
+
+| mode | on focus, hover, or typing | what is drawn |
+| --- | --- | --- |
+| `icon` (default) | nothing opens | a bramble berry inside the field, with the match count, plus a username completion |
+| `focus` | the list opens | the same mark, with the list as before |
+| `shortcut` | nothing | nothing; the browser command fills and the pick chip confirms it |
+
+The mark is a closed-shadow host pinned to the field (`content/affordance.ts`). One host carries
+the mark, the completion, the one-time hint and the pick chip, so there is one rAF tracker and one
+teardown. It has **no fill path of its own**: a click only calls the same `showFor` the focus path
+uses, and a fill still needs a trusted click inside the picker, a browser command, or one of the
+Enter paths below. Those Enter paths are gated on this mark being drawn where the user can see it
+(`markTrustworthy`): the host must be opaque, the button's centre must still be over the field, and
+the ink must clear a 4.5:1 contrast floor against the field's background. A page that hides, fades,
+covers, moves or camouflages the mark cannot turn a stray Enter into a credential fill. A locked
+vault is the
+one branch: the mark opens the unlock pop-out directly instead of drawing the locked row, which is
+the focus-mode path. `pointer-events: none`
+on the host and `auto` on the 26px button keeps the rest of the field clickable. Chromium paints
+its own key/eye icons at the inline end, so the mark is inset 30px there; Firefox has no in-field
+icon and uses 8px. A site can add its own clear or reveal-password control at that same spot once
+the field has a value. The mark hit-tests its centre and steps left in 26px increments until the
+spot belongs to the field or to our own host, and the 26px click zone follows the same inset. A
+control sitting under the mark would otherwise take the click, which is what made the second pick
+on a filled field do nothing.
+
+The mark is the Bramble berry drawn in the field's own ink, not a fixed black: it stays legible on
+a light or a dark field. Its centre carries the number of entries the field would list (cards or
+one-time codes on those fields, logins otherwise), capped at `9+`; a generated password, an alias,
+or a locked vault has no entry count and leaves the centre plain. The number is drawn inside the
+closed shadow root, so the page cannot read how many accounts match it.
+
+The entry name is never a tooltip under the input. On a pick, the mark grows a small chip to its
+left with the entry name, holds it for 2s, then scrolls it into the berry over another 2s and hides.
+The chip borrows the field's ink and font, so it reads as part of the form. A keyboard cycle uses
+the same chip without the 2s slide: a short hold and a 160ms fade, because the cycle is a repeated
+shortcut. With `prefers-reduced-motion` the 2s read is kept but the exit is a 200ms fade in place.
+
+The mark's 26px zone stays live on the field itself, not only on the host element. A click in
+that zone opens the field's list even when the host is not over it at that instant: the menu is
+collapsing over the field, or the pointer has just arrived. This is what makes the filled password
+field's mark work immediately after the username menu closes, instead of the click only focusing
+the field.
+
+While a menu is open it can cover the next field's mark. A click on the left half of that mark
+switches the menu to the field instead of picking the row under the pointer. The row's own "Open
+in Bramble" button sits over the mark's right half, so only the left half means switch; the button
+keeps the rest of its hit area. The content script maps the click from the iframe to the page and
+checks the field under it, so the switch works in both the iframe and shadow renderers.
+
+The mark and chip use the field's inline end (`inset-inline-end`), not a physical side. On an RTL
+field the mark sits at the left, the chip slides in from the left with `-100%`, and the mark-zone
+hit test mirrors. The chip drops its 124px value reserve below 240px, so at 200% zoom it overlays
+the value for its 2s confirmation instead of collapsing to a few pixels.
+
+The mark is not a tab stop: Tab keeps its native focus move. A keyboard user opens the same menu
+with `Alt+ArrowDown` on a candidate field. While the mark is up the field carries
+`aria-haspopup="listbox"` and `aria-expanded`, and the highlighted row is announced through a
+persistent visually hidden live region. `Ctrl`/`Cmd`+`Enter` on a highlighted row opens its details,
+so the row's secondary action is not pointer-only. The menu is drawn in an iframe (or a closed
+shadow root), so `aria-activedescendant` cannot reference its rows across that boundary; the live
+region is the announcement path, and `aria-expanded` carries the open/closed state.
+
+A pick also ends the typed-filter session. The field now holds the chosen username, so clicking the
+mark again lists every login for the site rather than filtering down to the entry just filled;
+typing in the field starts a new filter.
+
+The first time the mark appears on an install, a one-time hint says what it is ("Saved logins for
+this site", "Locked: click to unlock and fill"). The content script reports that it was shown;
+the background owns `pref.autofillIconHintSeen` and stops sending `hint` after that, so the hint
+cannot follow the user from site to site and a page that never draws it cannot suppress it
+elsewhere.
+
+### Inline username completion
+
+In `icon` mode, the best matching login's username is painted as ghost text after what the user has
+typed. It is username-only by construction: the password field never gets a completion, because a
+completion there would reveal the password's length and characters. It appears only after the user
+has typed at least one character, while the username field is focused, the caret is at the end of
+the value, and a saved username starts with the typed text. The ghost, and the mirror span that
+measures it, live in the mark's closed shadow root, so the page cannot read which account is being
+suggested. A completion the ghost did not actually paint (an RTL field, a remainder too wide for
+the field) is not remembered, so Enter cannot accept something never shown. A fully typed saved
+username instead gets the Enter keycap without a ghost, so the exact-match fill has the same
+visible confirmation.
+
+Tab is deliberately not involved: it keeps its native focus move. Enter accepts the completion:
+the whole login for that entry is fetched through `AUTOFILL_SELECT` and filled, so the completion is
+a selection gesture rather than a half-done pick. The password is never written from the ghost
+itself; it comes from the same hostname-authorized fill path as a click. (Earlier builds wrote only
+the username, which read as half an action: the user had chosen the entry and still had to fetch
+the password.)
+
+With the menu open and a username typed, Enter takes the top filtered login and fills both fields.
+An arrow-highlighted row wins on Enter; an empty or page-prefilled field keeps Enter as the form's
+submit, so a credential is not filled just by focusing.
+
+With the menu closed, Enter takes the visible completion. The value must have come from the user's
+own typing: an empty field gets no ghost, and a value the page pre-filled (or the browser's own
+autofill wrote) does not turn the submit key into a Bramble fill. The mark must also be drawn,
+unobscured and painted in a visible ink over the field; if the page hides, fades, covers, moves or
+camouflages it, Enter does not fill.
+
+A fully typed username that exactly matches a saved login shows the Enter keycap (without a ghost)
+and fills on Enter, provided the password field is on-screen and empty. The entry is fixed when the
+keycap is painted, and the field must still hold the value the user typed; a page that changes the
+field cannot steer the fill to another saved account. The fill is skipped when the password field
+holds a value, so a typed or browser-filled password keeps Enter as the form's submit.
+
+### The adaptive skin
+
+The menu used to be a 16px-radius white card on every site, which read as an extension floating
+over the page rather than part of the form. `content/skin.ts` reads the anchor field's computed
+style and returns a small `DropdownSkin`:
+
+- **radius**: clamped to 16px; a pill-shaped field is capped at 10 so the menu is not a lozenge.
+- **surface**: the field's effective background (walking ancestors through a transparent field),
+  **lifted** toward the popover: 72% white for a light field, 22% of an elevated grey for a dark
+  one. Borrowing the field's exact fill made the menu read as another form control - on a grey SaaS
+  field it looked flat - while the radius, border and font still make it belong to the form.
+- **ink**: the field's text colour, with a 4.5:1 contrast floor against the lifted surface.
+- **muted**: a softer ink for the username, badge and row actions, still at 4.5:1 against the
+  lifted surface. A fixed theme grey broke on a dark field under a light OS.
+- **border**: the field's border colour when it has a visible one; otherwise the renderer derives
+  a hairline from the ink.
+- **font**: the field's family only. Size, weight and colour stay ours, so a tiny or huge page font
+  cannot shrink or blow up the menu. The extension-origin iframe uses it; the COEP shadow renderer
+  keeps the default stack, because it lives in the page's document where the page's `@font-face`
+  rules would apply and could draw the menu in blank or swapped glyphs.
+- **dark / compact**: for shadow strength, `color-scheme` and row height.
+
+The monogram is one treatment, tinted from the field's own ink, the way the vault list draws its
+avatars. A per-entry colour palette put nine fixed hues on a menu that otherwise borrows the site's
+palette; the initials already identify the row, so colour only competed with the name.
+
+Every colour is parsed and re-serialized and every length is clamped before it reaches a
+declaration, so a page can make its own menu ugly but cannot inject CSS through it. `skinKey` is
+part of the render cache key, so a theme switch that changes the field repaints. The skin itself is
+cached for a second per field: it costs several computed-style reads and a canvas colour parse, and
+a render happens on every keystroke that changes the filtered list.
+
+Settings -> General -> **Dropdown rows** chooses the row layout independently of how the menu is
+opened. **Comfortable** (the default) gives the entry title the full row, wrapping to a second line
+when it needs one, with the username on the next line; a distinguishing suffix such as "Dad" or
+"Mom" is not the part that gets clipped. **Compact** puts the name and username on one line with a
+30px monogram and 54px rows for density. The comfortable row keeps the 40px avatar; a field shorter
+than 38px still falls back to compact rows so the menu fits. The keyboard legend is deliberately
+gone: the arrow/Enter path still works, and the shortcut is documented in Settings rather than as
+`↑↓ ⏎ esc` chrome in the menu. A fresh open gets a 160ms unfold; a filtered re-render does not, so
+typing in a field never replays the animation.
+
+### Last used here
+
+A successful login fill remembers the entry for its **registrable domain** in
+`autofill.loginCarry` in `chrome.storage.session`. The next query for that site returns it as
+`carriedLoginId`, and the content script moves it to the head of the filtered list and marks the row
+"Used here" (a text badge in normal rows; a dot with the same title in the compact one, where the
+words would crowd out the name). The card carry is the same idea per tab (see "The card the tab already used"); the
+login carry is per site because a login is used again across visits and tabs.
+
+Initials come from grapheme clusters and skip Jr/Sr suffixes; a nameless entry uses its
+username, or "Saved login" when both are empty.
+
+Security and lifetime:
+
+- The stored value is `{site: {vaultId, entryId, at}}`: an opaque entry id and the site's
+  registrable domain, never a username, password, or entry name. Session storage is memory-only and
+  cleared when the browser closes; it is not written to disk, and content scripts cannot read it.
+- The background returns the id only when it is already one of the logins in that hostname's query
+  response (`result.logins.some(...)`), so a carry can change the order and the badge of a row,
+  never what is offered. A page cannot read the query response or the menu.
+- It is scoped to the active vault (`vaultId`) and cleared with the index on lock. The map is capped
+  at 100 sites (oldest write evicted) and expires after 30 days; the browser session usually ends
+  first.
+- A menu pick refreshes the query after the fill so the next open leads with the picked login. A
+  rapid keyboard cycle does **not** refresh (`selectMatch(..., { refresh: false })`): reordering the
+  list under the cycle would make the next press repeat the entry just filled. The carry is still
+  recorded and lands on the next natural query.
+
+The mark's ghost completion and the cycle both read the same ordered list, so the username preview
+and the first shortcut press also start with the site's last-used login.
+
+### Placement and height
+
+The menu opens below the field unless the space there is smaller than the menu and the space above
+is larger, in which case it flips above; the entrance animation follows the direction. The first
+frame uses an estimated height (the row count and the compact/normal row height), so a field near
+the bottom does not flash below and then jump.
+
+The mark and picker hosts are `position: absolute` children of `<body>`, so their translate counts
+from their containing block's origin, not the viewport. Usually that is the document origin minus
+the scroll offset, but a page that positions `<html>` or `<body>` (a dialog scroll lock, a fixed
+body, a transformed wrapper) moves it. `host-offset.ts` probes the origin with an untranslated 0x0
+box beside the host, and the mark, the local picker and the relay host all place themselves through
+it. Without the probe, USPS's scroll-locked login page drew the menu about 120px to the right of
+the fields.
+
+The menu is also capped to the larger of the two gaps, not just the design's 380px. A menu taller
+than both the space above and below used to stay below at its full height and clip against the
+window edge; now it draws at the cap and scrolls inside itself, so the bottom border and the last
+row are always reachable. The cap is recomputed on every position frame and sent to the iframe when
+the viewport changes.
+
+The menu adapts to its own width with container queries, so 200% zoom does not turn the entry
+name into a single character. Below 320px the carried badge collapses to its dot; below 260px the
+compact row stacks the name over the username; below 220px the avatar is hidden. At 200% zoom on a
+320px screen the menu is ~152px wide and the name still gets ~66px, with the open action reachable.
+
+The match list itself is capped at 50 rows. A site with 1,000 saved logins should not put 1,000
+DOM rows in an iframe for a menu that shows six; typing narrows the list, and a "Keep typing to
+narrow the list" note after the 50th row says why it ended. The query response is capped at 200
+matches per kind before it leaves the background, so the structured clone and the per-keystroke
+filter stay bounded as well. The width is also clamped to the viewport, so the 280px compact floor
+yields at 200% zoom on a narrow screen.
+
+The iframe's list is watched with a `ResizeObserver`. A webfont that arrives after the first paint,
+a browser zoom, or a scrollbar appearing can change the list's height; without the observer the
+parent keeps the pre-change height and the last row (or the bottom border) is cut off on exactly
+the sites whose form fonts load late. The relayed host re-places itself on the same height report.
+
+### Opening an entry from a row
+
+Each match row carries a small "Open in Bramble" action (an external-link glyph at its trailing
+edge). It shares one trailing slot with the "Used here" badge: at rest the badge shows and the
+action stays out of sight; hovering the row, or moving the keyboard highlight onto it, swaps them.
+The slot is one grid cell, so the row's right edge never moves and the text column never reflows.
+A touch device has no hover to swap on, so both sit side by side there, always reachable. It is a
+navigation, not a fill: the click posts `UI_OPEN_ENTRY` over the picker's private channel, the
+content script checks the id against the rows it rendered and the picker's visibility, and then
+asks the background to open the full Bramble window on `/vault/<entryId>`.
+
+- The window is the existing pop-out (`popup.html?detached=1`) with a `POPOUT_OPEN` handoff path. If
+  a pop-out is already open, the background focuses it and sends a `NAVIGATE` message instead of
+  creating a second window; the app's router runs the route's own guards.
+- Only an opaque entry id and a route travel. Nothing is filled and nothing is returned to the page.
+  The row action lives in the isolated renderer, takes the same trusted-click/visibility gate as a
+  pick, and a page cannot synthesize it.
+- The action is on match rows only. The locked row and the suggestion/alias rows have no entry to
+  open. `Ctrl/Cmd+Enter` on a highlighted row is the keyboard path to the same action; it uses the
+  id the iframe reported for the highlight and the same rendered-id check as the click.
+
+### The keyboard commands
+
+Three manifest commands are relayed by the background. `autofill-cycle` and `autofill-cycle-back`
+step through the list in the active tab; `fill-login` fills the page's login without opening the
+list. `fill-login` ships with `Ctrl+Shift+L` (`Command+Shift+L` on macOS); `autofill-cycle` and
+`autofill-cycle-back` have no default, because Alt+Shift+L duplicated the fill chord's class and
+took over the macOS Option+Shift+L keystroke on every page. The user binds the cycle commands in
+the browser's
+extension-shortcuts page; Settings reads the bound chord from `commands.getAll()` rather than
+assuming it, and "Change" opens that page where the browser allows it.
+
+A command is a genuine user gesture, so it fills directly instead of opening the list. Only the
+frame with a focused candidate field acts; every other frame ignores the message, which is what
+keeps a tab-wide message from filling a form nobody is looking at. The first press fills the first
+entry, the next advances and wraps, and the sequence resets when the field or the match set changes
+or after six seconds. The pick still goes through `AUTOFILL_SELECT`, so the background re-checks
+the verified page origin before returning a login's secrets. A chip extends from the mark with
+`2/3` and the entry name, then fades out, so cycling is never blind. The cycle's chip is the short
+variant (800ms hold, 160ms fade) rather than the 2s pick animation.
+
+`fill-login` chooses the login whose username starts with what is typed in the username field,
+else whose name does, else the site's first. The background issues a one-shot, in-memory grant for
+the tab, so this command also fills while **Autofill on web pages** is off; the grant is spent by
+the fill, expires after 30 seconds, and dies with the session. Locked, the command opens the
+unlock-only pop-out instead of asking the page for anything.
+
 ## The master switch
 
 Settings -> General -> **Autofill on web pages** (extension only; mobile's autofill is
@@ -641,13 +913,21 @@ sites; the one header that blocks it is `Cross-Origin-Embedder-Policy:
 require-corp`, where the readiness handshake times out and the content script
 falls back to the closed-shadow dropdown.
 
+The shadow (COEP) fallback carries the same list semantics and keyboard path as the iframe:
+`role="listbox"` on the list, `role="option"`/`aria-selected` on the rows, the `tp-more` note as
+the list's description, and Arrow/Enter/Escape navigation. A COEP e2e opens the fallback and fills
+from the keyboard.
+
+The **in-field mark** is deliberately not an iframe: it has to sit inside the field's own box, and
+it holds no rows, ids or secrets. It is a page-DOM host with a closed shadow root
+(`host.shadowRoot === null`), so the page cannot read the mark, the username completion or the chip
+text. A page can cover it or remove it, which costs the user an affordance, never a fill: the mark
+only opens the list, and the list's own origin boundary and trusted-click gate are unchanged.
+
 The iframe holds **no secrets**. It receives only summaries (name + masked
 secondary) over `postMessage` and reports the user's pick back; the fill still
 happens in the content script against the real page inputs, and the background
 returns secrets only to the initiating content script's original request.
-
-The save card's Username box is the other thing kept behind this boundary, for
-what is typed rather than what is shown: see "Typing on the card".
 
 The iframe sits in the page's DOM, so `window.parent` is the **page's** window,
 which the content script shares. A check on the parent's source and origin cannot

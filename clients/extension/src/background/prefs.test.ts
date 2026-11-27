@@ -66,16 +66,6 @@ describe("getClipboardSeconds", () => {
 	});
 });
 
-describe("getPasskeyConfirmOncePerUnlock", () => {
-	it("defaults to asking every time and only honors a boolean", async () => {
-		const read = async (local?: Record<string, unknown>) =>
-			(await loadPrefs(local)).prefs.getPasskeyConfirmOncePerUnlock();
-		expect(await read()).toBe(false);
-		expect(await read({ "pref.passkeyConfirmOncePerUnlock": true })).toBe(true);
-		expect(await read({ "pref.passkeyConfirmOncePerUnlock": "yes" })).toBe(false);
-	});
-});
-
 describe("getOfferToSavePref", () => {
 	it("defaults to true and only honors a boolean", async () => {
 		expect(await (await loadPrefs()).prefs.getOfferToSavePref()).toBe(true);
@@ -112,5 +102,41 @@ describe("never-save sites", () => {
 		await prefs.appendNeverSaveSite("x.com"); // dedup
 		await prefs.appendNeverSaveSite("y.com");
 		expect((store["pref.neverSaveSites"] as string[]).sort()).toEqual(["x.com", "y.com"]);
+	});
+});
+
+describe("getAutofillTrigger", () => {
+	it("defaults to the quiet icon mode", async () => {
+		expect(await (await loadPrefs()).prefs.getAutofillTrigger()).toBe("icon");
+	});
+
+	it("keeps the three modes this build understands", async () => {
+		for (const mode of ["icon", "focus", "shortcut"] as const) {
+			expect(
+				await (await loadPrefs({ "pref.autofillTrigger": mode })).prefs.getAutofillTrigger(),
+			).toBe(mode);
+		}
+	});
+
+	it("treats the fork-only 'auto' name as unknown, so it follows the icon default", async () => {
+		expect(
+			await (await loadPrefs({ "pref.autofillTrigger": "auto" })).prefs.getAutofillTrigger(),
+		).toBe("icon");
+	});
+
+	it("falls back to icon for a value written by another build", async () => {
+		expect(
+			await (await loadPrefs({ "pref.autofillTrigger": "hover" })).prefs.getAutofillTrigger(),
+		).toBe("icon");
+	});
+});
+
+describe("getPasskeyConfirmOncePerUnlock", () => {
+	it("defaults to asking every time and only honors a boolean", async () => {
+		const read = async (local?: Record<string, unknown>) =>
+			(await loadPrefs(local)).prefs.getPasskeyConfirmOncePerUnlock();
+		expect(await read()).toBe(false);
+		expect(await read({ "pref.passkeyConfirmOncePerUnlock": true })).toBe(true);
+		expect(await read({ "pref.passkeyConfirmOncePerUnlock": "yes" })).toBe(false);
 	});
 });

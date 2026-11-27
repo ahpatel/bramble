@@ -354,6 +354,14 @@ msgstr "보안 코드는 3~4자리입니다."
 msgid "A server you're connected to with ssh -A wants to see and use your keys until Bramble locks."
 msgstr "ssh -A로 연결된 서버가 Bramble이 잠길 때까지 사용자의 SSH 키를 확인하고 사용하려고 합니다."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid ""
+"A small Bramble mark appears in the field. Click it to see saved logins, or "
+"type a username to see it completed."
+msgstr ""
+"A small Bramble mark appears in the field. Click it to see saved logins, or "
+"type a username to see it completed."
+
 #: packages/core/src/app/screens/Settings/components/MailboxSection.tsx
 msgid "A token is at least 16 letters, digits, dashes or underscores"
 msgstr "토큰은 최소 16자의 문자, 숫자, 대시 또는 밑줄로 구성됩니다"
@@ -903,6 +911,10 @@ msgstr "Bramble이 해당 크기나 설정을 지원하지 않습니다."
 #: packages/core/src/app/ErrorBoundary.tsx
 msgid "Bramble hit an unexpected error. Your vault is safe — it stays encrypted on this device. Try reloading; if it keeps happening, reopen the app."
 msgstr "Bramble에 예기치 않은 오류가 발생했습니다. 보관함은 안전하며 이 기기에서 암호화된 상태로 유지됩니다. 새로 고침해 보고, 계속 발생하면 앱을 다시 여세요."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Bramble icon"
+msgstr "Bramble icon"
 
 #: packages/core/src/app/screens/Settings/components/SupportSection.tsx
 msgid "Bramble is free and open source. If it's useful to you, a tip helps keep it going. Scan a code with your wallet, or copy the address. Thank you."
@@ -2932,6 +2944,12 @@ msgstr "메모(선택 사항)"
 msgid "Nothing is archived. Archived items are kept here, out of autofill."
 msgstr "보관된 항목이 없습니다. 보관된 항목은 자동 완성에서 제외되어 여기에 보관됩니다."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid ""
+"Nothing is drawn on the page. Use the keyboard shortcut to fill a login."
+msgstr ""
+"Nothing is drawn on the page. Use the keyboard shortcut to fill a login."
+
 #: packages/core/src/app/screens/Import/util/count-line.tsx
 msgid "Nothing to import"
 msgstr "가져올 항목 없음"
@@ -3064,6 +3082,10 @@ msgstr "창에서 열기"
 #: packages/core/src/app/OptionsApp.tsx
 msgid "Open it from the {0} popup and unlock it with its master password."
 msgstr "{0} 팝업에서 열고 해당 마스터 비밀번호로 잠금을 해제하세요."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Open on focus"
+msgstr "Open on focus"
 
 #: packages/core/src/app/screens/Settings/components/DesktopLinkSection.tsx
 msgid "Open that vault"
@@ -3717,6 +3739,10 @@ msgstr "{0}을(를) {1}에 저장했습니다."
 msgid "Saved {name} with its 2FA code"
 msgstr "{name}을(를) 2FA 코드와 함께 저장했습니다."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Saved logins open as soon as you click into a field."
+msgstr "Saved logins open as soon as you click into a field."
+
 #. placeholder {0}: descriptor.label
 #: packages/core/src/app/screens/Settings/components/AliasSection.tsx
 msgid "Saved. {0} can only be checked by creating an alias."
@@ -3922,6 +3948,10 @@ msgstr "설정"
 #: packages/core/src/app/screens/Settings/Settings.tsx
 msgid "Settings sections"
 msgstr "설정 섹션"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Shortcut only"
+msgstr "단축키만"
 
 #: packages/core/src/app/screens/Settings/components/MailboxAccount.tsx
 msgid "Show"
@@ -5198,6 +5228,10 @@ msgstr "{appName}에 오신 것을 환영합니다"
 #: packages/core/src/app/components/WhatsNewCard.tsx
 msgid "What's new in {version}"
 msgstr "{version}의 새로운 기능"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "When you click a login field"
+msgstr "When you click a login field"
 
 #: packages/core/src/app/screens/Settings/components/BiometricSection.tsx
 msgid "Windows Hello"

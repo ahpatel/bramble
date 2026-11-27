@@ -24,6 +24,8 @@ vi.mock("./picker", () => ({
 		showMatches: vi.fn(),
 		showLocked: vi.fn(),
 		remove: vi.fn(),
+		dismissTo: vi.fn(),
+		isExiting: () => false,
 		removeDropdown: vi.fn(),
 		reposition: vi.fn(),
 		activeHost: () => null,
@@ -35,6 +37,8 @@ vi.mock("./picker", () => ({
 		onDismiss: vi.fn(),
 		onUseSuggested: vi.fn(),
 		onUseAlias: vi.fn(),
+		onOpenEntry: vi.fn(),
+		onPointer: vi.fn(),
 		onNewLogin: vi.fn(),
 		onRegenerate: vi.fn(),
 	},
@@ -67,6 +71,7 @@ let onMessage: MessageListener | null = null;
 		sendMessage: vi.fn(),
 		getURL: (path: string) => path,
 	},
+	i18n: { getMessage: (key: string) => key },
 };
 
 await import("./content");

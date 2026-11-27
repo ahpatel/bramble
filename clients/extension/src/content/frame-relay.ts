@@ -34,11 +34,13 @@ const DISMISS = "tp-relay-dismiss";
 // Less room than this under the anchor and the dropdown gets clipped; relay instead.
 export const MIN_PICKER_SPACE = 160;
 
-// A relayed rect comes from a child frame, so it is clamped rather than trusted.
+// A relayed rect comes from a child frame, so it is bounded by MAX_COORD. It is not clamped to
+// the frame: the picker has to extend outside a frame shorter than the menu. Ownership below is
+// what stops one frame from moving another frame's relay.
 const MAX_COORD = 1_000_000;
 
 type AnchorMessage = { __tp: typeof ANCHOR; relayId: string; rect: RelayRect };
-type CloseMessage = { __tp: typeof CLOSE; relayId: string };
+type CloseMessage = { __tp: typeof CLOSE; relayId: string; collapse?: boolean };
 
 function finite(v: unknown): v is number {
 	return typeof v === "number" && Number.isFinite(v);
@@ -49,6 +51,7 @@ function validRect(v: unknown): v is RelayRect {
 	const r = v as Record<string, unknown>;
 	if (!finite(r.x) || !finite(r.y) || !finite(r.width) || !finite(r.height)) return false;
 	if (r.width < 0 || r.height < 0) return false;
+	if (r.rtl !== undefined && typeof r.rtl !== "boolean") return false;
 	return [r.x, r.y, r.width, r.height].every((n) => Math.abs(n as number) <= MAX_COORD);
 }
 
@@ -67,7 +70,7 @@ function closeMessage(v: unknown): CloseMessage | null {
 	if (!v || typeof v !== "object") return null;
 	const m = v as Record<string, unknown>;
 	if (m.__tp !== CLOSE || !validRelayId(m.relayId)) return null;
-	return { __tp: CLOSE, relayId: m.relayId };
+	return { __tp: CLOSE, relayId: m.relayId, collapse: m.collapse === true };
 }
 
 /** Numeric value of a computed length, or 0 when it isn't parseable. */
@@ -111,10 +114,10 @@ export interface FrameRelay {
 	needsRelay(rect: RelayRect): boolean;
 	/** Ask the ancestors to host a picker for `rect`, in this frame's coords. */
 	open(relayId: string, rect: RelayRect): void;
-	close(relayId: string): void;
+	close(relayId: string, collapse?: boolean): void;
 	/** Top frame: a descendant wants a picker hosted here. */
 	onAnchor(cb: (anchor: RelayedAnchor) => void): void;
-	onClose(cb: (relayId: string) => void): void;
+	onClose(cb: (relayId: string, collapse?: boolean) => void): void;
 	/** Tell every child frame (and theirs) that the user clicked in this frame's page. */
 	dismissDescendants(): void;
 	/** A click landed in an ancestor's page. */
@@ -126,7 +129,7 @@ export interface FrameRelay {
 export function installFrameRelay(host: RelayHost): FrameRelay {
 	const { window: view, document: doc } = host;
 	let anchorCb: ((anchor: RelayedAnchor) => void) | null = null;
-	let closeCb: ((relayId: string) => void) | null = null;
+	let closeCb: ((relayId: string, collapse?: boolean) => void) | null = null;
 	let dismissCb: (() => void) | null = null;
 	// Relay id -> the child frame element that opened it.
 	const owners = new Map<string, HTMLElement>();
@@ -170,7 +173,7 @@ export function installFrameRelay(host: RelayHost): FrameRelay {
 		if (owner && owner !== frameEl) return;
 		if (close) {
 			owners.delete(relayId);
-			if (isTop()) closeCb?.(relayId);
+			if (isTop()) closeCb?.(relayId, close.collapse);
 			else postUp(close);
 			return;
 		}
@@ -196,8 +199,8 @@ export function installFrameRelay(host: RelayHost): FrameRelay {
 		open(relayId, rect) {
 			postUp({ __tp: ANCHOR, relayId, rect });
 		},
-		close(relayId) {
-			postUp({ __tp: CLOSE, relayId });
+		close(relayId, collapse) {
+			postUp({ __tp: CLOSE, relayId, collapse: collapse === true });
 		},
 		onAnchor(cb) {
 			anchorCb = cb;

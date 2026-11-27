@@ -680,6 +680,59 @@ describe("autofill master switch", () => {
 });
 
 describe("autofill trigger mode", () => {
+	it("rides on the query answer so the page can draw the right affordance", async () => {
+		const bg = await loadBackground({
+			sessionSeed: { [VEK_KEY]: "SEED" },
+			localSeed: { "pref.autofillTrigger": "icon" },
+		});
+		await setAutofillIndex(bg, ENTRIES);
+		const { resp } = await bg.send(
+			{ type: "AUTOFILL_QUERY", hasLogin: true },
+			pageSender("example.com", 42),
+		);
+		expect(resp.data.trigger).toBe("icon");
+	});
+
+	it("pushes a change to open tabs, and takes it only from an extension sender", async () => {
+		const bg = await loadBackground({
+			sessionSeed: { [VEK_KEY]: "SEED" },
+			openTabs: [{ id: 3 }, { id: 4 }],
+		});
+		expect(
+			(
+				await bg.send(
+					{ type: "AUTOFILL_SET_TRIGGER", payload: { trigger: "icon" } },
+					pageSender("example.com", 3),
+				)
+			).resp,
+		).toEqual({ ok: false, error: "forbidden" });
+		expect(bg.state.tabMessages).toEqual([]);
+
+		await bg.send({ type: "AUTOFILL_SET_TRIGGER", payload: { trigger: "icon" } }, extensionSender);
+		expect(bg.state.tabMessages).toEqual([
+			{
+				tabId: 3,
+				message: { type: "AUTOFILL_TRIGGER", payload: { trigger: "icon" } },
+				options: undefined,
+			},
+			{
+				tabId: 4,
+				message: { type: "AUTOFILL_TRIGGER", payload: { trigger: "icon" } },
+				options: undefined,
+			},
+		]);
+	});
+
+	it("refuses a mode it does not know", async () => {
+		const bg = await loadBackground({ sessionSeed: { [VEK_KEY]: "SEED" } });
+		const { resp } = await bg.send(
+			{ type: "AUTOFILL_SET_TRIGGER", payload: { trigger: "hover" } },
+			extensionSender,
+		);
+		expect(resp).toEqual({ ok: false, error: "invalid_request" });
+		expect(bg.state.tabMessages).toEqual([]);
+	});
+
 	it("pushes a new row density to open tabs", async () => {
 		const bg = await loadBackground({
 			sessionSeed: { [VEK_KEY]: "SEED" },

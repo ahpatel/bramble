@@ -433,6 +433,14 @@ msgstr "Il codice di sicurezza è di 3 o 4 cifre."
 msgid "A server you're connected to with ssh -A wants to see and use your keys until Bramble locks."
 msgstr "Un server a cui è connesso tramite ssh -A vuole vedere e usare le sue chiavi finché Bramble non si blocca."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid ""
+"A small Bramble mark appears in the field. Click it to see saved logins, or "
+"type a username to see it completed."
+msgstr ""
+"Un piccolo segno Bramble appare nel campo. Fai clic per vedere gli accessi "
+"salvati, oppure digita un nome utente per vederlo completato."
+
 #: packages/core/src/app/screens/Settings/components/MailboxSection.tsx
 msgid "A token is at least 16 letters, digits, dashes or underscores"
 msgstr "Un token è composto da almeno 16 tra lettere, cifre, trattini o trattini bassi"
@@ -999,6 +1007,10 @@ msgstr "Bramble non supporta le dimensioni o le impostazioni di questa chiave."
 #: packages/core/src/app/ErrorBoundary.tsx
 msgid "Bramble hit an unexpected error. Your vault is safe — it stays encrypted on this device. Try reloading; if it keeps happening, reopen the app."
 msgstr "Bramble ha riscontrato un errore inatteso. Il suo vault è al sicuro: rimane criptato su questo dispositivo. Provi a ricaricare; se il problema persiste, riapra l'app."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Bramble icon"
+msgstr "Icona Bramble"
 
 #: packages/core/src/app/screens/Settings/components/SupportSection.tsx
 msgid "Bramble is free and open source. If it's useful to you, a tip helps keep it going. Scan a code with your wallet, or copy the address. Thank you."
@@ -3186,6 +3198,13 @@ msgstr "Non c'è nulla di archiviato. Gli elementi archiviati vengono conservati
 #~ msgid "Nothing is enrolled in Face ID or Touch ID, so the device passcode is the only gate."
 #~ msgstr "Non è registrato alcun dato per Face ID o Touch ID, quindi il codice del dispositivo è l'unico accesso."
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid ""
+"Nothing is drawn on the page. Use the keyboard shortcut to fill a login."
+msgstr ""
+"Non viene mostrato nulla nella pagina. Usa la scorciatoia da tastiera per "
+"compilare un accesso."
+
 #: packages/core/src/app/screens/Import/util/count-line.tsx
 msgid "Nothing to import"
 msgstr "Niente da importare"
@@ -3334,6 +3353,10 @@ msgstr "Apri nella finestra"
 #: packages/core/src/app/OptionsApp.tsx
 msgid "Open it from the {0} popup and unlock it with its master password."
 msgstr "Aprila dal popup {0} e sbloccala con la sua password principale."
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Open on focus"
+msgstr "Apri al focus"
 
 #: packages/core/src/app/screens/Settings/components/DesktopLinkSection.tsx
 msgid "Open that vault"
@@ -4023,6 +4046,10 @@ msgstr "{0} salvato in {1}"
 msgid "Saved {name} with its 2FA code"
 msgstr "Salvato {name} con il relativo codice 2FA"
 
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Saved logins open as soon as you click into a field."
+msgstr "Gli accessi salvati si aprono non appena fai clic in un campo."
+
 #. placeholder {0}: descriptor.label
 #: packages/core/src/app/screens/Settings/components/AliasSection.tsx
 msgid "Saved. {0} can only be checked by creating an alias."
@@ -4244,6 +4271,10 @@ msgstr "Impostazioni"
 #: packages/core/src/app/screens/Settings/Settings.tsx
 msgid "Settings sections"
 msgstr "Sezioni delle impostazioni"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "Shortcut only"
+msgstr "Solo scorciatoia"
 
 #: packages/core/src/app/screens/Settings/components/MailboxAccount.tsx
 msgid "Show"
@@ -5633,6 +5664,10 @@ msgstr "Benvenuto in {appName}"
 #: packages/core/src/app/components/WhatsNewCard.tsx
 msgid "What's new in {version}"
 msgstr "Novità nella versione {version}"
+
+#: packages/core/src/app/screens/Settings/components/GeneralSection.tsx
+msgid "When you click a login field"
+msgstr "Quando fai clic su un campo di accesso"
 
 #: packages/core/src/app/screens/Settings/components/BiometricSection.tsx
 msgid "Windows Hello"

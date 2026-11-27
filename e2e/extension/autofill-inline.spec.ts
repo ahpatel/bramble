@@ -248,6 +248,83 @@ test("the compact menu follows a rounded field", async ({ context, extensionId }
 	expect(skin.surface).toBe("rgb(252, 251, 253)");
 });
 
+test("focus mode still opens the panel on focus; shortcut mode draws nothing", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await setTrigger(popup, "focus");
+
+	await page.reload();
+	await page.locator("#user").click();
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+
+	await setTrigger(popup, "shortcut");
+	await page.reload();
+	await page.locator("#user").click();
+	await expect(markHost(page)).toHaveCount(0);
+	expect(pickerFrame(page)).toBeUndefined();
+
+	// The shortcut still fills without any on-page UI. The poll re-sends because the first press
+	// can land before the fresh query has answered; with one login, a repeat is harmless.
+	await expect
+		.poll(
+			async () => {
+				await cycle(context);
+				return page.locator("#user").inputValue();
+			},
+			{ timeout: 10_000 },
+		)
+		.toBe("alice@example.com");
+});
+
+test("changing the click behaviour updates an open page without a reload", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await expect.poll(() => pickerFrame(page), { timeout: 10_000 }).toBeDefined();
+
+	// Change the mode through the real Settings control, not storage: the background must push
+	// the new mode to the tab that is already open.
+	await popup.getByRole("button", { name: "Settings" }).click();
+	await popup.getByRole("button", { name: "General", exact: true }).click();
+	await popup.getByRole("combobox", { name: "Show" }).selectOption("icon");
+
+	// The iframe host is kept for reuse, so the menu is closed when its host is hidden, not when
+	// the frame disappears.
+	await expect
+		.poll(
+			() =>
+				page.evaluate(() => {
+					const host = document.querySelector<HTMLElement>('div[id^="tp-"]');
+					return host ? host.style.display : "gone";
+				}),
+			{ timeout: 10_000 },
+		)
+		.toBe("none");
+	await page.bringToFront();
+	await page.locator("#user").click();
+	await expect(markHost(page)).toHaveCount(1);
+});
+
 test("the dropdown rows setting switches the menu between comfortable and compact", async ({
 	context,
 	extensionId,
@@ -495,6 +572,215 @@ test("a second open action moves the existing Bramble window instead of duplicat
 	expect(context.pages().filter((p) => p.url().includes("popup.html?detached=1"))).toHaveLength(1);
 });
 
+test("typing narrows an open quiet-mode menu", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedLogin(popup, "Work account", "alice@example.com", "work-pw-01");
+	await seedLogin(popup, "Personal", "alice.personal@example.com", "home-pw-02");
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const frame = pickerFrame(page)!;
+	await expect(frame.locator(".tp-item-compact")).toHaveCount(2, { timeout: 10_000 });
+
+	// A real keystroke narrows the open menu, as it does in the focus-mode panel.
+	await page.locator("#user").fill("alice.p");
+	await expect(frame.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+	await expect(frame.locator(".tp-item-compact").first()).toContainText("Personal");
+
+	// Enter takes the top filtered entry and fills both fields.
+	await page.keyboard.press("Enter");
+	await expect(page.locator("#user")).toHaveValue("alice.personal@example.com");
+	await expect(page.locator("#pass")).toHaveValue("home-pw-02");
+
+	// The pick ends the typed filter: the mark reopens the full list, not just the chosen entry.
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(2, { timeout: 10_000 });
+});
+
+test("Alt+ArrowDown opens the menu from the field and Escape closes it", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	const field = page.locator("#user");
+	await field.click();
+	await expect(markHost(page)).toHaveCount(1);
+
+	// The field advertises the list without entering the Tab order.
+	await expect(field).toHaveAttribute("aria-haspopup", "listbox");
+	await expect(field).toHaveAttribute("aria-expanded", "false");
+
+	await page.keyboard.press("Alt+ArrowDown");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await expect(field).toHaveAttribute("aria-expanded", "true");
+	const frame = pickerFrame(page)!;
+	await expect(frame.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+
+	await page.keyboard.press("Escape");
+	await expect(field).toHaveAttribute("aria-expanded", "false");
+});
+
+test("the mark in a filled password field opens the menu", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await page.locator("#user").fill("a");
+	await page.keyboard.press("Enter");
+	await expect(page.locator("#pass")).toHaveValue("s3cr3t-pw-01");
+
+	// Hover only: the mark follows the pointer, so clicking its spot on the password field
+	// should move the host there and open the menu for that field.
+	await clickMarkIn(page, "#pass");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const frame = pickerFrame(page)!;
+	await expect(frame.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+});
+
+test("the password field's mark reopens after a pick from that field", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#pass").click();
+	await expect(markHost(page)).toHaveCount(1);
+	await clickMarkIn(page, "#pass");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const frame = pickerFrame(page)!;
+	await waitOutPickerClickGuard(page);
+	await frame.locator(".tp-item-compact").first().click();
+	await expect(page.locator("#pass")).toHaveValue("s3cr3t-pw-01");
+
+	// No focus click first: click the mark that the chip just extended from.
+	await clickMarkIn(page, "#pass");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
+		timeout: 10_000,
+	});
+});
+
+test("clicking the password mark switches the open username menu", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await page.locator("#user").fill("a");
+	await page.keyboard.press("Enter");
+	await expect(page.locator("#pass")).toHaveValue("s3cr3t-pw-01");
+
+	// The username menu is open, then the pointer moves to the filled password field's mark.
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const frame = pickerFrame(page)!;
+	await expect(frame.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+
+	// The menu covers the password field. A click on the left half of the password mark must switch
+	// the menu to the password instead of picking the row (or its open button) under the pointer.
+	await waitOutPickerClickGuard(page);
+	await clickMarkIn(page, "#pass");
+	await expect
+		.poll(() =>
+			page.evaluate(() =>
+				document.querySelector<HTMLInputElement>("#pass")?.getAttribute("aria-expanded"),
+			),
+		)
+		.toBe("true");
+});
+
+test("the password mark switches an above-opening username menu", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const bottom = `<!doctype html><html><head><style>
+		html, body { height: 100%; margin: 0; }
+		form { position: absolute; left: 40px; top: calc(100vh - 110px); width: 340px; }
+		input { display:block; width:100%; height:42px; box-sizing:border-box; border:1px solid rgb(185,192,201); border-radius:0; padding:0 44px 0 11px; font:14px Georgia, serif; color:rgb(23,32,43); background:rgb(255,255,255); }
+	</style></head><body>
+	<form><input id="user" type="text" autocomplete="username"><input id="pass" type="password" autocomplete="current-password"></form>
+	</body></html>`;
+	const page = await context.newPage();
+	await serve(page, bottom);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await page.locator("#user").fill("a");
+	await page.keyboard.press("Enter");
+	await expect(page.locator("#pass")).toHaveValue("s3cr3t-pw-01");
+
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await page.waitForTimeout(300);
+
+	await clickMarkIn(page, "#pass");
+	await expect
+		.poll(() =>
+			page.evaluate(() =>
+				document.querySelector<HTMLInputElement>("#pass")?.getAttribute("aria-expanded"),
+			),
+		)
+		.toBe("true");
+});
+
 test("a 200% zoom menu keeps the entry name readable", async ({ context, extensionId }) => {
 	const popup = await context.newPage();
 	await createVault(popup, extensionId);
@@ -538,6 +824,263 @@ test("a 200% zoom menu keeps the entry name readable", async ({ context, extensi
 	expect(metrics.avatarDisplay).toBe("none");
 	expect(metrics.nameW).toBeGreaterThan(40);
 	expect(metrics.overflow).toBe(false);
+});
+
+test("COEP fallback: shadow keyboard navigation", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await page.route(/example\.com/, (route) =>
+		route.request().resourceType() === "document"
+			? route.fulfill({
+					body: SQUARE_LOGIN,
+					headers: {
+						"content-type": "text/html",
+						"Cross-Origin-Embedder-Policy": "require-corp",
+						"Cross-Origin-Opener-Policy": "same-origin",
+					},
+				})
+			: route.fulfill({ status: 200, body: "" }),
+	);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await expect(markHost(page)).toHaveCount(1);
+	await clickMark(page);
+	await page.waitForTimeout(1500);
+	const shadow = await page.locator("#bramble-autofill-dropdown").count();
+	expect(shadow).toBe(1);
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.press("Enter");
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+});
+
+test("the username mark reopens after a pick from its menu", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await expect(markHost(page)).toHaveCount(1);
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const frame = pickerFrame(page)!;
+	await expect(frame.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+	await waitOutPickerClickGuard(page);
+	await frame.locator(".tp-item-compact").first().click();
+	// Click the mark immediately, while the pick is still collapsing and filling.
+	await clickMark(page);
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
+		timeout: 10_000,
+	});
+});
+
+test("the marks keep reopening across alternating password and username picks", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+
+	for (const [selector, expected] of [
+		["#pass", "s3cr3t-pw-01"],
+		["#user", "alice@example.com"],
+		["#pass", "s3cr3t-pw-01"],
+		["#user", "alice@example.com"],
+	] as const) {
+		await clickMarkIn(page, selector);
+		await expect(async () => {
+			expect(pickerFrame(page)).toBeDefined();
+		}).toPass({ timeout: 20_000 });
+		const frame = pickerFrame(page)!;
+		await expect(frame.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+		// The host must open full-width. A finished collapse animation used to leave its
+		// scale(0.02) fill-forwards end state on the reused host, so every menu after the
+		// first pick opened as an invisible ~7x2 sliver: rendered, clickable by coordinate,
+		// and invisible to a human.
+		const hostWidth = await page.evaluate(() => {
+			const hosts = document.querySelectorAll('div[id^="tp-"]');
+			const host = hosts[hosts.length - 1];
+			return host ? host.getBoundingClientRect().width : 0;
+		});
+		expect(hostWidth, "the menu host opened full-width, not a collapse sliver").toBeGreaterThan(
+			100,
+		);
+		await waitOutPickerClickGuard(page);
+		await frame.locator(".tp-item-compact").first().click();
+		// The pick releases the native autocomplete at once, not after the collapse: the next
+		// mark click must see the token the page declared.
+		const declared = selector === "#pass" ? "current-password" : "username";
+		await expect(page.locator(selector)).toHaveAttribute("autocomplete", declared);
+		await expect(page.locator(selector)).toHaveValue(expected, { timeout: 10_000 });
+		// Let the pick's collapse animation FINISH before the next open. The animation ends
+		// through its onfinish path here, not the cancel path a fast reopen takes; a menu
+		// opened after a finished collapse used to inherit its scale(0.02) end state and
+		// open as an invisible sliver.
+		await page.waitForTimeout(500);
+	}
+});
+
+test("the mark steps left of a site's clear control and keeps reopening", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, CLEARABLE_LOGIN);
+	await page.goto("https://example.com/");
+
+	// First open: the field is empty, so the clear control is absent and the mark sits at the
+	// base inset.
+	await clickMarkAt(page, "#user");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const first = pickerFrame(page)!;
+	await expect(first.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+	await waitOutPickerClickGuard(page);
+	await first.locator(".tp-item-compact").first().click();
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+
+	// The fill gives the field a value, so the page's clear control now covers the base spot.
+	// The next open must step left of it, or the click lands on the clear button and the menu
+	// never opens.
+	await clickMarkAt(page, "#user");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
+		timeout: 10_000,
+	});
+});
+
+const SHORT_LOGIN = `<!doctype html><html><head><title>Sign in</title><style>
+	body { margin: 40px; }
+	form { width: 340px; }
+	input {
+		display: block; width: 244px; height: 17.5px; box-sizing: border-box;
+		padding: 0; border: 0; font: 14px Georgia, "Times New Roman", serif;
+	}
+</style></head><body>
+	<form id="challenge-form" method="post" autocomplete="on">
+		<label for="username">Username, email or phone number</label>
+		<input id="username" type="text" name="username" value="" autocomplete="" />
+		<button type="submit" name="signin">Next</button>
+	</form>
+</body></html>`;
+
+test("the mark shows on a short identifier-first field", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedLogin(popup, "Yahoo", "alice@yahoo.com", "s3cr3t-pw-01", "https://yahoo.com");
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, SHORT_LOGIN, "login\\.yahoo\\.com");
+	await page.goto("https://login.yahoo.com/");
+	await page.locator("#username").click();
+	// Yahoo's input is 17.5px tall inside a taller control. The mark must still draw.
+	await expect(markHost(page)).toBeVisible({ timeout: 10_000 });
+
+	await clickMarkAt(page, "#username");
+	await expect.poll(() => pickerFrame(page), { timeout: 10_000 }).toBeDefined();
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
+		timeout: 10_000,
+	});
+});
+
+const NARROW_LOGIN = `<!doctype html><html><head><title>Sign in</title><style>
+	body { margin: 40px; }
+	input { height: 24px; font: 14px Georgia, serif; }
+	#user { width: 40px; }
+</style></head><body>
+	<form>
+		<input id="user" name="username" type="text" autocomplete="username" />
+		<input id="pass" name="password" type="password" autocomplete="current-password" />
+	</form>
+</body></html>`;
+
+test("the mark shows on a narrow field and overlaps the text", async ({ context, extensionId }) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, NARROW_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	// The field is 40px wide, under the old 88px floor. The mark overlaps the text instead of
+	// disappearing, and its small inset keeps the 26px button inside the field.
+	await expect(markHost(page)).toBeVisible({ timeout: 10_000 });
+
+	await clickMarkAt(page, "#user");
+	await expect.poll(() => pickerFrame(page), { timeout: 10_000 }).toBeDefined();
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
+		timeout: 10_000,
+	});
+});
+
+test("the mark steps right of a site's clear control in an RTL field", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedExampleLogin(popup);
+	await setTrigger(popup, "icon");
+
+	const page = await context.newPage();
+	await serve(page, CLEARABLE_RTL_LOGIN);
+	await page.goto("https://example.com/");
+
+	await clickMarkAt(page, "#user");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	const first = pickerFrame(page)!;
+	await expect(first.locator(".tp-item-compact")).toHaveCount(1, { timeout: 10_000 });
+	await waitOutPickerClickGuard(page);
+	await first.locator(".tp-item-compact").first().click();
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+
+	// The clear control now sits at the inline end (the left, in RTL). The mark must step right
+	// of it, the mirrored move of the LTR case above.
+	await clickMarkAt(page, "#user");
+	await expect(async () => {
+		expect(pickerFrame(page)).toBeDefined();
+	}).toPass({ timeout: 20_000 });
+	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
+		timeout: 10_000,
+	});
 });
 
 const OFFSET_BODY_LOGIN = `<!doctype html><html><head><title>Sign in</title><style>
@@ -585,4 +1128,52 @@ test("the mark and menu align on a page that positions the body", async ({
 	await expect(pickerFrame(page)!.locator(".tp-item-compact")).toHaveCount(1, {
 		timeout: 10_000,
 	});
+});
+
+test("the shipped default fills a login and a card with no stored trigger", async ({
+	context,
+	extensionId,
+}) => {
+	const popup = await context.newPage();
+	await createVault(popup, extensionId);
+	await openPopup(popup, extensionId);
+	await seedLogin(popup, "Work account", "alice@example.com", "work-pw-01");
+	await seedExampleCard(popup);
+	// Remove the fixture's focus-mode value: the background then reads the shipped default and
+	// normalizes the missing value itself, which is the path a fresh install takes.
+	await popup.evaluate(() => chrome.storage.local.remove("pref.autofillTrigger"));
+
+	const page = await context.newPage();
+	await serve(page, SQUARE_LOGIN);
+	await page.goto("https://example.com/");
+	await page.locator("#user").click();
+	await expect(markHost(page)).toHaveCount(1);
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() => document.querySelector<HTMLElement>('div[id^="tp-"]')?.style.display ?? "gone",
+			),
+		)
+		.not.toBe("block");
+
+	// One typed character draws the completion; Enter fills the whole login through the same
+	// authorized path a click uses.
+	await page.locator("#user").fill("a");
+	await page.keyboard.press("Enter");
+	await expect(page.locator("#user")).toHaveValue("alice@example.com");
+	await expect(page.locator("#pass")).toHaveValue("work-pw-01");
+
+	// A card field's mark opens the card list and fills it, still with no trigger stored.
+	const card = await context.newPage();
+	await serve(card, CARD_CHECKOUT);
+	await card.goto("https://example.com/");
+	await card.locator("#number").click();
+	await expect(markHost(card)).toHaveCount(1);
+	await clickMarkIn(card, "#number");
+	await expect.poll(() => pickerFrame(card), { timeout: 10_000 }).toBeDefined();
+	const frame = pickerFrame(card)!;
+	await expect(frame.locator("[data-entry-id]")).toHaveCount(1, { timeout: 10_000 });
+	await waitOutPickerClickGuard(card);
+	await frame.locator("[data-entry-id]").first().click();
+	await expect(card.locator("#number")).toHaveValue("4242424242424242", { timeout: 10_000 });
 });

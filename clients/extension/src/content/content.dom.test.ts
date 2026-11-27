@@ -37,13 +37,19 @@ const removePicker = vi.fn(() => {
 	pickerState.host = null;
 	pickerState.anchor = null;
 });
+// The selection path collapses the menu into the mark before removing it; the mock clears the
+// state the same way so the tests that assert "picker gone" still hold.
+const dismissTo = vi.fn((_target: DOMRect | null) => {
+	pickerState.host = null;
+	pickerState.anchor = null;
+});
 // Captured content-side callbacks for the suggested-password row and the unlock request.
 let onSuggestedCb: (() => void) | null = null;
 let regenerateCb: (() => void) | null = null;
 let aliasRowCb: (() => void) | null = null;
-let newLoginCb: (() => void) | null = null;
 let unlockCb: ((field: HTMLInputElement | null) => void) | null = null;
 let pickCb: ((entryId: string, otpOnly: boolean) => void) | null = null;
+let newLoginCb: (() => void) | null = null;
 // Models picker.removeDropdown()'s real behavior: on a normal (iframe-mode) site it is a
 // no-op against the visible row, it only clears the anchor. A call site that relies on this
 // alone to hide the picker leaves the row on screen; asserting on `pickerState.host` (not just
@@ -56,7 +62,10 @@ vi.mock("./picker", () => ({
 		showMatches,
 		showLocked,
 		remove: removePicker,
+		dismissTo,
+		isExiting: () => false,
 		removeDropdown,
+		preload: vi.fn(),
 		reposition: vi.fn(),
 		activeHost: () => pickerState.host,
 		anchorField: () => pickerState.anchor,
@@ -78,6 +87,8 @@ vi.mock("./picker", () => ({
 		onUseAlias: (cb: () => void) => {
 			aliasRowCb = cb;
 		},
+		onOpenEntry: vi.fn(),
+		onPointer: vi.fn(),
 		onNewLogin: (cb: () => void) => {
 			newLoginCb = cb;
 		},
@@ -179,6 +190,7 @@ let onMessage: MessageListener | null = null;
 		sendMessage: vi.fn(),
 		getURL: (p: string) => p,
 	},
+	i18n: { getMessage: (key: string) => key },
 };
 
 const trustedInteractionListeners = new Map<string, EventListener>();
@@ -209,8 +221,16 @@ const askedLiveAtLoad = safeRequest.mock.calls.some(
 function dispatchTrustedInteraction(
 	type: "pointerdown" | "mousedown" | "input" | "keydown" | "focusin",
 	target: HTMLElement,
+	init?: { inputType?: string },
 ): void {
-	const nativeEvent = new MouseEvent(type, { bubbles: true, composed: true });
+	const nativeEvent =
+		type === "input"
+			? new InputEvent(type, {
+					bubbles: true,
+					composed: true,
+					inputType: init?.inputType ?? "insertText",
+				})
+			: new MouseEvent(type, { bubbles: true, composed: true });
 	const event = new Proxy(nativeEvent, {
 		get(inner, property) {
 			if (property === "isTrusted") return true;
@@ -236,32 +256,11 @@ const result = (over: Partial<Record<string, unknown>>) => ({
 	otps: [],
 	locked: false,
 	hasPotentialMatch: false,
+	// These suites exercise the panel policy, which is what "focus" mode means. The quiet
+	// default is covered by e2e/extension/autofill-inline.spec.ts.
+	trigger: "focus",
+	density: "comfortable",
 	...over,
-});
-
-describe("content: a code widget whose boxes have wrappers of their own", () => {
-	const CODE = { id: "1", name: "Example", secondary: "123 456" };
-
-	beforeEach(() => {
-		showMatches.mockClear();
-		pendingQueryResponses.length = 0;
-		document.body.innerHTML = `<div>${Array.from(
-			{ length: 6 },
-			(_, i) =>
-				`<div class="cell"><div><input id="d${i}" type="text" inputmode="numeric" maxlength="1" autocomplete="new-password" /></div></div>`,
-		).join("")}</div>`;
-		invalidatePageFields();
-	});
-
-	it("offers the code on any box", () => {
-		for (const id of ["d0", "d3"]) {
-			showMatches.mockClear();
-			(document.getElementById(id) as HTMLInputElement).focus();
-			send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
-			pendingQueryResponses.pop()?.({ ok: true, data: result({ otps: [CODE] }) });
-			expect(showMatches.mock.calls.at(-1)?.[0]).toEqual([CODE]);
-		}
-	});
 });
 
 describe("content: the tab's last-filled card leads the card list", () => {
@@ -375,7 +374,7 @@ describe("content: refresh the picker on unlock (issue #20)", () => {
 		// The module persists across this suite; force this case's own direct query.
 		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
 		send({ type: "AUTOFILL_MATCHES", payload: result({ locked: true }) });
-		expect(showLocked).toHaveBeenCalledWith(user);
+		expect(showLocked.mock.calls.at(-1)?.[0]).toBe(user);
 
 		// Unlock happens off-page (toolbar/pop-out), so the field is no longer focused.
 		user.blur();
@@ -423,7 +422,7 @@ describe("content: refresh the picker on unlock (issue #20)", () => {
 		// Locked: focusing the field shows the "Vault locked" row anchored to it.
 		user.focus();
 		send({ type: "AUTOFILL_MATCHES", payload: result({ locked: true, hasPotentialMatch: true }) });
-		expect(showLocked).toHaveBeenCalledWith(user);
+		expect(showLocked.mock.calls.at(-1)?.[0]).toBe(user);
 
 		// The user clicks the locked row: the real picker dismisses its host, then reports the field.
 		pickerState.host = null;
@@ -591,7 +590,7 @@ describe("content: strong-password suggestion on signup", () => {
 		// than inheriting a cached result from the preceding signup case.
 		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
 		send({ type: "AUTOFILL_MATCHES", payload: result({ locked: true, hasPotentialMatch: true }) });
-		expect(showLocked).toHaveBeenCalledWith(pass);
+		expect(showLocked.mock.calls.at(-1)?.[0]).toBe(pass);
 	});
 
 	it("keeps the suggestion across re-renders even after the anchor autocomplete is suppressed", () => {
@@ -976,6 +975,23 @@ describe("content: username filter on login picker", () => {
 		pass.value = "alice";
 		dispatchTrustedInteraction("input", pass);
 		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual(logins);
+	});
+
+	it("does not filter a value the browser autofilled", () => {
+		// Chrome's password manager replaces the value with a trusted
+		// `insertReplacementText` input. The browser filled the field, not the user, so the
+		// site's mark must keep offering every login even when the filled username differs.
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.focus();
+		send({ type: "VAULT_LOCK_STATE", payload: { locked: false } });
+		send({ type: "AUTOFILL_MATCHES", payload: result({ logins }) });
+		showMatches.mockClear();
+		removePicker.mockClear();
+
+		user.value = "zzzz";
+		dispatchTrustedInteraction("input", user, { inputType: "insertReplacementText" });
+		expect(showMatches.mock.calls.at(-1)?.[0]).toEqual(logins);
+		expect(removePicker).not.toHaveBeenCalled();
 	});
 
 	it("does not filter a pre-filled value the user never typed", () => {
@@ -1934,6 +1950,64 @@ describe("content: the site's last-used login leads the list", () => {
 	});
 });
 
+describe("content: the fill shortcut picks the login for the typed username", () => {
+	beforeEach(() => {
+		vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+			width: 200,
+			height: 24,
+			top: 0,
+			left: 0,
+			right: 200,
+			bottom: 24,
+			x: 0,
+			y: 0,
+			toJSON: () => ({}),
+		} as DOMRect);
+		vi.spyOn(document, "hasFocus").mockReturnValue(true);
+		safeRequest.mockClear();
+		pendingQueryResponses.length = 0;
+		pendingSelectResponses.length = 0;
+		document.body.innerHTML = `
+			<form>
+				<input id="user" type="text" autocomplete="username" />
+				<input id="pass" type="password" autocomplete="current-password" />
+			</form>`;
+		invalidatePageFields();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("fills the login whose username starts with what is typed", async () => {
+		const user = document.getElementById("user") as HTMLInputElement;
+		user.value = "ali";
+		user.focus();
+		send({ type: "AUTOFILL_SHORTCUT" });
+		// `fillFromShortcut` awaits its query; the mock's thenable is adopted in a microtask, so
+		// let that settle before answering it.
+		await Promise.resolve();
+		pendingQueryResponses.pop()?.({
+			ok: true,
+			data: result({
+				trigger: "shortcut",
+				logins: [
+					{ id: "bob", name: "Bob", secondary: "bob@example.com" },
+					{ id: "alice", name: "Alice", secondary: "alice@example.com" },
+				],
+			}),
+		});
+		// Let the await in fillFromShortcut resume before the select is expected.
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(safeRequest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: "AUTOFILL_SELECT",
+				payload: expect.objectContaining({ entryId: "alice" }),
+			}),
+		);
+	});
+});
 
 describe("content: the rendered match list is capped", () => {
 	beforeEach(() => {

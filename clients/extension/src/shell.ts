@@ -253,6 +253,9 @@ export const extensionShell: ShellAdapter = {
 		if (!this.isDetached()) window.close();
 		return true;
 	},
+	async setAutofillTrigger(trigger) {
+		await api.runtime.sendMessage({ type: "AUTOFILL_SET_TRIGGER", payload: { trigger } });
+	},
 	async setAutofillDensity(density) {
 		await api.runtime.sendMessage({ type: "AUTOFILL_SET_DENSITY", payload: { density } });
 	},

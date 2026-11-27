@@ -1,5 +1,6 @@
 /// <reference types="chrome" />
 
+import { affordance } from "./affordance";
 import { api } from "./content-api";
 import { anchorIsLive } from "./detection";
 import { hostOffset } from "./host-offset";
@@ -96,6 +97,16 @@ let anchorField: HTMLInputElement | null = null;
 let suppressedField: HTMLInputElement | null = null;
 let suppressedAutocomplete: string | null = null;
 
+/** Put the anchor's own autocomplete back. Called when the picker lets go of the field, and as
+ *  soon as a pick starts collapsing, so the next mark click sees the field the page declared. */
+function releaseAutocomplete(): void {
+	if (!suppressedField) return;
+	if (suppressedAutocomplete === null) suppressedField.removeAttribute("autocomplete");
+	else suppressedField.setAttribute("autocomplete", suppressedAutocomplete);
+	suppressedField = null;
+	suppressedAutocomplete = null;
+}
+
 // Tokens we would blind ourselves by overwriting. `one-time-code` is the strongest rung of OTP
 // detection, and on a segmented widget it is often the ONLY thing marking the boxes; `cc-*` is
 // the first rung of card detection and on a hosted-fields frame the field's name is frequently
@@ -127,12 +138,7 @@ function setAnchorField(field: HTMLInputElement | null): void {
 	// A new anchor is reachable until its own hit test says otherwise.
 	lastHitTest = Number.NaN;
 	anchorUnreachable = false;
-	if (suppressedField && suppressedField !== field) {
-		if (suppressedAutocomplete === null) suppressedField.removeAttribute("autocomplete");
-		else suppressedField.setAttribute("autocomplete", suppressedAutocomplete);
-		suppressedField = null;
-		suppressedAutocomplete = null;
-	}
+	if (suppressedField && suppressedField !== field) releaseAutocomplete();
 	if (field && field !== suppressedField) {
 		const declared = field.getAttribute("autocomplete");
 		// Nothing to gain and everything to lose: a browser has no stored one-time code to
@@ -171,10 +177,26 @@ function anchorIsReachable(field: HTMLInputElement, rect: DOMRect): boolean {
 	const top = root.elementFromPoint(x, y);
 	if (!top) return false;
 	// elementFromPoint answers with the DEEPEST element at the point, so a field that is
-	// really there answers with itself, or with an icon painted inside it. An ANCESTOR coming
-	// back means the point fell through to whatever is behind: `<body>` contains the field
-	// too, so accepting ancestors here would accept every clipped-away field there is.
-	return top === field || field.contains(top);
+	// really there answers with itself, or with an icon painted inside it. An ANCESTOR coming back
+	// means the point fell through to whatever is behind: `<body>` contains the field too, so
+	// accepting ancestors here would accept every clipped-away field there is.
+	if (top === field || field.contains(top)) return true;
+	if (!affordance.ownsNode(top)) return false;
+	// Our own in-field mark is an icon painted over the field. On a narrow field its 26px button
+	// covers the centre, and accepting the mark itself would count a field whose only visible part
+	// is the mark, such as one inside a closing modal. Ask beside it instead: a point inside the
+	// field, stepped in from the mark toward the inline start and clamped to stay inside.
+	const markInset =
+		Number.parseFloat(
+			top instanceof Element ? getComputedStyle(top).getPropertyValue("--mark-inset") : "",
+		) || 30;
+	const rtl = getComputedStyle(field).direction === "rtl";
+	const markEdge = rtl ? rect.left + markInset : rect.right - markInset;
+	const besideX = rtl
+		? Math.min(rect.right - 3, markEdge + 40)
+		: Math.max(rect.left + 3, markEdge - 40);
+	const beside = root.elementFromPoint(besideX, y);
+	return beside === field || (beside instanceof Element && field.contains(beside));
 }
 
 function matchesKey(matches: MatchSummary[]): string {
@@ -295,7 +317,21 @@ let lastMoveTs = 0;
 const SCROLL_SETTLE_MS = 120;
 
 function startPositionTracking(): void {
-	if (trackingRaf !== null) return;
+	// The mark shares the field's rect instead of running a second loop: the picker already reads
+	// it every frame while the menu is open.
+	affordance.suspendTracking();
+	if (trackingRaf !== null) {
+		// A renderer swap (iframe -> shadow fallback, or a re-mount) reuses the running loop. Drop
+		// the baseline so the next tick re-anchors instead of reading the new host's geometry as a
+		// scroll, and clear a mid-scroll hide: the new host has not moved, and leaving `scrollHidden`
+		// true with the visibility already cleared would keep it hidden forever.
+		lastX = Number.NaN;
+		lastAnchor = null;
+		scrollHidden = false;
+		const host = activeHost();
+		if (host) host.style.visibility = "";
+		return;
+	}
 	// Fresh loop: clear the baseline so the first frame doesn't read as a scroll.
 	lastX = Number.NaN;
 	lastAnchor = null;
@@ -304,9 +340,11 @@ function startPositionTracking(): void {
 		const host = activeHost();
 		if (!host || !anchorField) {
 			trackingRaf = null;
+			affordance.resumeTracking();
 			return;
 		}
 		const rect = anchorField.getBoundingClientRect();
+		affordance.reposition(rect);
 		if (Number.isNaN(lastHitTest) || ts - lastHitTest >= HIT_TEST_MS) {
 			lastHitTest = ts;
 			anchorUnreachable = !anchorIsReachable(anchorField, rect);
@@ -358,6 +396,7 @@ function stopPositionTracking(): void {
 		trackingRaf = null;
 	}
 	scrollHidden = false;
+	affordance.resumeTracking();
 }
 
 // --- Shadow dropdown (COEP fallback renderer) ---
@@ -376,10 +415,16 @@ let openMatchesKey = "";
 let openDropdownKind: "matches" | "locked" | null = null;
 
 function removeDropdown(): void {
+	// The exit animation owns the host until it finishes; a fill response landing mid-flight must
+	// not cut the card out from under the collapse.
+	if (exiting) return;
 	if (dropdownEl) {
 		dropdownEl.remove();
 		dropdownEl = null;
 	}
+	dropdownShadow = null;
+	shadowHighlight = -1;
+	shadowOtpOnly = false;
 	setAnchorField(null);
 	openMatchesKey = "";
 	openDropdownKind = null;
@@ -617,8 +662,27 @@ let iframeNavRows = 0;
 // Ids last sent to the iframe. A pick naming anything else is dropped, as in relay-client.ts.
 let iframeRenderedIds = new Set<string>();
 
+/**
+ * Load the iframe while the mark is up, so the first click is not a cold iframe start. On a slow
+ * page the first open used to sit in the `probe` state for seconds; the menu only appeared on the
+ * second click, after the UI had connected. The host stays hidden until a render shows it.
+ */
+function preloadUi(): void {
+	if (uiMode === "shadow" || !AUTOFILL_UI_URL) return;
+	if (iframeHostEl && iframeHostEl.style.display !== "none") return;
+	ensureIframeHost();
+	if (!iframeHostEl) return;
+	iframeHostEl.style.display = "none";
+	armReadinessTimeout();
+}
+
 /** Hide the iframe host (kept alive for reuse). */
 function hideIframe(): void {
+	affordance.setExpanded(false);
+	// The UI dedupes height reports; clear its last value so the next open reports its height
+	// again. Without this, a dismissed menu reopened at the same height never reports it, and the
+	// host can come back at zero height with the rows rendered but invisible.
+	postToUi({ type: "UI_HIDDEN" });
 	if (iframeHostEl) {
 		iframeHostEl.style.display = "none";
 		// Drop a mid-scroll hide with it: the next show starts a fresh tracking loop,
@@ -838,8 +902,70 @@ function cancelExit(): void {
 		host.style.pointerEvents = "auto";
 	}
 }
+
+/** Collapse the open menu into `target` (the mark's viewport rect), then remove it. Falls back to
+ *  an instant close when there is no mark, no host, no WAAPI, or reduced motion is requested. */
+function dismissTo(target: DOMRect | null): void {
+	// A pick is the field being used, not held. Release the native autocomplete now rather than
+	// after the collapse: a second mark click during the animation must see the page's own token,
+	// or the field model can stop recognising the field and the next menu has nothing to offer.
+	releaseAutocomplete();
+	const host = activeHost();
+	const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+	if (!host || !target || typeof host.animate !== "function") {
+		removeActiveUi();
+		return;
+	}
+	const rect = host.getBoundingClientRect();
+	if (rect.width < 1 || rect.height < 1) {
+		removeActiveUi();
+		return;
+	}
+	cancelExit();
+	exiting = true;
+	host.style.pointerEvents = "none";
+	if (reduced) {
+		// Reduced motion: keep a short opacity fade so the menu does not blink out, but no
+		// movement. The collapse-to-icon is deliberately skipped.
+		exitAnim = host.animate([{ opacity: 1 }, { opacity: 0 }], {
+			duration: MENU_FADE_MS,
+			easing: "ease-out",
+			fill: "forwards",
+		});
+	} else {
+		host.style.transformOrigin = `${target.left + target.width / 2 - rect.left}px ${
+			target.top + target.height / 2 - rect.top
+		}px`;
+		// Keep the host's placed transform (a matrix) and append the scale; replacing it with a
+		// bare scale would drop the host to 0,0.
+		const base = getComputedStyle(host).transform;
+		const baseTransform = base && base !== "none" ? base : "";
+		exitAnim = host.animate(
+			[
+				{ transform: `${baseTransform} scale(1)`.trim(), opacity: 1 },
+				{ transform: `${baseTransform} scale(0.02)`.trim(), opacity: 0 },
+			],
+			{ duration: MENU_COLLAPSE_MS, easing: "cubic-bezier(0.4, 0, 0.2, 1)", fill: "forwards" },
+		);
+	}
+	exitAnim.onfinish = () => {
+		// A finished fill:forwards animation keeps applying its collapsed end state to the
+		// host, and the host is reused for the next open: without this cancel the next menu
+		// opens as a scale(0.02) sliver that renders rows nobody can see. Cancelling in the
+		// finish handler releases the fill; the instant removeActiveUi() below hides the
+		// host anyway, so nothing flashes back to full size.
+		exitAnim?.cancel();
+		exitAnim = null;
+		exiting = false;
+		host.style.transformOrigin = "";
+		host.style.pointerEvents = "";
+		removeActiveUi();
+	};
+}
+
 /** Dismiss whichever picker is showing (shadow dropdown or iframe). The iframe is hidden, not destroyed, so it can be reused without re-loading. */
 function removeActiveUi(): void {
+	cancelExit();
 	removeDropdown();
 	hideIframe();
 }
@@ -848,6 +974,7 @@ function removeActiveUi(): void {
 
 function showMatchesUi(matches: MatchSummary[], field: HTMLInputElement, opts?: RowOpts): void {
 	if (matches.length === 0 && !opts?.suggest && !opts?.alias) return;
+	cancelExit();
 	if (uiMode === "shadow") {
 		buildDropdown(matches, field, opts);
 		return;
@@ -907,6 +1034,8 @@ function onUiMessage(e: MessageEvent): void {
 		| { type: "UI_USE_ALIAS"; pointer?: boolean }
 		| { type: "UI_NEW_LOGIN" }
 		| { type: "UI_OPEN_ENTRY"; entryId?: string; pointer?: boolean }
+		| { type: "UI_HIGHLIGHT"; active?: boolean; entryId?: string; label?: string }
+		| { type: "UI_POINTER"; x?: number; y?: number }
 		| undefined;
 	switch (msg?.type) {
 		case "UI_CONNECTED":
@@ -920,13 +1049,24 @@ function onUiMessage(e: MessageEvent): void {
 			break;
 		case "UI_RESIZE":
 			if (iframeEl) {
-				iframeEl.style.height = `${Math.max(0, Math.min(400, Number(msg.height) || 0))}px`;
 				pickerHeight = Math.max(0, Math.min(400, Number(msg.height) || 0));
 				iframeEl.style.height = `${pickerHeight}px`;
 				// The height is what tells us whether the menu fits below the field. Re-place it now
 				// that the real height is known (the first placement ran while the iframe was 0 tall).
 				repositionActive();
 			}
+			break;
+		case "UI_POINTER":
+			if (iframeHostEl && typeof msg.x === "number" && typeof msg.y === "number") {
+				const rect = iframeHostEl.getBoundingClientRect();
+				pointerCb?.(rect.left + msg.x, rect.top + msg.y);
+			}
+			break;
+		case "UI_HIGHLIGHT":
+			iframeHasHighlight = msg.active === true;
+			iframeHighlightId =
+				msg.active === true && typeof msg.entryId === "string" ? msg.entryId : null;
+			if (typeof msg.label === "string" && msg.label) affordance.announce(msg.label);
 			break;
 		case "UI_PICK":
 			if (
@@ -958,7 +1098,6 @@ function onUiMessage(e: MessageEvent): void {
 			if (pickAllowed(iframeHostEl, msg.pointer)) aliasCb?.();
 			break;
 		case "UI_NEW_LOGIN":
-			// Opens Bramble's own window and fills nothing, so it needs no clickjacking gate.
 			hideIframe();
 			newLoginCb?.();
 			break;
@@ -976,10 +1115,80 @@ function onUiMessage(e: MessageEvent): void {
 	}
 }
 
-/** Arrow/Enter/Escape navigation for the open iframe dropdown; returns true if the key was consumed. */
+/** Arrow/Enter/Escape navigation for the open shadow (COEP fallback) dropdown. */
+function shadowRows(): HTMLElement[] {
+	return dropdownShadow
+		? [...dropdownShadow.querySelectorAll<HTMLElement>(".tp-item[role='option']")]
+		: [];
+}
+
+function setShadowHighlight(index: number): void {
+	const rows = shadowRows();
+	if (rows.length === 0) return;
+	shadowHighlight = Math.max(0, Math.min(rows.length - 1, index));
+	rows.forEach((row, i) => {
+		const active = i === shadowHighlight;
+		row.classList.toggle("tp-active", active);
+		row.setAttribute("aria-selected", active ? "true" : "false");
+		if (active) row.scrollIntoView({ block: "nearest" });
+	});
+}
+
+function activateShadowRow(row: HTMLElement): void {
+	const entryId = row.dataset.entryId;
+	if (entryId) {
+		pickCb?.(entryId, shadowOtpOnly);
+		return;
+	}
+	if (row.dataset.tpSuggest) {
+		onSuggestedCb?.();
+		return;
+	}
+	if (row.dataset.tpAlias) {
+		aliasCb?.();
+		return;
+	}
+	if (row.dataset.tpPopout) {
+		const field = anchorField;
+		removeActiveUi();
+		unlockCb?.(field);
+	}
+}
+
+function handleShadowKey(e: KeyboardEvent): boolean {
+	if (!dropdownShadow || !dropdownEl || dropdownEl.style.display === "none") return false;
+	const rows = shadowRows();
+	if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+		e.preventDefault();
+		if (rows.length === 0) return true;
+		const delta = e.key === "ArrowDown" ? 1 : -1;
+		const next =
+			shadowHighlight < 0
+				? delta > 0
+					? 0
+					: rows.length - 1
+				: Math.max(0, Math.min(rows.length - 1, shadowHighlight + delta));
+		setShadowHighlight(next);
+		return true;
+	}
+	if (e.key === "Escape") {
+		e.preventDefault();
+		dismissCb?.();
+		removeActiveUi();
+		return true;
+	}
+	if (e.key === "Enter" && shadowHighlight >= 0) {
+		const row = rows[shadowHighlight];
+		if (row) {
+			e.preventDefault();
+			activateShadowRow(row);
+			return true;
+		}
+	}
+	return false;
+}
+
 function handleDropdownKey(e: KeyboardEvent): boolean {
-	if (uiMode !== "iframe" || !iframeReady || !iframeHostEl) return false;
-	if (iframeHostEl.style.display === "none") return false;
 	if (document.activeElement !== anchorField) return false;
 	if (!iframeEl?.contentWindow) return false;
 	if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -1023,8 +1232,14 @@ onTeardown(() => {
 export const picker = {
 	showMatches: showMatchesUi,
 	showLocked: showLockedUi,
+	/** Warm the iframe while the mark is up, so the first click is not a cold start. */
+	preload: preloadUi,
 	reposition: repositionActive,
 	remove: removeActiveUi,
+	/** Collapse the open menu into the in-field mark, then remove it. */
+	dismissTo,
+	/** True while that exit is running: the menu is on its way out, not open for interaction. */
+	isExiting: () => exiting,
 	// Dismiss only the shadow-dropdown renderer (no-op in iframe mode); preserves
 	// the original's removeDropdown-vs-removeActiveUi distinction at its call sites.
 	removeDropdown,

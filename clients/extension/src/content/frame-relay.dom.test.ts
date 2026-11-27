@@ -162,7 +162,20 @@ describe("shopify checkout - card fields in a cross-origin iframe", () => {
 
 		deliver(window, { __tp: "tp-relay-close", relayId: "relay-1" }, frameEl.contentWindow);
 
-		expect(closed).toHaveBeenCalledWith("relay-1");
+		expect(closed).toHaveBeenCalledWith("relay-1", false);
+	});
+
+	it("carries the collapse flag for a pick", () => {
+		const closed = vi.fn();
+		merchantRelay.onClose(closed);
+
+		deliver(
+			window,
+			{ __tp: "tp-relay-close", relayId: "relay-1", collapse: true },
+			frameEl.contentWindow,
+		);
+
+		expect(closed).toHaveBeenCalledWith("relay-1", true);
 	});
 
 	it("does not treat the merchant frame itself as needing a relay", () => {

@@ -71,7 +71,19 @@ async function openPickerOn(page: Page, selector: string) {
 	const host = page.locator(HOST);
 	await expect(async () => {
 		await page.locator(selector).click();
-		await expect(host).toBeAttached({ timeout: 2000 });
+		await expect(host).toBeVisible({ timeout: 2000 });
+		// A pick collapses the previous menu into the mark for 240ms; the host stays attached and
+		// visible while it shrinks. Wait for that exit to finish (or be cancelled by this open)
+		// before reading the box the row click is measured from.
+		await expect
+			.poll(
+				() =>
+					host.evaluate(
+						(el) => getComputedStyle(el).display !== "none" && el.getAnimations().length === 0,
+					),
+				{ timeout: 5000 },
+			)
+			.toBe(true);
 	}).toPass({ timeout: 25_000 });
 	const box = await host.boundingBox();
 	expect(box, "the picker never got a box").not.toBeNull();
@@ -81,7 +93,10 @@ async function openPickerOn(page: Page, selector: string) {
 /** Click the nth row of the open picker (rows live in a closed shadow root, so click by position). */
 async function clickRow(page: Page, box: { x: number; y: number; height: number }, n: number) {
 	await waitOutPickerClickGuard(page);
-	await page.mouse.click(box.x + 30, box.y + 24 + n * 44);
+	// 6px menu padding, a 62px compact row and a 2px gap between rows. Click the row's middle
+	// rather than a fixed 44px stride: the row grew when the compact layout got its monogram, and a
+	// stride shorter than the row put the "second" click on the first row's last pixel.
+	await page.mouse.click(box.x + 30, box.y + 6 + 31 + n * 64);
 }
 
 async function setUp(context: BrowserContext, extensionId: string, second = false) {

@@ -619,7 +619,7 @@ function aliasRow(row: AliasRowState): string {
 	}
 	if (row.state === "error") {
 		return html`
-		<div class="tp-item tp-alias tp-alias-error" data-tp-alias="1" role="option">
+		<div class="tp-item tp-alias tp-alias-error" data-tp-alias="1" role="option" aria-selected="false">
 			<div class="tp-avatar tp-avatar-alias">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>
 			</div>
@@ -631,7 +631,7 @@ function aliasRow(row: AliasRowState): string {
 	`;
 	}
 	return html`
-		<div class="tp-item tp-alias" data-tp-alias="1" role="option">
+		<div class="tp-item tp-alias" data-tp-alias="1" role="option" aria-selected="false">
 			<div class="tp-avatar tp-avatar-alias">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"></path></svg>
 			</div>
@@ -646,6 +646,7 @@ function aliasRow(row: AliasRowState): string {
 function suggestRow(password: string): string {
 	return html`
 		<div class="tp-item tp-suggest" data-tp-suggest="1" role="option">
+		<div class="tp-item tp-suggest" data-tp-suggest="1" role="option" aria-selected="false">
 			<div class="tp-avatar tp-avatar-suggest">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"></circle><path d="M10.7 12.3 20 3"></path><path d="m16 6 3 3"></path><path d="m14 8 3 3"></path></svg>
 			</div>
@@ -678,7 +679,7 @@ function newLoginRow(): string {
 
 function lockedRow(): string {
 	return html`
-		<div class="tp-item tp-locked" data-tp-popout="1">
+		<div class="tp-item tp-locked" data-tp-popout="1" role="option" aria-selected="false">
 			<div class="tp-avatar tp-avatar-locked">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="10" rx="2.4"></rect><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"></path></svg>
 			</div>
@@ -828,6 +829,9 @@ function activate(i: number): void {
 document.addEventListener("mousedown", (e) => {
 	if (!e.isTrusted) return;
 	const target = e.target as HTMLElement | null;
+	// Let the content script see where this click landed in the page. A click on the left half of
+	// another field's mark switches the menu to that field instead of picking the row under it.
+	post({ type: "UI_POINTER", x: e.clientX, y: e.clientY });
 	// Regenerate lives inside the suggest row, so match it before data-tp-suggest.
 	if (target?.closest("[data-tp-regenerate]")) {
 		e.preventDefault();
