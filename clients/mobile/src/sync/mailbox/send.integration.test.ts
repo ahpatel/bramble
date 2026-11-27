@@ -9,6 +9,7 @@ import {
 	inboxKinds,
 	names,
 	type TestDevice,
+	testGroup,
 } from "./test-device";
 import { startTestMailbox, type TestMailbox } from "./test-server";
 
@@ -146,7 +147,7 @@ describe("sending", () => {
 
 	it("compaction keeps this device's pending snapshot requests", async () => {
 		const [a, b] = await pair({ limits: { compactCount: 2 } });
-		await requestSnapshot(a.ctx, a.state, null);
+		await requestSnapshot(a.ctx, a.state, null, a.roster.current);
 		for (const n of ["One", "Two"]) {
 			await addLogin(a, n);
 			await post(a);
@@ -175,6 +176,41 @@ describe("sending", () => {
 		await compact(a.ctx, a.state, await a.ctx.vault.readLocal());
 		expect(await inboxKinds(b)).toEqual(["snapshot"]);
 		expect(await inboxKinds(d)).not.toContain("snapshot");
+	});
+
+	it("a device revoked here is sent none of this device's changes", async () => {
+		const [a, b, d] = (await activeGroup(box, ["a", "b", "d"])) as [
+			TestDevice,
+			TestDevice,
+			TestDevice,
+		];
+		a.roster.current = revokeDevice(a.roster.current, "d", { wall: 2, counter: 0, node: "a" });
+		await addLogin(a, "Passport");
+		await post(a);
+		expect(await inboxKinds(b)).toEqual(["delta"]);
+		expect(await inboxKinds(d)).toEqual([]);
+	});
+
+	// Any active member may list a key, so a compromised one can list a reader of its own.
+	it("a key the server lists but the roster doesn't hold is sent nothing", async () => {
+		const [a, b, planted] = (await testGroup(box, ["a", "b", "planted"])) as [
+			TestDevice,
+			TestDevice,
+			TestDevice,
+		];
+		for (const d of [a, b]) {
+			d.roster.current.devices = d.roster.current.devices.filter((e) => e.id !== "planted");
+		}
+		await a.ctx.api.create({ members: [a.sigKey, b.sigKey] });
+		a.state.active = true;
+		await b.ctx.api.activate(true);
+		await b.ctx.api.changeMembers({ add: [planted.sigKey], remove: [] });
+		await planted.ctx.api.activate(true);
+		await addLogin(a, "Passport");
+		await post(a);
+		await requestSnapshot(a.ctx, a.state, null, a.roster.current);
+		expect(await inboxKinds(b)).toEqual(["delta", "snapshot_request"]);
+		expect(await inboxKinds(planted)).toEqual([]);
 	});
 
 	// Moves the shared server's clock a day on.

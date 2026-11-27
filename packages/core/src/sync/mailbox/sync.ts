@@ -87,7 +87,7 @@ export function mailboxSync(
 
 		if (state.catchUp) {
 			await posting(async () => {
-				await requestSnapshot(ctx, state, null);
+				await requestSnapshot(ctx, state, null, local.roster);
 				state.catchUp = false;
 			});
 		}
@@ -103,7 +103,7 @@ export function mailboxSync(
 		forgetStrangers(state, activeSigKeys(local.roster));
 		for (const sender of [...state.gaps]) {
 			await posting(async () => {
-				await requestSnapshot(ctx, state, sender);
+				await requestSnapshot(ctx, state, sender, local.roster);
 				state.gaps = state.gaps.filter((g) => g !== sender);
 			});
 		}

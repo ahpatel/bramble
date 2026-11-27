@@ -184,8 +184,9 @@ closure, merging a sequence of deltas reaches the same state as merging the send
 states, and a property test in the style of `vault-merge.property.test.ts` should pin exactly
 that.
 
-The server sets a message's **recipients** at post time: every active member except the sender
-(or, for a targeted snapshot, the members it names). A member deactivated or removed later has its
+Every post names its **recipients**: the other devices in the sender's roster (or, for a targeted
+snapshot, the members it names), never the server's list. The server delivers to those of them that
+are active at post time. A member deactivated or removed later has its
 pending deliveries dropped.
 
 **As built** (`sync/mailbox/plaintext.ts`, `delta.ts`), a message seals one of three plaintexts,
@@ -380,8 +381,10 @@ carries a client-chosen message id, so a replayed post deduplicates.
 
 **Eligibility mirrors the roster.** Whenever an active member sees the roster change, it
 reconciles the server's eligible list: add active `sigKey`s that are missing, remove revoked
-ones. Changing the list must be signed by an active member, so only the group admits anyone, and
-a device can activate only a `sigKey` already eligible. The first device creates the mailbox and
+ones. Changing the list must be signed by an active member, and a device can activate only a
+`sigKey` already eligible. That keeps strangers off the list but not a compromised member's own
+key, so the list decides nothing: a key no roster holds is sent nothing while it is listed, and
+the next reconcile removes it. The first device creates the mailbox and
 lists every active roster device as eligible at once (their `sigKey`s are in the roster, so they
 need not be online). A roster entry with no `sigKey` cannot be eligible until that device updates.
 

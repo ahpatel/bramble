@@ -170,6 +170,7 @@ describe("a mailbox round on a collect-only account", () => {
 describe("fetching on a collect-only account", () => {
 	it("a round that was refused earlier still fetches a blob the mailbox holds", async () => {
 		const me = await ed25519Signer();
+		const phone = await ed25519Signer();
 		const roster: RosterPayload = {
 			devices: [
 				{
@@ -179,6 +180,14 @@ describe("fetching on a collect-only account", () => {
 					addedAt: 1,
 					hlc: { wall: 1, counter: 0, node: "laptop" },
 					sigKey: me.sigKey,
+				},
+				{
+					id: "phone",
+					publicKey: "pk-phone",
+					label: "phone",
+					addedAt: 1,
+					hlc: { wall: 1, counter: 0, node: "phone" },
+					sigKey: phone.sigKey,
 				},
 			],
 			revoked: [],

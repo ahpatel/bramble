@@ -3,13 +3,13 @@
 // of this device's own backlog. New attachments go up before the delta that names them.
 
 import { bytesToBase64Url } from "../../util/bytes";
-import { activeSigKeys, encodeRoster } from "../roster";
+import { activeSigKeys, encodeRoster, type RosterPayload } from "../roster";
 import { MailboxApiError } from "./api";
 import { limit, type MailboxContext } from "./context";
 import { cutDelta } from "./delta";
 import { sealMessage } from "./envelope";
 import { encodePlaintext, type MailboxPlaintext } from "./plaintext";
-import { MAX_LIST, sha256Hex } from "./protocol";
+import { MAX_LIST, MAX_MEMBERS, sha256Hex } from "./protocol";
 import type { MailboxState } from "./state";
 import type { MailboxEnvelope } from "./vault-port";
 
@@ -20,17 +20,24 @@ const DAY_MS = 86_400_000;
 const ROSTER_KEY = "r:";
 const dayOf = (ms: number) => Math.floor(ms / DAY_MS);
 
+/** Everyone else in the roster. Any active member can add a key to the server's list, so that list
+ * never decides who a post is for. */
+const rosterRecipients = (ctx: MailboxContext, roster: RosterPayload) =>
+	activeSigKeys(roster).filter((key) => key !== ctx.sigKey);
+
 /**
- * Seal and post one message. A stored delta or snapshot is logged for compaction; a request is
- * not, since no snapshot of this device's state stands in for it.
+ * Seal and post one message to `to`, a part at a time past the server's per-request limit (a
+ * repeat of the id only adds deliveries). A stored delta or snapshot is logged for compaction; a
+ * request is not, since no snapshot of this device's state stands in for it.
  */
 async function postOne(
 	ctx: MailboxContext,
 	state: MailboxState,
 	plaintext: MailboxPlaintext,
-	to?: string[],
+	to: string[],
 ): Promise<{ id: string; stored: boolean; recipients: number }> {
 	const id = bytesToBase64Url(ctx.random(16));
+	if (to.length === 0) return { id, stored: false, recipients: 0 };
 	const body = await sealMessage(ctx.crypto, {
 		groupKeyB64: ctx.groupKeyB64,
 		mailboxId: ctx.api.mailboxId,
@@ -38,12 +45,18 @@ async function postOne(
 		sender: ctx.sigKey,
 		plaintext: encodePlaintext(plaintext),
 	});
-	const res = await ctx.api.post(id, body, to);
-	if (res.stored && plaintext.kind !== "snapshot_request") {
+	let stored = false;
+	let recipients = 0;
+	for (let i = 0; i < to.length; i += MAX_MEMBERS) {
+		const res = await ctx.api.post(id, body, to.slice(i, i + MAX_MEMBERS));
+		stored ||= res.stored;
+		recipients += res.recipients;
+	}
+	if (stored && plaintext.kind !== "snapshot_request") {
 		const snapshot = plaintext.kind === "snapshot";
 		state.log.push({ id, bytes: body.length, at: ctx.api.serverNow(), snapshot });
 	}
-	return { id, ...res };
+	return { id, stored, recipients };
 }
 
 /**
@@ -86,18 +99,17 @@ export async function postChanges(
 	const roster = (await sha256Hex(encodeRoster(local.roster))).slice(0, 32);
 	if (parts.length === 0 && state.posted[ROSTER_KEY] === roster) return "nothing";
 	const toPost = parts.length > 0 ? parts : [{ entries: [], tombstones: [] }];
+	const to = rosterRecipients(ctx, local.roster);
 	try {
 		await uploadNew(ctx, state, parts);
 		for (const entries of toPost) {
 			const seq = state.nextSeq;
-			await postOne(ctx, state, {
-				v: 1,
-				kind: "delta",
-				epoch: state.epoch,
-				seq,
-				entries,
-				roster: local.roster,
-			});
+			await postOne(
+				ctx,
+				state,
+				{ v: 1, kind: "delta", epoch: state.epoch, seq, entries, roster: local.roster },
+				to,
+			);
 			state.nextSeq = seq + 1;
 		}
 	} catch (err) {
@@ -110,12 +122,12 @@ export async function postChanges(
 	return "posted";
 }
 
-/** The whole state, split into parts, to `to` (everyone when absent). The stored parts' ids. */
+/** The whole state, split into parts, to `to`. The stored parts' ids. */
 export async function postSnapshot(
 	ctx: MailboxContext,
 	state: MailboxState,
 	local: MailboxEnvelope,
-	to: string[] | undefined,
+	to: string[],
 	answers: string | null,
 ): Promise<string[]> {
 	const { parts } = await cutDelta(local.entries, {}, limit(ctx, "partBudget"));
@@ -147,11 +159,12 @@ export async function postSnapshot(
 	return ids;
 }
 
-/** Ask `of`'s sender (or everyone, `of` null) for a snapshot, at most once per requestEveryMs. */
+/** Ask `of`'s sender (or the roster, `of` null) for a snapshot, at most once per requestEveryMs. */
 export async function requestSnapshot(
 	ctx: MailboxContext,
 	state: MailboxState,
 	of: string | null,
+	roster: RosterPayload,
 ): Promise<void> {
 	const key = of ?? "*";
 	const last = state.requested[key];
@@ -161,7 +174,8 @@ export async function requestSnapshot(
 	const request: MailboxPlaintext = { v: 1, kind: "snapshot_request", of };
 	// A sender that is gone reaches nobody: then any member may answer for it.
 	const direct = of ? await postOne(ctx, state, request, [of]) : null;
-	if (!direct || direct.recipients === 0) await postOne(ctx, state, request);
+	if (!direct || direct.recipients === 0)
+		await postOne(ctx, state, request, rosterRecipients(ctx, roster));
 	state.requested[key] = ctx.now();
 }
 
