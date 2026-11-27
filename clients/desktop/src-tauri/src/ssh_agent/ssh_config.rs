@@ -555,8 +555,16 @@ mod tests {
         assert!(write_vault(home.path(), "A", "/a.sock", &keys)
             .unwrap()
             .is_empty());
-        let h = home.path().display();
         let pub_name = format!("A-{}.pub", sha_hex(&blob(ED_PUB)));
+        // Quoted as the config needs it: a Windows path's backslashes come out doubled.
+        let id_file = quoted(
+            &bramble_dir(home.path())
+                .join("keys")
+                .join(&pub_name)
+                .display()
+                .to_string(),
+        )
+        .unwrap();
         let conf = fs::read_to_string(home.path().join(".ssh/bramble/vaults/A.conf")).unwrap();
         assert_eq!(
             conf,
@@ -564,7 +572,7 @@ mod tests {
                 "# Written by Bramble. Changes here are overwritten.\n\n\
                  Host github.com *.example.com\n  \
                  IdentityAgent \"/a.sock\"\n  \
-                 IdentityFile \"{h}/.ssh/bramble/keys/{pub_name}\"\n  \
+                 IdentityFile {id_file}\n  \
                  IdentitiesOnly yes\n"
             )
         );
@@ -593,11 +601,15 @@ mod tests {
     #[test]
     fn the_main_config_claims_no_host_of_its_own() {
         let home = tempfile::tempdir().unwrap();
-        let h = home.path().display();
         write_main(home.path()).unwrap();
+        let vaults = quoted(&format!(
+            "{}/vaults/*.conf",
+            bramble_dir(home.path()).display()
+        ))
+        .unwrap();
         let expected = format!(
             "# Written by Bramble. Changes here are overwritten.\n\
-             Include \"{h}/.ssh/bramble/vaults/*.conf\"\n"
+             Include {vaults}\n"
         );
         let main = home.path().join(".ssh/bramble/config");
         assert_eq!(fs::read_to_string(&main).unwrap(), expected);

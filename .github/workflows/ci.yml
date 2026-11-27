@@ -403,9 +403,6 @@ jobs:
 
   desktop-windows:
     name: Desktop (Windows installer)
-    # Off for now. Back on needs a Common Controls v6 manifest in the test binary: since eff9a8cb
-    # it imports TaskDialogIndirect, so `cargo test` dies on launch with 0xc0000139.
-    if: false
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -434,8 +431,24 @@ jobs:
       # cross-compiled (scripts/build-windows.ts), so nothing else ever compiles the named-pipe
       # transport or the registry host-registration on a real MSVC toolchain, and nothing else
       # runs their tests at all. A green cross-build is not evidence either of them is right.
+      #
+      # Tauri embeds the manifest that asks for Common Controls v6 in the app's binaries only,
+      # and without it a test binary that links Tauri's dialogs dies on launch (0xc0000139).
+      # Windows reads a manifest from beside an exe that embeds none, but remembers the answer
+      # per path, so it goes there before the first run.
       - name: Test the shell
-        run: cd clients/desktop/src-tauri && cargo test
+        shell: pwsh
+        working-directory: clients/desktop/src-tauri
+        run: |
+          $built = cargo test --no-run --message-format=json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exes = @($built | ForEach-Object { $_ | ConvertFrom-Json } |
+            Where-Object { $_.reason -eq 'compiler-artifact' -and $_.profile.test -and $_.executable } |
+            ForEach-Object { $_.executable })
+          if ($exes.Count -eq 0) { Write-Output "::error::cargo built no test binaries"; exit 1 }
+          foreach ($exe in $exes) { Copy-Item windows\test-binary.manifest "$exe.manifest" }
+          cargo test
+          exit $LASTEXITCODE
 
       - name: Generate a throwaway signing key
         shell: bash

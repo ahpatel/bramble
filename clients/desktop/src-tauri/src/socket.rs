@@ -1390,13 +1390,18 @@ mod tests {
             }
         }
 
+        /// No flush: on a Windows pipe it waits until the app has read the frame, and a test
+        /// that answers for the desktop only after sending would wait forever. Nor at drop:
+        /// interprocess would hand the pipe to a background flush that one unread frame stalls,
+        /// keeping every pipe queued behind it open.
         fn send(&mut self, value: serde_json::Value) {
             let body = serde_json::to_vec(&value).unwrap();
             self.stream
                 .write_all(&(body.len() as u32).to_le_bytes())
                 .unwrap();
             self.stream.write_all(&body).unwrap();
-            self.stream.flush().unwrap();
+            #[cfg(windows)]
+            self.stream.assume_flushed();
         }
 
         fn recv(&mut self) -> serde_json::Value {
@@ -1745,9 +1750,6 @@ mod tests {
         handshake::handshake_close(link.session_id);
     }
 
-    // Unix only: a Windows pipe cannot be shut from another thread (see ipc::shutdown), so there
-    // the browser is cut off by the check on its next frame instead.
-    #[cfg(unix)]
     #[test]
     fn opening_another_vault_closes_the_browsers_it_is_not_linked_to() {
         let _g = pairing::test_lock();

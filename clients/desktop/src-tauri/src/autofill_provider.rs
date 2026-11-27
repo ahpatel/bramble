@@ -1,6 +1,9 @@
 //! The macOS AutoFill extension's copy of the vault, written where its sandbox can read it (the
 //! App Group container), plus the identities the OS lists. See docs/macos-credential-provider.md.
 
+// macOS AutoFill: Windows builds the module and calls none of it.
+#![cfg_attr(windows, allow(dead_code))]
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -819,6 +822,8 @@ mod store {
 mod tests {
     use super::*;
 
+    // The path fallback reads HOME, which Windows does not set; group containers are macOS's.
+    #[cfg(unix)]
     #[test]
     fn the_group_container_is_the_one_the_extension_opens() {
         let dir = group_dir().unwrap();

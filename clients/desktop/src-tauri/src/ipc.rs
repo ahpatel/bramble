@@ -214,6 +214,27 @@ mod windows {
         Stream::connect_by_path(named_endpoint(root, name).as_str())
     }
 
+    /// Disconnecting a pipe discards what the browser has not read yet, so it gets a moment to
+    /// read a reply written just before. Only a moment: a flush waits for the reader, and a
+    /// browser that has stopped reading must not hold this thread.
+    pub fn disconnect(stream: &Stream) {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{
+            Storage::FileSystem::FlushFileBuffers, System::Pipes::DisconnectNamedPipe,
+        };
+        if let Ok(clone) = super::try_clone(stream) {
+            let (done, flushed) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                // SAFETY: the handle is the clone's, which this thread owns until it returns.
+                unsafe { FlushFileBuffers(clone.as_raw_handle()) };
+                let _ = done.send(());
+            });
+            let _ = flushed.recv_timeout(std::time::Duration::from_millis(500));
+        }
+        // SAFETY: a live server-end handle; a failure (already disconnected) changes nothing.
+        unsafe { DisconnectNamedPipe(stream.as_raw_handle()) };
+    }
+
     /// A DACL granting the current user full control and naming nobody else.
     ///
     /// This is not belt and braces. A named pipe created with a null descriptor inherits a
@@ -334,8 +355,7 @@ pub fn try_clone(stream: &Stream) -> io::Result<Stream> {
 }
 
 /// End the connection for every handle onto it, including one parked in a read on another
-/// thread. Unix only: a pipe handle has no equivalent, and there the reader ends when the
-/// browser side closes.
+/// thread. Only on the app's end: a pipe is disconnected by its server.
 pub fn shutdown(stream: &Stream) {
     #[cfg(unix)]
     {
@@ -343,7 +363,7 @@ pub fn shutdown(stream: &Stream) {
     }
     #[cfg(windows)]
     {
-        let _ = stream;
+        windows::disconnect(stream);
     }
 }
 

@@ -171,6 +171,8 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security_Credentials",
     # The SSH agent names the program that connected to its pipe.
     "Win32_System_Pipes",
+    # ipc::shutdown flushes a pipe before disconnecting it.
+    "Win32_Storage_FileSystem",
     "Win32_System_Threading",
 ] }
 

@@ -11,6 +11,9 @@
 //! key it just unwrapped, and a locked app takes it for its active vault, so a two-step sign-in's
 //! password page fills without a second unlock. See docs/macos-credential-provider.md.
 
+// macOS AutoFill: Windows builds the module and calls none of it.
+#![cfg_attr(windows, allow(dead_code))]
+
 use serde::{Deserialize, Serialize};
 
 use crate::index_store::IndexEntry;
