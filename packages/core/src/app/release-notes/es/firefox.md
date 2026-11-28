@@ -1,12 +1,11 @@
 ---
-version: 1.40.0
+version: 1.41.0
 ---
 
-Las comprobaciones de filtraciones ahora cubren todos los inicios de sesión, y el menú de cada elemento permite duplicarlo o adjuntarle un archivo.
+Sincronice a través de un buzón cuando sus dispositivos nunca están en línea al mismo tiempo.
 
-- Con «Comprobar contraseñas por filtraciones» activado, Bramble ahora comprueba todos los inicios de sesión en segundo plano, no solo los que abre, y cada inicio de sesión muestra cuándo se comprobó por última vez.
-- Duplique un elemento o adjúntele un archivo desde su menú ⋮ en la lista.
-- Una bóveda que no puede abrir ahora se puede eliminar de la lista de bóvedas sin su contraseña: elija «Eliminar una caja fuerte».
-- Si hay más de un inicio de sesión guardado que podría ser el que usted cambió, la tarjeta de actualización ahora le pregunta cuál desea actualizar en lugar de elegir uno por usted.
-- «Nunca para este sitio» ahora silencia solo ese sitio, como wiki.example.com, en lugar de todos los sitios de su dominio.
-- Cada dos semanas, una tarjeta en la lista de la bóveda pide una vez una donación. Desactívela con «Recordármelo cada dos semanas» en Configuración → Acerca de → Apoyar.
+- Sincronice a través de un buzón cuando sus dispositivos nunca están en línea al mismo tiempo. Utilice el de Bramble, por $2 al mes, o ejecute su propio servidor, en Configuración → Sincronización → Buzón.
+- Las claves SSH pueden indicar para qué hosts sirven, y la aplicación de escritorio ahora puede usarlas en la terminal.
+- Exportar a KeePass conserva los sitios web adicionales de un inicio de sesión en el lugar donde KeePassXC y Keepass2Android los leen.
+- Eliminar una de las dos bóvedas de la lista de bóvedas ahora abre la que queda.
+- Los dispositivos que se desbloquean justo después de la hora en punto ahora se encuentran de inmediato.

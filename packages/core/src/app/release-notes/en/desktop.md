@@ -1,13 +1,13 @@
 ---
-version: 0.22.0
+version: 0.23.0
 ---
 
-On macOS, AutoFill fills without asking while Bramble is unlocked, and you can change the Quick Access shortcut.
+Bramble is now on Windows, and the desktop app can be your SSH agent.
 
-- On macOS, AutoFill fills logins and 2FA codes while Bramble is unlocked, without asking for Touch ID or your master password.
-- Change the Quick Access shortcut, or turn it off, in Settings → General → Quick Access shortcut.
-- On Linux, opening Bramble while it's already running brings back its window.
-- With Check passwords for breaches on, Bramble now checks every login in the background, not just the ones you open, and each login shows when it was last checked.
-- Duplicate an item or attach a file to it from its ⋮ menu in the list.
-- Copies are now cleared after the time set in Settings → General → Clipboard auto-clear, instead of always after 30 seconds.
-- Every two weeks, a card on the vault list asks once for a donation. Turn it off with Remind me every two weeks in Settings → About → Support.
+- The desktop app now runs on Windows 10 and 11.
+- Turn on Use your SSH keys in the terminal in Settings → General, and ssh, git and scp use the SSH keys in your vaults without the private keys leaving Bramble.
+- Sync through a mailbox when your devices are never online together. Use Bramble's, for $2 a month, or run your own server, in Settings → Sync → Mailbox.
+- Bramble keeps its windows out of screenshots and screen sharing on Windows, and asks macOS to do the same. Turn it off with Block screenshots in Settings → General.
+- In Quick Access, ⌘T (Ctrl+T on Windows and Linux) copies the highlighted login's 2FA code.
+- On macOS, unlocking in AutoFill unlocks the desktop app too.
+- Exporting to KeePass keeps a login's extra websites where KeePassXC and Keepass2Android read them.

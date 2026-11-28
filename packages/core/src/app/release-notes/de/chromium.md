@@ -1,13 +1,11 @@
 ---
-version: 1.43.0
+version: 1.44.0
 ---
 
-Die Prüfung auf Datenlecks umfasst jetzt alle Logins, und über das Menü jedes Eintrags können Sie ihn duplizieren oder eine Datei anhängen.
+Synchronisierung über ein Postfach, wenn Ihre Geräte nie gleichzeitig online sind.
 
-- Wenn „Passwörter auf Sicherheitslücken prüfen“ aktiviert ist, prüft Bramble jetzt alle Logins im Hintergrund, nicht nur die, die Sie öffnen, und bei jedem Login wird angezeigt, wann er zuletzt geprüft wurde.
-- Über das ⋮-Menü in der Liste können Sie einen Eintrag duplizieren oder eine Datei anhängen.
-- Ein Tresor, den Sie nicht öffnen können, kann jetzt ohne sein Passwort aus der Liste der Tresore gelöscht werden: Wählen Sie „Tresor löschen“.
-- Wenn mehr als ein gespeicherter Login der geänderte sein könnte, fragt die Update-Karte jetzt, welcher Login aktualisiert werden soll, statt einen für Sie auszuwählen.
-- „Nie für diese Seite speichern“ gilt jetzt nur noch für genau diese Website, z. B. wiki.example.com, statt für alle Websites ihrer Domain.
-- Die Verknüpfung mit der Desktop-App funktioniert in mehr WebKit-Browsern, die Chrome-Erweiterungen unterstützen.
-- Alle zwei Wochen bittet eine Karte in der Tresorliste einmal um eine Spende. Schalten Sie sie mit „Alle zwei Wochen erinnern“ unter Einstellungen → Über → Unterstützen aus.
+- Synchronisieren Sie über ein Postfach, wenn Ihre Geräte nie gleichzeitig online sind. Nutzen Sie Bramble für 2 $ pro Monat oder betreiben Sie Ihren eigenen Server unter Einstellungen → Synchronisierung → Postfach.
+- SSH-Schlüssel können die Hosts auflisten, für die sie bestimmt sind, und die Desktop-App kann sie jetzt im Terminal verwenden.
+- Beim Export nach KeePass bleiben die zusätzlichen Websites eines Logins dort erhalten, wo KeePassXC und Keepass2Android sie lesen.
+- Das Löschen eines von zwei Tresoren aus der Tresorliste öffnet jetzt den verbleibenden Tresor.
+- Geräte, die kurz nach der vollen Stunde entsperrt werden, finden sich jetzt sofort.

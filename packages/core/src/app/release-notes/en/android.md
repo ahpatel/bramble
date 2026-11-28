@@ -1,12 +1,12 @@
 ---
-version: 0.34.0
+version: 0.35.0
 ---
 
-Autofill can copy a login's 2FA code as it fills, and stays unlocked when the app auto-locks.
+Bramble now blocks screenshots and screen-reading assistants, and can sync through a mailbox.
 
-- Turn on Copy 2FA codes when filling in Settings → General to copy a login's 2FA code as autofill fills it, ready to paste on the next page.
-- The app's auto-lock no longer locks autofill, which keeps its own timer and restarts it with every fill.
-- With Check passwords for breaches on, Bramble now checks every login in the background, not just the ones you open, and each login shows when it was last checked.
-- Duplicate an item or attach a file to it from its ⋮ menu in the list.
-- Copies are now cleared after the time set in Settings → General → Clipboard auto-clear, instead of always after 30 seconds.
-- Every two weeks, a card on the vault list asks once for a donation. Turn it off with Remind me every two weeks in Settings → About → Support.
+- Bramble now keeps your vault out of screenshots, screen recordings and assistants that read the screen, such as Gemini and Circle to Search. To take a screenshot, choose Allow for 10 minutes under Block screenshots in Settings → General.
+- Sync through a mailbox when your devices are never online together. Use Bramble's, for $2 a month, or run your own server, in Settings → Sync → Mailbox.
+- SSH keys can list the hosts they're for, and the desktop app can now use them in the terminal.
+- Exporting to KeePass keeps a login's extra websites where KeePassXC and Keepass2Android read them.
+- Deleting one of two vaults from the list of vaults now opens the one that's left.
+- Devices that unlock just after the hour now find each other right away.

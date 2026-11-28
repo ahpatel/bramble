@@ -1,11 +1,12 @@
 ---
-version: 1.29.0
+version: 1.30.0
 ---
 
-El autocompletado permanece desbloqueado cuando la app se bloquea automáticamente, y las comprobaciones de filtraciones ahora cubren todos los inicios de sesión.
+Bramble ahora bloquea las capturas y grabaciones de pantalla, y puede sincronizarse a través de un buzón.
 
-- El bloqueo automático de la app ya no bloquea el autocompletado, que mantiene su propio temporizador y lo reinicia con cada relleno.
-- Con «Comprobar contraseñas por filtraciones» activado, Bramble ahora comprueba todos los inicios de sesión en segundo plano, no solo los que abre, y cada inicio de sesión muestra cuándo se comprobó por última vez.
-- Duplique un elemento o adjúntele un archivo desde su menú ⋮ en la lista.
-- Una bóveda que no puede abrir ahora se puede eliminar de la lista de bóvedas sin su contraseña: elija «Eliminar una caja fuerte».
-- Las copias ahora se borran después del tiempo establecido en Configuración → General → «Limpieza automática de portapapeles», en lugar de siempre después de 30 segundos.
+- Bramble ahora impide que su bóveda aparezca en capturas de pantalla, grabaciones de pantalla y duplicación de pantalla. Para hacer una captura de pantalla, elija Permitir durante 10 minutos en Bloquear capturas de pantalla en Configuración → General.
+- Sincronice a través de un buzón cuando sus dispositivos nunca estén en línea al mismo tiempo: inicie sesión con un número de cuenta de Bramble Mailbox o use su propio servidor, en Configuración → Sincronización → Buzón.
+- Las claves SSH pueden indicar los hosts para los que están destinadas y la aplicación de escritorio ahora puede usarlas en la terminal.
+- Al exportar a KeePass se conservan los sitios web adicionales de un inicio de sesión donde KeePassXC y Keepass2Android pueden leerlos.
+- Al eliminar una de las dos bóvedas de la lista de bóvedas, ahora se abre la que queda.
+- Los dispositivos que se desbloquean justo después de la hora en punto ahora se encuentran de inmediato.

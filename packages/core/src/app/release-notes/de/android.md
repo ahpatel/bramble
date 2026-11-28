@@ -1,12 +1,12 @@
 ---
-version: 0.34.0
+version: 0.35.0
 ---
 
-Autofill kann beim Ausfüllen den 2FA-Code eines Logins kopieren und bleibt entsperrt, wenn die App sich automatisch sperrt.
+Bramble blockiert jetzt Screenshots und Bildschirmlese-Assistenten und kann über ein Postfach synchronisieren.
 
-- Aktivieren Sie „2FA-Codes beim Ausfüllen kopieren“ unter Einstellungen → Allgemein, um den 2FA-Code eines Logins zu kopieren, während Autofill ihn ausfüllt, bereit zum Einfügen auf der nächsten Seite.
-- Die automatische Sperre der App sperrt Autofill nicht mehr; Autofill hat einen eigenen Timer und startet ihn bei jedem Ausfüllen neu.
-- Wenn „Passwörter auf Sicherheitslücken prüfen“ aktiviert ist, prüft Bramble jetzt alle Logins im Hintergrund, nicht nur die, die Sie öffnen, und bei jedem Login wird angezeigt, wann er zuletzt geprüft wurde.
-- Über das ⋮-Menü in der Liste können Sie einen Eintrag duplizieren oder eine Datei anhängen.
-- Kopien werden jetzt nach der Zeit gelöscht, die unter Einstellungen → Allgemein → „Clipboard automatisch löschen“ festgelegt ist, statt immer nach 30 Sekunden.
-- Alle zwei Wochen bittet eine Karte in der Tresorliste einmal um eine Spende. Schalten Sie sie mit „Alle zwei Wochen erinnern“ unter Einstellungen → Über → Unterstützen aus.
+- Bramble hält Ihren Tresor jetzt von Screenshots, Bildschirmaufnahmen und Assistenten fern, die den Bildschirm lesen, wie Gemini und Circle to Search. Um einen Screenshot zu erstellen, wählen Sie unter „Screenshots blockieren“ in Einstellungen → Allgemein die Option „Für 10 Minuten erlauben“.
+- Synchronisieren Sie über ein Postfach, wenn Ihre Geräte nie gleichzeitig online sind. Nutzen Sie Brambles Postfach für 2 $ pro Monat oder betreiben Sie Ihren eigenen Server – unter Einstellungen → Synchronisierung → Postfach.
+- SSH-Schlüssel können die Hosts auflisten, für die sie bestimmt sind, und die Desktop-App kann sie jetzt im Terminal verwenden.
+- Beim Export nach KeePass bleiben die zusätzlichen Websites eines Logins dort erhalten, wo KeePassXC und Keepass2Android sie auslesen.
+- Das Löschen eines von zwei Tresoren aus der Tresorliste öffnet jetzt den verbleibenden Tresor.
+- Geräte, die kurz nach der vollen Stunde entsperrt werden, finden einander jetzt sofort.

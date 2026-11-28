@@ -1,12 +1,12 @@
 ---
-version: 0.34.0
+version: 0.35.0
 ---
 
-Le remplissage automatique peut copier le code 2FA d’un identifiant pendant qu’il le remplit, et reste déverrouillé lorsque l’application se verrouille automatiquement.
+Bramble bloque désormais les captures d'écran et les assistants de lecture d'écran, et peut se synchroniser via une boîte aux lettres.
 
-- Activez « Copier les codes 2FA lors du remplissage » dans Paramètres → Général pour copier le code 2FA d’un identifiant lorsque le remplissage automatique le remplit, prêt à coller sur la page suivante.
-- Le verrouillage automatique de l’application ne verrouille plus le remplissage automatique, qui dispose de son propre minuteur et le redémarre à chaque remplissage.
-- Avec « Vérifier les mots de passe pour des violations » activé, Bramble vérifie désormais tous les identifiants en arrière-plan, pas seulement ceux que vous ouvrez, et chaque identifiant indique quand il a été vérifié pour la dernière fois.
-- Dupliquez un élément ou joignez-y un fichier depuis son menu ⋮ dans la liste.
-- Les copies sont désormais effacées après le délai défini dans Paramètres → Général → « Auto-effacement du presse-papiers », et non plus systématiquement après 30 secondes.
-- Toutes les deux semaines, une carte sur la liste des coffres demande une fois un don. Désactivez-la avec « Me le rappeler toutes les deux semaines » dans Paramètres → À propos → Soutien.
+- Bramble empêche désormais votre coffre-fort d'apparaître dans les captures d'écran, les enregistrements d'écran et les assistants de lecture d'écran, comme Gemini et Circle to Search. Pour prendre une capture d'écran, choisissez Autoriser pendant 10 minutes sous Bloquer les captures d’écran dans Paramètres → Général.
+- Synchronisez via une boîte aux lettres lorsque vos appareils ne sont jamais en ligne en même temps. Utilisez la boîte aux lettres de Bramble, pour 2 $ par mois, ou exécutez votre propre serveur, dans Paramètres → Synchronisation → Boîte aux lettres.
+- Les clés SSH peuvent répertorier les hôtes auxquels elles sont destinées, et l'application de bureau peut désormais les utiliser dans le terminal.
+- L'exportation vers KeePass conserve les sites web supplémentaires d'un identifiant là où KeePassXC et Keepass2Android les lisent.
+- Supprimer l'un des deux coffres-forts de la liste des coffres-forts ouvre désormais celui qui reste.
+- Les appareils qui se déverrouillent juste après l'heure pile se trouvent désormais immédiatement.

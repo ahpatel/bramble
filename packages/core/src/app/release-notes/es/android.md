@@ -1,12 +1,12 @@
 ---
-version: 0.34.0
+version: 0.35.0
 ---
 
-El autocompletado puede copiar el código 2FA de un inicio de sesión mientras lo rellena, y permanece desbloqueado cuando la app se bloquea automáticamente.
+Bramble ahora bloquea las capturas de pantalla y los asistentes de lectura de pantalla, y puede sincronizarse a través de un buzón.
 
-- Active «Copiar códigos 2FA al rellenar» en Configuración → General para copiar el código 2FA de un inicio de sesión mientras el autocompletado lo rellena, listo para pegar en la página siguiente.
-- El bloqueo automático de la app ya no bloquea el autocompletado, que mantiene su propio temporizador y lo reinicia con cada relleno.
-- Con «Comprobar contraseñas por filtraciones» activado, Bramble ahora comprueba todos los inicios de sesión en segundo plano, no solo los que abre, y cada inicio de sesión muestra cuándo se comprobó por última vez.
-- Duplique un elemento o adjúntele un archivo desde su menú ⋮ en la lista.
-- Las copias ahora se borran después del tiempo establecido en Configuración → General → «Limpieza automática de portapapeles», en lugar de siempre después de 30 segundos.
-- Cada dos semanas, una tarjeta en la lista de la bóveda pide una vez una donación. Desactívela con «Recordármelo cada dos semanas» en Configuración → Acerca de → Apoyar.
+- Bramble ahora mantiene su caja fuerte fuera de las capturas de pantalla, las grabaciones de pantalla y los asistentes que leen la pantalla, como Gemini y Circle to Search. Para hacer una captura de pantalla, elija Permitir durante 10 minutos en Bloquear capturas de pantalla en Configuración → General.
+- Sincronice a través de un buzón cuando sus dispositivos nunca estén en línea al mismo tiempo. Use el buzón de Bramble, por $2 al mes, o ejecute su propio servidor, en Configuración → Sincronización → Buzón.
+- Las claves SSH pueden enumerar los hosts para los que sirven, y la aplicación de escritorio ahora puede usarlas en la terminal.
+- Al exportar a KeePass, los sitios web adicionales de un inicio de sesión se conservan donde KeePassXC y Keepass2Android los leen.
+- Eliminar una de dos cajas fuertes de la lista ahora abre la que queda.
+- Los dispositivos que se desbloquean justo después de la hora ahora se encuentran de inmediato.

@@ -1,11 +1,12 @@
 ---
-version: 1.29.0
+version: 1.30.0
 ---
 
-La compilazione automatica resta sbloccata quando l'app si blocca automaticamente e i controlli delle violazioni ora coprono tutti gli accessi.
+Bramble ora blocca screenshot e registrazioni dello schermo e può sincronizzarsi tramite una casella di posta.
 
-- Il blocco automatico dell'app non blocca più la compilazione automatica, che mantiene un proprio timer e lo riavvia a ogni compilazione.
-- Con l'opzione Controllare le password per violazioni attiva, Bramble ora controlla ogni accesso in background, non solo quelli aperti, e ogni accesso mostra quando è stato controllato l'ultima volta.
-- È possibile duplicare un elemento o allegarvi un file dal suo menu ⋮ nell'elenco.
-- Una cassaforte che non è possibile aprire ora può essere eliminata dall'elenco delle casseforti, senza la sua password: selezionare Eliminare una cassaforte.
-- Le copie ora vengono cancellate dopo il tempo impostato in Impostazioni → Generale → Auto-cancellazione della clipboard, invece che sempre dopo 30 secondi.
+- Bramble ora mantiene la cassaforte fuori da screenshot, registrazioni dello schermo e mirroring dello schermo. Per acquisire uno screenshot, scegliere 'Consentire per 10 minuti' sotto 'Bloccare gli screenshot' in Impostazioni → Generale.
+- Sincronizzare tramite una casella di posta quando i dispositivi non sono mai online insieme: accedere con un numero di account Bramble Mailbox, oppure usare il proprio server, in Impostazioni → Sincronizzazione → Casella.
+- Le chiavi SSH possono elencare gli host a cui sono associate e l'app desktop ora può usarle nel terminale.
+- L'esportazione in KeePass conserva i siti web aggiuntivi di un accesso dove KeePassXC e Keepass2Android li leggono.
+- Eliminare una delle due casseforti dall'elenco delle casseforti ora apre quella rimasta.
+- Adesso i dispositivi che si sbloccano subito dopo l'ora si trovano immediatamente.

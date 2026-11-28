@@ -1,13 +1,13 @@
 ---
-version: 0.22.0
+version: 0.23.0
 ---
 
-No macOS, o AutoFill preenche sem solicitar confirmação enquanto o Bramble está desbloqueado, e você pode alterar o atalho do Acesso rápido.
+O Bramble agora está disponível para Windows, e o app para desktop pode ser seu agente SSH.
 
-- No macOS, o AutoFill preenche logins e códigos 2FA enquanto o Bramble está desbloqueado, sem solicitar Touch ID nem a sua Senha Mestra.
-- Altere o atalho do Acesso rápido ou desative-o em Configurações → Geral → Atalho do Acesso rápido.
-- No Linux, abrir o Bramble enquanto ele já está em execução traz de volta a janela dele.
-- Com a opção Verificar senhas por violações ativada, o Bramble agora verifica todos os logins em segundo plano, não apenas os que você abre, e cada login mostra quando foi verificado pela última vez.
-- Duplique um item ou anexe um arquivo a ele pelo menu ⋮ na lista.
-- As cópias agora são apagadas após o tempo definido em Configurações → Geral → Limpar automaticamente a área de transferência, em vez de sempre após 30 segundos.
-- A cada duas semanas, um cartão na lista de cofres pede uma doação uma vez. Desative-o com Lembrar-me a cada duas semanas em Configurações → Sobre → Suporte.
+- O app para desktop agora funciona no Windows 10 e 11.
+- Ative a opção Usar suas chaves SSH no terminal em Configurações → Geral, e ssh, git e scp passam a usar as chaves SSH dos seus cofres sem que as chaves privadas saiam do Bramble.
+- Sincronize por meio de uma caixa de correio quando seus dispositivos nunca estiverem online ao mesmo tempo. Use a caixa de correio do Bramble, por US$ 2 por mês, ou execute seu próprio servidor, em Configurações → Sincronização → Caixa de correio.
+- O Bramble mantém suas janelas fora de capturas de tela e do compartilhamento de tela no Windows, e pede ao macOS para fazer o mesmo. Desative isso na opção Bloquear capturas de tela em Configurações → Geral.
+- No Acesso Rápido, ⌘T (Ctrl+T no Windows e Linux) copia o código 2FA do login destacado.
+- No macOS, desbloquear no AutoFill também desbloqueia o app para desktop.
+- Ao exportar para o KeePass, os sites extras de um login são preservados nos campos que o KeePassXC e o Keepass2Android leem.

@@ -1,13 +1,13 @@
 ---
-version: 0.22.0
+version: 0.23.0
 ---
 
-Sur macOS, AutoFill remplit sans rien demander lorsque Bramble est déverrouillé, et vous pouvez modifier le raccourci d’Accès rapide.
+Bramble est désormais disponible sur Windows, et l’application de bureau peut servir d’agent SSH.
 
-- Sur macOS, AutoFill remplit les identifiants et les codes 2FA lorsque Bramble est déverrouillé, sans demander Touch ID ni votre mot de passe maître.
-- Modifiez le raccourci d’Accès rapide ou désactivez-le dans Paramètres → Général → « Raccourci d’Accès rapide ».
-- Sur Linux, ouvrir Bramble alors qu’il est déjà en cours d’exécution fait réapparaître sa fenêtre.
-- Avec « Vérifier les mots de passe pour des violations » activé, Bramble vérifie désormais tous les identifiants en arrière-plan, pas seulement ceux que vous ouvrez, et chaque identifiant indique quand il a été vérifié pour la dernière fois.
-- Dupliquez un élément ou joignez-y un fichier depuis son menu ⋮ dans la liste.
-- Les copies sont désormais effacées après le délai défini dans Paramètres → Général → « Auto-effacement du presse-papiers », et non plus systématiquement après 30 secondes.
-- Toutes les deux semaines, une carte sur la liste des coffres demande une fois un don. Désactivez-la avec « Me le rappeler toutes les deux semaines » dans Paramètres → À propos → Soutien.
+- L’application de bureau fonctionne désormais sous Windows 10 et 11.
+- Activez l’option « Utiliser vos clés SSH dans le terminal » dans Paramètres → Général, et ssh, git et scp utilisent les clés SSH de vos coffres sans que les clés privées ne quittent Bramble.
+- Synchronisez via une boîte aux lettres lorsque vos appareils ne sont jamais en ligne en même temps. Utilisez la boîte aux lettres de Bramble, pour 2 $ par mois, ou exécutez votre propre serveur, dans Paramètres → Synchronisation → Boîte aux lettres.
+- Bramble empêche ses fenêtres d’apparaître dans les captures d’écran et lors du partage d’écran sous Windows, et demande à macOS de faire de même. Désactivez cette option avec « Bloquer les captures d’écran » dans Paramètres → Général.
+- Dans Accès rapide, ⌘T (Ctrl+T sous Windows et Linux) copie le code 2FA de l’identifiant sélectionné.
+- Sur macOS, le déverrouillage dans AutoFill déverrouille également l’application de bureau.
+- L’exportation vers KeePass conserve les sites web supplémentaires d’un identifiant là où KeePassXC et Keepass2Android les lisent.

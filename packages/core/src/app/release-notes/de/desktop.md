@@ -1,13 +1,13 @@
 ---
-version: 0.22.0
+version: 0.23.0
 ---
 
-Unter macOS füllt AutoFill aus, ohne nachzufragen, solange Bramble entsperrt ist, und Sie können die Tastenkombination für den Schnellzugriff ändern.
+Bramble ist jetzt unter Windows verfügbar, und die Desktop-App kann als SSH-Agent fungieren.
 
-- Unter macOS füllt AutoFill Logins und 2FA-Codes aus, während Bramble entsperrt ist, ohne nach Touch ID oder Ihrem Master-Passwort zu fragen.
-- Ändern oder deaktivieren Sie die Tastenkombination für den Schnellzugriff unter Einstellungen → Allgemein → „Tastenkombination für Schnellzugriff“.
-- Wenn Bramble unter Linux bereits läuft, holt ein erneutes Öffnen sein Fenster zurück.
-- Wenn „Passwörter auf Sicherheitslücken prüfen“ aktiviert ist, prüft Bramble jetzt alle Logins im Hintergrund, nicht nur die, die Sie öffnen, und bei jedem Login wird angezeigt, wann er zuletzt geprüft wurde.
-- Über das ⋮-Menü in der Liste können Sie einen Eintrag duplizieren oder eine Datei anhängen.
-- Kopien werden jetzt nach der Zeit gelöscht, die unter Einstellungen → Allgemein → „Clipboard automatisch löschen“ festgelegt ist, statt immer nach 30 Sekunden.
-- Alle zwei Wochen bittet eine Karte in der Tresorliste einmal um eine Spende. Schalten Sie sie mit „Alle zwei Wochen erinnern“ unter Einstellungen → Über → Unterstützen aus.
+- Die Desktop-App läuft jetzt unter Windows 10 und 11.
+- Aktivieren Sie unter „Einstellungen → Allgemein“ die Option „SSH-Schlüssel im Terminal verwenden“, und ssh, git und scp verwenden dann die SSH-Schlüssel in Ihren Tresoren, ohne dass die privaten Schlüssel Bramble verlassen.
+- Synchronisieren Sie über ein Postfach, wenn Ihre Geräte nie gleichzeitig online sind. Nutzen Sie das Postfach von Bramble für 2 $ pro Monat oder betreiben Sie Ihren eigenen Server – unter „Einstellungen → Synchronisierung → Postfach“.
+- Bramble verhindert unter Windows, dass seine Fenster in Screenshots und Bildschirmfreigaben erscheinen, und bittet macOS, dasselbe zu tun. Schalten Sie dies mit „Screenshots blockieren“ unter „Einstellungen → Allgemein“ aus.
+- Im Schnellzugriff kopiert ⌘T (Strg+T unter Windows und Linux) den 2FA-Code des markierten Logins.
+- Unter macOS wird beim Entsperren in AutoFill auch die Desktop-App entsperrt.
+- Beim Export nach KeePass bleiben die zusätzlichen Websites eines Logins erhalten, damit KeePassXC und Keepass2Android sie lesen können.

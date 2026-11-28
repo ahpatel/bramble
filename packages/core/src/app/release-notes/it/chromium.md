@@ -1,13 +1,11 @@
 ---
-version: 1.43.0
+version: 1.44.0
 ---
 
-I controlli delle violazioni ora coprono ogni accesso e il menu di ciascun elemento consente di duplicarlo o di allegarvi un file.
+Sincronizzare tramite una casella di posta quando i dispositivi non sono mai online insieme.
 
-- Con l'opzione Controllare le password per violazioni attiva, Bramble ora controlla ogni accesso in background, non solo quelli aperti, e ogni accesso mostra quando è stato controllato l'ultima volta.
-- È possibile duplicare un elemento o allegarvi un file dal suo menu ⋮ nell'elenco.
-- Una cassaforte che non è possibile aprire ora può essere eliminata dall'elenco delle casseforti, senza la sua password: selezionare Eliminare una cassaforte.
-- Se più di un accesso salvato potrebbe essere quello modificato, la scheda di aggiornamento ora chiede quale aggiornare invece di sceglierne uno automaticamente.
-- Mai per questo sito ora disattiva solo quel sito, ad esempio wiki.example.com, invece di tutti i siti del suo dominio.
-- Il collegamento all'app desktop funziona in più browser WebKit che eseguono estensioni Chrome.
-- Ogni due settimane, una scheda nell'elenco delle casseforti chiede una volta una donazione. È possibile disattivarla con Ricordamelo ogni due settimane in Impostazioni → Informazioni → Supporto.
+- Sincronizzare tramite una casella di posta quando i dispositivi non sono mai online insieme. Utilizzare il servizio di Bramble, a 2 dollari al mese, oppure eseguire il proprio server, in Impostazioni → Sincronizzazione → Casella.
+- Le chiavi SSH possono elencare gli host a cui sono destinate e l'app desktop ora può utilizzarle nel terminale.
+- L'esportazione in KeePass conserva i siti web aggiuntivi di un accesso in modo che KeePassXC e Keepass2Android possano leggerli.
+- L'eliminazione di una delle due casseforti dall'elenco delle casseforti ora apre quella rimasta.
+- I dispositivi che si sbloccano subito dopo l'ora adesso si trovano immediatamente.

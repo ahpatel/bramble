@@ -1,13 +1,11 @@
 ---
-version: 1.43.0
+version: 1.44.0
 ---
 
-Breach checks now cover every login, and each item's menu can duplicate it or attach a file.
+Sync through a mailbox when your devices are never online together.
 
-- With Check passwords for breaches on, Bramble now checks every login in the background, not just the ones you open, and each login shows when it was last checked.
-- Duplicate an item or attach a file to it from its ⋮ menu in the list.
-- A vault you can't open can now be deleted from the list of vaults, without its password: choose Delete a vault.
-- If more than one saved login could be the one you changed, the update card now asks which one to update instead of picking one for you.
-- Never for this site now mutes only that site, such as wiki.example.com, instead of every site on its domain.
-- Linking to the desktop app works in more WebKit browsers that run Chrome extensions.
-- Every two weeks, a card on the vault list asks once for a donation. Turn it off with Remind me every two weeks in Settings → About → Support.
+- Sync through a mailbox when your devices are never online together. Use Bramble's, for $2 a month, or run your own server, in Settings → Sync → Mailbox.
+- SSH keys can list the hosts they're for, and the desktop app can now use them in the terminal.
+- Exporting to KeePass keeps a login's extra websites where KeePassXC and Keepass2Android read them.
+- Deleting one of two vaults from the list of vaults now opens the one that's left.
+- Devices that unlock just after the hour now find each other right away.

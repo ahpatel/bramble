@@ -1,12 +1,12 @@
 ---
-version: 0.34.0
+version: 0.35.0
 ---
 
-La compilazione automatica può copiare il codice 2FA di un accesso durante la compilazione e rimane sbloccata quando l'app si blocca automaticamente.
+Bramble ora blocca screenshot e assistenti che leggono lo schermo e può sincronizzare tramite una casella di posta.
 
-- Attivare l'opzione Copiare i codici 2FA durante la compilazione in Impostazioni → Generale per copiare il codice 2FA di un accesso mentre la compilazione automatica lo inserisce, pronto da incollare nella pagina successiva.
-- Il blocco automatico dell'app non blocca più la compilazione automatica, che mantiene un proprio timer e lo riavvia a ogni compilazione.
-- Con l'opzione Controllare le password per violazioni attiva, Bramble ora controlla ogni accesso in background, non solo quelli aperti, e ogni accesso mostra quando è stato controllato l'ultima volta.
-- È possibile duplicare un elemento o allegarvi un file dal suo menu ⋮ nell'elenco.
-- Le copie ora vengono cancellate dopo il tempo impostato in Impostazioni → Generale → Auto-cancellazione della clipboard, invece che sempre dopo 30 secondi.
-- Ogni due settimane, una scheda nell'elenco delle casseforti chiede una volta una donazione. È possibile disattivarla con Ricordamelo ogni due settimane in Impostazioni → Informazioni → Supporto.
+- Bramble ora mantiene la cassaforte fuori da screenshot, registrazioni dello schermo e assistenti che leggono lo schermo, come Gemini e Circle to Search. Per acquisire uno screenshot, scelga Consentire per 10 minuti in Bloccare gli screenshot in Impostazioni → Generale.
+- Sincronizzi tramite una casella di posta quando i suoi dispositivi non sono mai online insieme. Usi quella di Bramble, a 2 $ al mese, oppure esegua il proprio server, in Impostazioni → Sincronizzazione → Casella.
+- Le chiavi SSH possono elencare gli host a cui sono destinate e l'app desktop ora può usarle nel terminale.
+- L'esportazione in KeePass mantiene i siti web aggiuntivi di un accesso dove KeePassXC e Keepass2Android li leggono.
+- Eliminando una delle due casseforti dall'elenco delle casseforti, ora si apre quella rimasta.
+- I dispositivi che si sbloccano appena dopo l'ora ora si trovano subito a vicenda.

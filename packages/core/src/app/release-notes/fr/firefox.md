@@ -1,12 +1,11 @@
 ---
-version: 1.40.0
+version: 1.41.0
 ---
 
-La vérification des fuites couvre désormais tous les identifiants, et le menu de chaque élément permet de le dupliquer ou d’y joindre un fichier.
+Synchronisez via une boîte aux lettres lorsque vos appareils ne sont jamais en ligne en même temps.
 
-- Avec « Vérifier les mots de passe pour des violations » activé, Bramble vérifie désormais tous les identifiants en arrière-plan, pas seulement ceux que vous ouvrez, et chaque identifiant indique quand il a été vérifié pour la dernière fois.
-- Dupliquez un élément ou joignez-y un fichier depuis son menu ⋮ dans la liste.
-- Un coffre que vous ne pouvez pas ouvrir peut désormais être supprimé de la liste des coffres, sans son mot de passe : choisissez « Supprimer un coffre ».
-- Si plusieurs identifiants enregistrés peuvent correspondre à celui que vous avez modifié, la carte de mise à jour vous demande désormais lequel mettre à jour au lieu d’en choisir un à votre place.
-- L’option « Jamais pour ce site » ne met désormais en sourdine que ce site, comme wiki.example.com, au lieu de tous les sites de son domaine.
-- Toutes les deux semaines, une carte sur la liste des coffres demande une fois un don. Désactivez-la avec « Me le rappeler toutes les deux semaines » dans Paramètres → À propos → Soutien.
+- Synchronisez via une boîte aux lettres lorsque vos appareils ne sont jamais en ligne en même temps. Utilisez celle de Bramble, pour 2 $ par mois, ou exécutez votre propre serveur, dans Paramètres → Synchronisation → Boîte aux lettres.
+- Les clés SSH peuvent lister les hôtes auxquels elles sont destinées, et l'application de bureau peut désormais les utiliser dans le terminal.
+- L'exportation vers KeePass conserve les sites web supplémentaires d'un identifiant à l'endroit où KeePassXC et Keepass2Android les lisent.
+- La suppression de l'un des deux coffres de la liste des coffres ouvre désormais celui qui reste.
+- Les appareils qui se déverrouillent juste après l'heure se trouvent mutuellement immédiatement.

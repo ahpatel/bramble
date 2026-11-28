@@ -1,13 +1,13 @@
 ---
-version: 0.22.0
+version: 0.23.0
 ---
 
-En macOS, Autorrelleno rellena sin preguntar mientras Bramble está desbloqueado, y se puede cambiar el atajo de Acceso rápido.
+Bramble ya está disponible en Windows, y la aplicación de escritorio puede actuar como su agente SSH.
 
-- En macOS, Autorrelleno rellena inicios de sesión y códigos 2FA mientras Bramble está desbloqueado, sin pedir Touch ID ni su contraseña maestra.
-- Cambie el atajo de Acceso rápido, o desactívelo, en Configuración → General → «Atajo de Acceso rápido».
-- En Linux, abrir Bramble cuando ya está en ejecución vuelve a mostrar su ventana.
-- Con «Comprobar contraseñas por filtraciones» activado, Bramble ahora comprueba todos los inicios de sesión en segundo plano, no solo los que abre, y cada inicio de sesión muestra cuándo se comprobó por última vez.
-- Duplique un elemento o adjúntele un archivo desde su menú ⋮ en la lista.
-- Las copias ahora se borran después del tiempo establecido en Configuración → General → «Limpieza automática de portapapeles», en lugar de siempre después de 30 segundos.
-- Cada dos semanas, una tarjeta en la lista de la bóveda pide una vez una donación. Desactívela con «Recordármelo cada dos semanas» en Configuración → Acerca de → Apoyar.
+- La aplicación de escritorio ahora funciona en Windows 10 y 11.
+- Active la opción Usar sus claves SSH en la terminal en Configuración → General, y ssh, git y scp usan las claves SSH de sus bóvedas sin que las claves privadas salgan de Bramble.
+- Sincronice mediante un buzón cuando sus dispositivos nunca estén en línea al mismo tiempo. Use el de Bramble, por $2 al mes, o ejecute su propio servidor, en Configuración → Sincronización → Buzón.
+- Bramble mantiene sus ventanas fuera de las capturas de pantalla y de la compartición de pantalla en Windows, y pide a macOS que haga lo mismo. Desactívelo con Bloquear capturas de pantalla en Configuración → General.
+- En Acceso rápido, ⌘T (Ctrl+T en Windows y Linux) copia el código de 2FA del inicio de sesión resaltado.
+- En macOS, al desbloquear en Autorrelleno también se desbloquea la aplicación de escritorio.
+- Exportar a KeePass conserva los sitios web adicionales de un inicio de sesión donde KeePassXC y Keepass2Android los leen.

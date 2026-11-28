@@ -1,12 +1,11 @@
 ---
-version: 1.40.0
+version: 1.41.0
 ---
 
-As verificações de vazamento agora abrangem todos os logins, e o menu de cada item pode duplicá-lo ou anexar um arquivo a ele.
+Sincronize por meio de uma caixa de correio quando seus dispositivos nunca estão online ao mesmo tempo.
 
-- Com a opção Verificar senhas por violações ativada, o Bramble agora verifica todos os logins em segundo plano, não apenas os que você abre, e cada login mostra quando foi verificado pela última vez.
-- Duplique um item ou anexe um arquivo a ele pelo menu ⋮ na lista.
-- Um cofre que você não consegue abrir agora pode ser excluído da lista de cofres sem a senha: escolha Excluir um cofre.
-- Se mais de um login salvo puder ser aquele que você alterou, o cartão de atualização agora pergunta qual atualizar em vez de escolher um por você.
-- A opção Nunca para este site agora silencia apenas esse site, como wiki.example.com, em vez de todos os sites do domínio.
-- A cada duas semanas, um cartão na lista de cofres pede uma doação uma vez. Desative-o com Lembrar-me a cada duas semanas em Configurações → Sobre → Suporte.
+- Sincronize por meio de uma caixa de correio quando seus dispositivos nunca estão online ao mesmo tempo. Use o serviço do Bramble, por US$ 2 por mês, ou execute seu próprio servidor, em Configurações → Sincronização → Caixa de correio.
+- As chaves SSH podem listar os hosts aos quais se destinam, e o aplicativo para desktop agora pode usá-las no terminal.
+- Exportar para o KeePass mantém os sites extras de um login no local em que o KeePassXC e o Keepass2Android os leem.
+- Excluir um dos dois cofres da lista de cofres agora abre o cofre restante.
+- Dispositivos que desbloqueiam logo depois da hora agora se encontram imediatamente.
