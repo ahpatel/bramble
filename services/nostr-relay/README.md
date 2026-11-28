@@ -75,6 +75,11 @@ files use literal values: do not surround the JSON value with shell quotes.
 Remove any static `username`, `credential` or provider-specific `password`
 fields from existing `ICE_SERVERS` entries; they are rejected.
 
+`TURN_SECRET_FILE` and `RELAY_TOKEN_FILE` read either secret from a file
+instead (one final newline is ignored), for Docker secrets or systemd's
+`LoadCredential=`, so it stays out of the environment and the service file. Set
+a secret or its file, not both; a file the relay can't read stops it at start.
+
 ### Limits and private mode
 
 The ICE endpoint is public unless you make the relay private, so it rations

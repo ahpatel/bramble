@@ -1,6 +1,7 @@
 // The self-hosted server's environment, validated with zod. A bad value stops the server before it
 // listens, and the message names the variable, never its value (one of them is a secret).
 
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 
 export const ConfigSchema = z.object({
@@ -15,6 +16,9 @@ export const ConfigSchema = z.object({
 	QUOTA_BYTES: z.coerce.number().int().positive().optional(),
 });
 
+/** Secrets that can also come from a file, `<NAME>_FILE`, so they stay out of the environment. */
+const FILE_SECRETS = ["MAILBOX_TOKEN"] as const;
+
 export interface Config {
 	port: number;
 	dataDir: string;
@@ -24,19 +28,39 @@ export interface Config {
 }
 
 export class ConfigError extends Error {
-	constructor(variable: string) {
-		super(`Invalid ${variable}; see services/mailbox/README.md`);
+	constructor(variable: string, problem = "Invalid") {
+		super(`${problem} ${variable}; see services/mailbox/README.md`);
 		this.name = "ConfigError";
 	}
 }
 
-export function parseConfig(env: Record<string, string | undefined>): Config {
+export function parseConfig(
+	env: Record<string, string | undefined>,
+	readFile: (path: string) => string = (path) => readFileSync(path, "utf8"),
+): Config {
 	// An empty variable means unset, as it does to a shell.
-	const present = Object.fromEntries(
-		Object.keys(ConfigSchema.shape)
-			.map((k) => [k, env[k]] as const)
-			.filter(([, v]) => v !== undefined && v !== ""),
-	);
+	const set = (k: string) => (env[k] === "" ? undefined : env[k]);
+	const present: Record<string, string> = {};
+	for (const k of Object.keys(ConfigSchema.shape)) {
+		const v = set(k);
+		if (v !== undefined) present[k] = v;
+	}
+	for (const name of FILE_SECRETS) {
+		const path = set(`${name}_FILE`);
+		if (path === undefined) continue;
+		if (present[name] !== undefined)
+			throw new ConfigError(`${name} and ${name}_FILE`, "Set only one of");
+		let contents: string;
+		try {
+			contents = readFile(path);
+		} catch {
+			throw new ConfigError(`${name}_FILE`, "Unreadable");
+		}
+		// The newline `echo` and most editors end a file with.
+		const value = contents.replace(/\r?\n$/, "");
+		if (!ConfigSchema.shape[name].safeParse(value).success) throw new ConfigError(`${name}_FILE`);
+		present[name] = value;
+	}
 	const parsed = ConfigSchema.safeParse(present);
 	if (!parsed.success)
 		throw new ConfigError(String(parsed.error.issues[0]?.path[0] ?? "configuration"));

@@ -25,12 +25,51 @@ app.
 | `PORT` | `7401` | Port to listen on (the signalling relay uses 7400). |
 | `DATA_DIR` | `./data` | Where `mailbox.db` and the `bodies/` directory live. Back it up or not: everything in it is in transit, and the apps hold the real copies. |
 | `MAILBOX_TOKEN` | unset | When set (at least 16 of `A-Z a-z 0-9 _ -`), every `/v1` request must carry it, which makes the mailbox private to whoever has the token. `/health` stays open. |
+| `MAILBOX_TOKEN_FILE` | unset | A file holding `MAILBOX_TOKEN` instead (one final newline is ignored), so the token stays out of the environment and the service file. Set one or the other, not both. Read once at start: restart to change it. |
 | `RETENTION_MAX_DAYS` | `365` | The longest anything is held for a device that never collects it. Clients can ask for less, never more. |
 | `QUOTA_BYTES` | unset | The most one mailbox may hold at once. Unset means no limit. |
 
 An invalid value stops the server before it listens, naming the variable (never its value).
 The server logs its listening line and errors only: no requests, no addresses. An unexpected
 error is logged as the database's own message, never with the request.
+
+With systemd, give the token through its credentials rather than an `Environment=` line, which
+NixOS, for one, writes to the world-readable Nix store:
+
+```ini
+[Service]
+LoadCredential=mailbox-token:/run/secrets/mailbox-token
+Environment=MAILBOX_TOKEN_FILE=%d/mailbox-token
+```
+
+### Docker
+
+The image is built from the repository root, because the server shares the sync protocol with the
+apps:
+
+```sh
+docker build -f services/mailbox/Dockerfile -t bramble-mailbox .
+docker run -d -p 7401:7401 -v bramble-mailbox:/data bramble-mailbox
+```
+
+It runs as the unprivileged `node` user with `DATA_DIR=/data`, and reports its health from
+`/health`. For a private mailbox, mount the token as a file, as Docker and Compose secrets do:
+
+```yaml
+services:
+  mailbox:
+    image: bramble-mailbox
+    ports: ["7401:7401"]
+    volumes: ["mailbox:/data"]
+    environment:
+      MAILBOX_TOKEN_FILE: /run/secrets/mailbox_token
+    secrets: [mailbox_token]
+secrets:
+  mailbox_token:
+    file: ./mailbox_token.txt
+volumes:
+  mailbox:
+```
 
 For devices off your network, put it behind a TLS reverse proxy and give the app
 `https://<host>`. The token goes in the app's mailbox settings, never in the URL, so it cannot end

@@ -13,6 +13,7 @@
 // Configure ICE_SERVERS and TURN_SECRET for cross-network peers; see ../README.md.
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 
@@ -138,7 +139,23 @@ function parseIceServers() {
 const normalizeAddress = (ip) =>
 	typeof ip === "string" ? ip.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/i, "") : "";
 
-const TURN_SECRET = process.env.TURN_SECRET ?? "";
+/**
+ * A secret from NAME, or from the file NAME_FILE names (one of them, not both), so a service
+ * manager can keep it out of the environment. The file's final newline is not part of it.
+ */
+function secretEnv(name) {
+	const value = process.env[name] ?? "";
+	const file = process.env[`${name}_FILE`] ?? "";
+	if (!file) return value;
+	if (value) throw new Error(`Set only one of ${name} and ${name}_FILE`);
+	try {
+		return readFileSync(file, "utf8").replace(/\r?\n$/, "");
+	} catch {
+		throw new Error(`Unreadable ${name}_FILE`);
+	}
+}
+
+let TURN_SECRET = "";
 const TURN_TTL_SECONDS = Number(process.env.TURN_TTL_SECONDS ?? 7200);
 const ICE_REQUESTS_PER_MINUTE = Number(process.env.ICE_REQUESTS_PER_MINUTE ?? 20);
 // For an ICE request without a live ticket (an app predating tickets, or a device on another
@@ -154,10 +171,12 @@ const TRUST_PROXY = new Set(
 );
 // Private mode: sockets and ICE requests must carry ?token=. It rides in the relay URL, which
 // pairing codes carry, so a joining device needs no setting of its own.
-const RELAY_TOKEN = process.env.RELAY_TOKEN ?? "";
+let RELAY_TOKEN = "";
 let ICE_SERVERS;
 let STUN_SERVERS;
 try {
+	TURN_SECRET = secretEnv("TURN_SECRET");
+	RELAY_TOKEN = secretEnv("RELAY_TOKEN");
 	ICE_SERVERS = parseIceServers();
 	const hasTurn = ICE_SERVERS.some((server) => server.urls.some(isTurnUrl));
 	if (hasTurn && !TURN_SECRET.trim()) {

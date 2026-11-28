@@ -940,9 +940,12 @@ The Node server (built; `pnpm --filter bramble-mailbox-server start`, see
 - `DATA_DIR`: where `mailbox.db` and the bodies live; default `./data`.
 - `MAILBOX_TOKEN`: optional; when set, every `/v1` request must carry it. This is the private
   mode, as `RELAY_TOKEN` is for the relay.
+- `MAILBOX_TOKEN_FILE`: the token from a file instead (Docker secrets, systemd credentials), so
+  it stays out of the environment; not both.
 - `RETENTION_MAX_DAYS`: default 365.
 - `QUOTA_BYTES`: per mailbox; unset means no limit.
-- `STORAGE=s3`, with its S3 settings, arrives with the Docker image (Plan 4).
+- `STORAGE=s3`, with its S3 settings, is still to come (Plan 4). The Docker image
+  (`services/mailbox/Dockerfile`) stores on disk.
 
 There is no `TRUST_PROXY`: the server never reads a client address. It contains no billing code,
 no account numbers and no ALTCHA (the token or a private network is the gate).

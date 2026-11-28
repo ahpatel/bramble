@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { once } from "node:events";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -273,5 +275,56 @@ describe("private mode", () => {
 
 	it("won't start with a token too short to be a secret", async () => {
 		assert.notEqual(await exitCode({ RELAY_TOKEN: "short" }), 0);
+	});
+});
+
+describe("secrets from files", () => {
+	const TOKEN = "abcdefghijklmnop1234";
+
+	/** `files` written to a fresh directory; `run` gets their paths, and the directory goes after. */
+	async function withFiles(files, run) {
+		const dir = mkdtempSync(path.join(tmpdir(), "relay-secrets-"));
+		try {
+			const paths = {};
+			for (const [name, contents] of Object.entries(files)) {
+				paths[name] = path.join(dir, name);
+				writeFileSync(paths[name], contents);
+			}
+			await run(paths);
+		} finally {
+			rmSync(dir, { recursive: true });
+		}
+	}
+
+	it("reads RELAY_TOKEN_FILE and TURN_SECRET_FILE, without their final newline", async () => {
+		await withFiles({ token: `${TOKEN}\n`, turn: `${SECRET}\n` }, async (f) => {
+			const relay = await start({
+				ICE_SERVERS: ICE,
+				TURN_SECRET_FILE: f.turn,
+				RELAY_TOKEN_FILE: f.token,
+			});
+			try {
+				assert.equal(await opens(relay.ws), false);
+				assert.equal(await opens(`${relay.ws}/?token=${TOKEN}`), true);
+				const turn = turnOf((await ice(relay, { query: `?token=${TOKEN}` })).body);
+				const expected = createHmac("sha1", SECRET).update(turn.username).digest("base64");
+				assert.equal(turn.credential, expected);
+			} finally {
+				await relay.stop();
+			}
+		});
+	});
+
+	it("won't start with both a secret and its file, or a file it can't read", async () => {
+		await withFiles({ token: TOKEN }, async (f) => {
+			assert.notEqual(await exitCode({ RELAY_TOKEN: TOKEN, RELAY_TOKEN_FILE: f.token }), 0);
+		});
+		assert.notEqual(await exitCode({ RELAY_TOKEN_FILE: "/nonexistent/relay-token" }), 0);
+	});
+
+	it("checks a token from a file like one from the environment", async () => {
+		await withFiles({ token: "short\n" }, async (f) => {
+			assert.notEqual(await exitCode({ RELAY_TOKEN_FILE: f.token }), 0);
+		});
 	});
 });
