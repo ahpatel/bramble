@@ -141,18 +141,27 @@ const normalizeAddress = (ip) =>
 
 /**
  * A secret from NAME, or from the file NAME_FILE names (one of them, not both), so a service
- * manager can keep it out of the environment. The file's final newline is not part of it.
+ * manager can keep it out of the environment. The file's final newline is not part of it. A file
+ * that is empty, or has anything else around the secret, stops the relay: an empty token would
+ * turn private mode off, and a stray space would change every TURN credential.
  */
 function secretEnv(name) {
 	const value = process.env[name] ?? "";
 	const file = process.env[`${name}_FILE`] ?? "";
 	if (!file) return value;
 	if (value) throw new Error(`Set only one of ${name} and ${name}_FILE`);
+	let contents;
 	try {
-		return readFileSync(file, "utf8").replace(/\r?\n$/, "");
-	} catch {
-		throw new Error(`Unreadable ${name}_FILE`);
+		contents = readFileSync(file, "utf8");
+	} catch (error) {
+		const code = /^E[A-Z]+$/.test(error?.code) ? ` (${error.code})` : "";
+		throw new Error(`Unreadable ${name}_FILE${code}`);
 	}
+	const secret = contents.replace(/\r?\n$/, "");
+	if (!secret) throw new Error(`Empty ${name}_FILE`);
+	// trim() also takes a byte-order mark.
+	if (secret.trim() !== secret) throw new Error(`Spaces or line breaks around the secret in ${name}_FILE`);
+	return secret;
 }
 
 let TURN_SECRET = "";

@@ -1,13 +1,14 @@
 // The self-hosted mailbox: the shared app over SQLite and a directory of bodies, with the sweep
 // once at start and hourly after.
 
-import { mkdir } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { type AppDeps, createApp } from "../core/app.ts";
 import { selfHostedEntitlement } from "../core/entitlement.ts";
 import { sweep } from "../core/sweep.ts";
-import { parseConfig } from "./config.ts";
+import { ConfigError, errorCode, parseConfig } from "./config.ts";
 import { openDb } from "./db.ts";
 import { diskBodies } from "./disk-bodies.ts";
 
@@ -17,7 +18,14 @@ export async function startServer(
 	env: Record<string, string | undefined>,
 ): Promise<{ url: string; close(): Promise<void> }> {
 	const config = parseConfig(env);
-	await mkdir(config.dataDir, { recursive: true });
+	try {
+		await mkdir(config.dataDir, { recursive: true });
+		// A directory owned by someone else (a bind mount the container's user can't write) is a
+		// setup mistake to name, not a database error to dump.
+		await access(config.dataDir, constants.W_OK);
+	} catch (err) {
+		throw new ConfigError("DATA_DIR", "Can't write to", errorCode(err));
+	}
 	const { db, close: closeDb } = openDb(join(config.dataDir, "mailbox.db"));
 	const deps: AppDeps = {
 		db,

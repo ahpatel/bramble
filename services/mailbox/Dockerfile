@@ -4,9 +4,15 @@
 #   docker build -f services/mailbox/Dockerfile -t bramble-mailbox .
 #   docker run -p 7401:7401 -v bramble-mailbox:/data bramble-mailbox    # http://localhost:7401
 #
-# Configured like `pnpm start`, through the variables in README.md. DATA_DIR is /data.
+# Configured like `pnpm start`, through the variables in README.md. DATA_DIR is /data, and the
+# server runs as uid 1000: a bind-mounted data directory or token file must be readable by it.
+# Needs BuildKit (Docker's default builder) for Dockerfile.dockerignore; the legacy builder sends
+# the whole repository as the context.
 
-FROM node:24-trixie-slim AS deps
+# node:24-trixie-slim, by digest so a rebuild gets the same base.
+ARG NODE_IMAGE=node:24-trixie-slim@sha256:4d00acb4bcc42c454c4eb801526f7ad7f772ea3bd4fd168c5cc2e384abcbb9d4
+
+FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 RUN corepack enable
 # The lockfile and only the two manifests the server needs, so this layer stays cached until a
@@ -17,12 +23,14 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json packages/core/
 COPY services/mailbox/package.json services/mailbox/
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts --filter bramble-mailbox-server \
-		--config.public-hoist-pattern=zod \
-	&& rm -rf /root/.cache /root/.local/share/pnpm
+		--config.public-hoist-pattern=zod
 
-FROM node:24-trixie-slim
+FROM ${NODE_IMAGE}
 ENV NODE_ENV=production DATA_DIR=/data
 WORKDIR /app
+# The licences: the mailbox is AGPL-3.0-only, the protocol file from packages/core GPL-3.0-only.
+COPY LICENSE ./
+COPY services/mailbox/LICENSE services/mailbox/
 COPY --from=deps /app/node_modules node_modules
 COPY --from=deps /app/services/mailbox/node_modules services/mailbox/node_modules
 COPY packages/core/package.json packages/core/

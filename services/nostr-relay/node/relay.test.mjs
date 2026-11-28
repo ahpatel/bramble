@@ -40,13 +40,31 @@ async function start(env) {
 	};
 }
 
-async function exitCode(env) {
+/**
+ * The relay started with `env`, expected to refuse: its exit code and what it printed. A relay that
+ * starts instead fails the test at once, rather than hanging the suite.
+ */
+async function refusal(env) {
 	const child = spawn(process.execPath, [RELAY], {
 		env: { PATH: process.env.PATH, PORT: "0", ...env },
-		stdio: "ignore",
+		stdio: ["ignore", "pipe", "pipe"],
 	});
-	const [code] = await once(child, "exit");
-	return code;
+	let output = "";
+	child.stdout.on("data", (chunk) => {
+		output += chunk;
+	});
+	child.stderr.on("data", (chunk) => {
+		output += chunk;
+	});
+	const timer = setTimeout(() => child.kill(), 10_000);
+	const [code, signal] = await once(child, "exit");
+	clearTimeout(timer);
+	if (signal) throw new Error(`the relay started instead of refusing: ${output}`);
+	return { code, output };
+}
+
+async function exitCode(env) {
+	return (await refusal(env)).code;
 }
 
 async function ice(relay, { forwardedFor, query = "", ticket } = {}) {
@@ -315,16 +333,45 @@ describe("secrets from files", () => {
 		});
 	});
 
-	it("won't start with both a secret and its file, or a file it can't read", async () => {
+	it("refuses a secret and its file together, or a file it can't read", async () => {
 		await withFiles({ token: TOKEN }, async (f) => {
-			assert.notEqual(await exitCode({ RELAY_TOKEN: TOKEN, RELAY_TOKEN_FILE: f.token }), 0);
+			const both = await refusal({ RELAY_TOKEN: TOKEN, RELAY_TOKEN_FILE: f.token });
+			assert.notEqual(both.code, 0);
+			assert.match(both.output, /Set only one of RELAY_TOKEN and RELAY_TOKEN_FILE/);
 		});
-		assert.notEqual(await exitCode({ RELAY_TOKEN_FILE: "/nonexistent/relay-token" }), 0);
+		const missing = await refusal({ RELAY_TOKEN_FILE: "/nonexistent/relay-token" });
+		assert.notEqual(missing.code, 0);
+		assert.match(missing.output, /Unreadable RELAY_TOKEN_FILE \(ENOENT\)/);
 	});
 
-	it("checks a token from a file like one from the environment", async () => {
-		await withFiles({ token: "short\n" }, async (f) => {
-			assert.notEqual(await exitCode({ RELAY_TOKEN_FILE: f.token }), 0);
+	it("takes a CRLF file, and refuses an empty one or one with anything around the secret", async () => {
+		await withFiles({ token: `${TOKEN}\r\n` }, async (f) => {
+			const relay = await start({ RELAY_TOKEN_FILE: f.token });
+			try {
+				assert.equal(await opens(`${relay.ws}/?token=${TOKEN}`), true);
+			} finally {
+				await relay.stop();
+			}
 		});
+		const bad = {
+			"": /Empty/,
+			"\n": /Empty/,
+			[`${TOKEN}\n\n`]: /Spaces or line breaks/,
+			[` ${TOKEN}`]: /Spaces or line breaks/,
+			[`\uFEFF${TOKEN}`]: /Spaces or line breaks/,
+			"short\n": /RELAY_TOKEN must be/,
+		};
+		for (const [contents, why] of Object.entries(bad)) {
+			await withFiles({ token: contents, turn: contents }, async (f) => {
+				const token = await refusal({ RELAY_TOKEN_FILE: f.token });
+				assert.notEqual(token.code, 0, JSON.stringify(contents));
+				assert.match(token.output, why, JSON.stringify(contents));
+				assert.ok(!contents.trim() || !token.output.includes(contents.trim()));
+				if (why.source === "RELAY_TOKEN must be") return;
+				const turn = await refusal({ ICE_SERVERS: ICE, TURN_SECRET_FILE: f.turn });
+				assert.notEqual(turn.code, 0, JSON.stringify(contents));
+				assert.match(turn.output, why, JSON.stringify(contents));
+			});
+		}
 	});
 });

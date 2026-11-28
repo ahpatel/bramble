@@ -1,10 +1,12 @@
 # The build context is the repository root: send only what the Dockerfile copies.
 *
+!LICENSE
 !package.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml
 !packages/core/package.json
 !packages/core/src/sync/mailbox/protocol.ts
+!services/mailbox/LICENSE
 !services/mailbox/package.json
 !services/mailbox/drizzle
 !services/mailbox/src

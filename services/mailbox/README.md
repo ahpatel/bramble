@@ -33,14 +33,26 @@ An invalid value stops the server before it listens, naming the variable (never 
 The server logs its listening line and errors only: no requests, no addresses. An unexpected
 error is logged as the database's own message, never with the request.
 
-With systemd, give the token through its credentials rather than an `Environment=` line, which
-NixOS, for one, writes to the world-readable Nix store:
+With systemd, keep the token itself out of `Environment=` lines: NixOS, for one, writes unit
+files to the world-readable Nix store. Point `MAILBOX_TOKEN_FILE` at a file only the service's
+user can read, as sops-nix and agenix make with their owner set:
 
 ```ini
 [Service]
-LoadCredential=mailbox-token:/run/secrets/mailbox-token
-Environment=MAILBOX_TOKEN_FILE=%d/mailbox-token
+Environment=MAILBOX_TOKEN_FILE=/run/secrets/mailbox-token
 ```
+
+Or, on systemd 248 or later, let systemd hand over a file only root can read:
+
+```ini
+[Service]
+LoadCredential=mailbox-token:/etc/bramble/mailbox-token
+Environment=MAILBOX_TOKEN_FILE=/run/credentials/bramble-mailbox.service/mailbox-token
+```
+
+Write the path out with your unit's name rather than `%d`. A systemd older than 248 ignores both
+`LoadCredential=` and `%d`, and the mailbox would start with no token at all; with the path
+written out, it finds no file and refuses to start.
 
 ### Docker
 
@@ -52,8 +64,15 @@ docker build -f services/mailbox/Dockerfile -t bramble-mailbox .
 docker run -d -p 7401:7401 -v bramble-mailbox:/data bramble-mailbox
 ```
 
-It runs as the unprivileged `node` user with `DATA_DIR=/data`, and reports its health from
-`/health`. For a private mailbox, mount the token as a file, as Docker and Compose secrets do:
+It needs BuildKit, Docker's default builder: the legacy one ignores `Dockerfile.dockerignore` and
+sends the whole repository. The server runs as the unprivileged `node` user, uid 1000, with
+`DATA_DIR=/data`, and reports its health from `/health`. A named volume gets the right owner by
+itself; a bind-mounted data directory must be writable by uid 1000 (`chown 1000:1000`), or the
+server stops at start with "Can't write to DATA_DIR".
+
+For a private mailbox, mount the token as a file, as Docker and Compose secrets do. Compose mounts
+a file secret with its owner and mode from the host, so the file must be readable by uid 1000 too,
+or the server stops with "Unreadable MAILBOX_TOKEN_FILE (EACCES)":
 
 ```yaml
 services:

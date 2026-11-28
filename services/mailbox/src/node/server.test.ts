@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MembersResponseSchema } from "@vault/core/src/sync/mailbox/protocol.ts";
@@ -15,6 +15,20 @@ describe("startServer", () => {
 	afterEach(async () => {
 		await rm(dataDir, { recursive: true, force: true });
 	});
+
+	it.skipIf(process.getuid?.() === 0)(
+		"names a DATA_DIR it can't write instead of failing in the database",
+		async () => {
+			await chmod(dataDir, 0o500);
+			try {
+				await expect(startServer({ PORT: "0", DATA_DIR: dataDir })).rejects.toThrow(
+					/Can't write to DATA_DIR \(EACCES\)/,
+				);
+			} finally {
+				await chmod(dataDir, 0o700);
+			}
+		},
+	);
 
 	it("serves health, accepts a signed create, and keeps data across a restart", async () => {
 		const env = { PORT: "0", DATA_DIR: dataDir };

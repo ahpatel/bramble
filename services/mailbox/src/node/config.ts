@@ -7,7 +7,7 @@ import { z } from "zod";
 export const ConfigSchema = z.object({
 	PORT: z.coerce.number().int().min(0).max(65535).default(7401),
 	DATA_DIR: z.string().min(1).default("./data"),
-	/** The RELAY_TOKEN rule: at least 16 URL-safe characters. */
+	/** The app's rule (packages/core/src/sync/mailbox/config.ts): at least 16 of A-Z a-z 0-9 _ -. */
 	MAILBOX_TOKEN: z
 		.string()
 		.regex(/^[A-Za-z0-9_-]{16,}$/)
@@ -28,10 +28,17 @@ export interface Config {
 }
 
 export class ConfigError extends Error {
-	constructor(variable: string, problem = "Invalid") {
-		super(`${problem} ${variable}; see services/mailbox/README.md`);
+	/** `detail` is an error code such as EACCES: never a value, which may be the secret. */
+	constructor(variable: string, problem = "Invalid", detail?: string) {
+		super(`${problem} ${variable}${detail ? ` (${detail})` : ""}; see services/mailbox/README.md`);
 		this.name = "ConfigError";
 	}
+}
+
+/** A Node error's code (ENOENT, EACCES), for a message that says why without saying what. */
+export function errorCode(err: unknown): string | undefined {
+	const code = (err as { code?: unknown } | null)?.code;
+	return typeof code === "string" && /^E[A-Z]+$/.test(code) ? code : undefined;
 }
 
 export function parseConfig(
@@ -53,12 +60,13 @@ export function parseConfig(
 		let contents: string;
 		try {
 			contents = readFile(path);
-		} catch {
-			throw new ConfigError(`${name}_FILE`, "Unreadable");
+		} catch (err) {
+			throw new ConfigError(`${name}_FILE`, "Unreadable", errorCode(err));
 		}
 		// The newline `echo` and most editors end a file with.
 		const value = contents.replace(/\r?\n$/, "");
-		if (!ConfigSchema.shape[name].safeParse(value).success) throw new ConfigError(`${name}_FILE`);
+		if (!ConfigSchema.shape[name].safeParse(value).success)
+			throw new ConfigError(`${name}_FILE`, "Invalid token in");
 		present[name] = value;
 	}
 	const parsed = ConfigSchema.safeParse(present);

@@ -75,10 +75,13 @@ files use literal values: do not surround the JSON value with shell quotes.
 Remove any static `username`, `credential` or provider-specific `password`
 fields from existing `ICE_SERVERS` entries; they are rejected.
 
-`TURN_SECRET_FILE` and `RELAY_TOKEN_FILE` read either secret from a file
-instead (one final newline is ignored), for Docker secrets or systemd's
-`LoadCredential=`, so it stays out of the environment and the service file. Set
-a secret or its file, not both; a file the relay can't read stops it at start.
+`TURN_SECRET_FILE` reads the secret from a file instead, for Docker secrets or
+systemd's `LoadCredential=`, so it stays out of the environment and the service
+file (`RELAY_TOKEN_FILE` does the same for the token, below). One final newline
+is ignored. Set a secret or its file, not both. A file the relay can't read, an
+empty one, or one with spaces or line breaks around the secret stops it at
+start. The image runs as uid 1000, so a mounted secret file must be readable by
+it; Compose mounts a file secret with its owner and mode from the host.
 
 ### Limits and private mode
 
@@ -102,7 +105,8 @@ connections from those addresses; elsewhere the header is ignored.
 A relay that serves only your own devices can require a token: set
 `RELAY_TOKEN` (at least 16 URL-safe characters) and the relay refuses sockets
 and ICE requests without `?token=` matching it. The health probe (`GET /`)
-stays open. Configure the app's relay URL as `wss://relay.example.com/?token=…`;
+stays open. `RELAY_TOKEN_FILE` reads it from a file instead, as `TURN_SECRET_FILE`
+does. Configure the app's relay URL as `wss://relay.example.com/?token=…`;
 pairing codes carry it, so a joining device needs nothing else. Clear the app's
 ICE field so it derives from the relay URL, which keeps the token, or add
 `?token=` to it yourself. Anyone who sees a pairing code learns the token:

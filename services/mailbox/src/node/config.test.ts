@@ -84,9 +84,9 @@ describe("parseConfig", () => {
 			).toThrow(/Set only one of MAILBOX_TOKEN and MAILBOX_TOKEN_FILE/);
 		});
 
-		it("refuses a missing file, naming the variable", () => {
-			expect(() => parseConfig({ MAILBOX_TOKEN_FILE: "/nowhere" }, files({}))).toThrow(
-				/Unreadable MAILBOX_TOKEN_FILE/,
+		it("refuses a missing file, naming the variable and why", () => {
+			expect(() => parseConfig({ MAILBOX_TOKEN_FILE: "/nowhere/mailbox-token" })).toThrow(
+				/Unreadable MAILBOX_TOKEN_FILE \(ENOENT\)/,
 			);
 		});
 
@@ -96,15 +96,17 @@ describe("parseConfig", () => {
 				"",
 				"a-private-token-0123\n\n",
 				" a-private-token-0123",
+				"\uFEFFa-private-token-0123",
+				"\n",
 			]) {
 				const read = files({ "/t": contents });
 				expect(() => parseConfig({ MAILBOX_TOKEN_FILE: "/t" }, read)).toThrow(
-					/Invalid MAILBOX_TOKEN_FILE/,
+					/Invalid token in MAILBOX_TOKEN_FILE/,
 				);
 				try {
 					parseConfig({ MAILBOX_TOKEN_FILE: "/t" }, read);
 				} catch (e) {
-					if (contents) expect(String(e)).not.toContain(contents.trim());
+					if (contents.trim()) expect(String(e)).not.toContain(contents.trim());
 				}
 			}
 		});
