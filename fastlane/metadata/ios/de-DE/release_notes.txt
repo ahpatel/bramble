@@ -1,9 +1,10 @@
 Neu in dieser Version:
 
-- Die automatische Sperre der App sperrt AutoFill nicht mehr; AutoFill verwendet einen eigenen Timer und startet ihn bei jedem Ausfüllen neu.
-- Wenn „Passwörter auf Datenlecks prüfen“ aktiviert ist, prüft Bramble jetzt jedes Login im Hintergrund, nicht nur die, die Sie öffnen, und bei jedem Login wird angezeigt, wann es zuletzt geprüft wurde.
-- Element über das ⋮-Menü in der Liste duplizieren oder Datei daran anhängen.
-- Ein Tresor, den Sie nicht öffnen können, kann jetzt ohne Passwort aus der Tresorliste gelöscht werden: Wählen Sie „Tresor löschen“.
-- Kopien werden jetzt nach der unter Einstellungen → Allgemein → Zwischenablage automatisch leeren festgelegten Zeit gelöscht, statt immer nach 30 Sekunden.
+- Bramble hält Ihren Tresor jetzt von Screenshots, Bildschirmaufnahmen und Bildschirmspiegelung fern. Um einen Screenshot zu erstellen, wählen Sie unter „Screenshots blockieren“ in Einstellungen → Allgemein die Option „Für 10 Minuten erlauben“.
+- Synchronisieren Sie über ein Postfach, wenn Ihre Geräte nie gleichzeitig online sind: Melden Sie sich unter Einstellungen → Synchronisierung → Postfach mit einer Bramble-Mailbox-Kontonummer an oder verwenden Sie Ihren eigenen Server.
+- SSH-Schlüssel können die Hosts auflisten, für die sie vorgesehen sind, und die Desktop-App kann sie jetzt im Terminal verwenden.
+- Beim Export nach KeePass bleiben die zusätzlichen Websites eines Logins dort erhalten, wo KeePassXC und Keepass2Android sie lesen.
+- Das Löschen eines von zwei Tresoren aus der Tresorliste öffnet jetzt den verbleibenden Tresor.
+- Geräte, die kurz nach der vollen Stunde entsperrt werden, finden sich jetzt sofort.
 
-Kein Konto erforderlich, und alles, was Ihr Gerät verlässt, ist Ende-zu-Ende-verschlüsselt.
+Kein Konto erforderlich, und alles, was Ihr Gerät verlässt, ist ende-zu-ende-verschlüsselt.

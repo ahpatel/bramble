@@ -1,9 +1,10 @@
 Novidades desta versão:
 
-- O bloqueio automático do app não bloqueia mais o preenchimento automático, que mantém o próprio temporizador e o reinicia a cada preenchimento.
-- Com a opção Verificar senhas em vazamentos ativada, o Bramble agora verifica todos os logins em segundo plano, não apenas os que você abre, e cada login mostra quando foi verificado pela última vez.
-- Duplicar um item ou anexar um arquivo a ele no menu ⋮ da lista.
-- Um cofre que você não consegue abrir agora pode ser excluído da lista de cofres, sem a senha dele: escolha Excluir um cofre.
-- As cópias agora são apagadas após o tempo definido em Configurações → Geral → Limpeza automática da área de transferência, em vez de sempre após 30 segundos.
+- O Bramble agora mantém seu cofre fora de capturas de tela, gravações de tela e espelhamento de tela. Para tirar uma captura de tela, escolha Permitir por 10 minutos em Bloquear capturas de tela em Configurações → Geral.
+- Sincronize por meio de uma caixa de correio quando seus dispositivos nunca estiverem online ao mesmo tempo: faça login com um número de conta do Bramble Mailbox ou use seu próprio servidor em Configurações → Sincronização → Caixa de correio.
+- As chaves SSH podem listar os hosts a que se destinam, e o aplicativo para desktop agora pode usá-las no terminal.
+- Exportar para o KeePass mantém os sites extras de um login onde o KeePassXC e o Keepass2Android os leem.
+- Excluir um dos dois cofres da lista de cofres agora abre o cofre restante.
+- Dispositivos que são desbloqueados logo após a hora cheia agora se encontram imediatamente.
 
-Não é necessário criar uma conta, e tudo o que sai do seu dispositivo é criptografado de ponta a ponta.
+Não é necessário ter uma conta, e tudo o que sai do seu dispositivo é criptografado de ponta a ponta.

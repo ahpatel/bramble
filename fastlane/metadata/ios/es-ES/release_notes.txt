@@ -1,9 +1,10 @@
 Novedades de esta versión:
 
-- El bloqueo automático de la app ya no bloquea el autorrelleno, que mantiene su propio temporizador y lo reinicia con cada uso.
-- Con Comprobar contraseñas en filtraciones activado, Bramble ahora comprueba todos los inicios de sesión en segundo plano, no solo los que se abren, y cada inicio de sesión muestra cuándo se comprobó por última vez.
-- Duplicar un elemento o adjuntarle un archivo desde su menú ⋮ en la lista.
-- Una bóveda que no se puede abrir ahora puede eliminarse de la lista de bóvedas, sin su contraseña: elija Eliminar una bóveda.
-- Las copias se eliminan ahora después del tiempo establecido en Ajustes → General → Borrado automático del portapapeles, en lugar de siempre a los 30 segundos.
+- Bramble ahora mantiene su bóveda fuera de las capturas de pantalla, las grabaciones de pantalla y la duplicación de pantalla. Para hacer una captura de pantalla, elija Permitir durante 10 minutos en Bloquear capturas de pantalla en Configuración → General.
+- Sincronice a través de un buzón cuando sus dispositivos nunca están en línea al mismo tiempo: inicie sesión con un número de cuenta de Bramble Mailbox o use su propio servidor en Configuración → Sincronización → Buzón.
+- Las claves SSH pueden indicar los hosts para los que están destinadas y la aplicación de escritorio ahora puede usarlas en la terminal.
+- Al exportar a KeePass, se conservan los sitios web adicionales de un inicio de sesión en el lugar donde KeePassXC y Keepass2Android los leen.
+- Al eliminar una de las dos bóvedas de la lista de bóvedas, ahora se abre la que queda.
+- Los dispositivos que se desbloquean justo después de la hora en punto ahora se encuentran entre sí de inmediato.
 
-No se necesita una cuenta y todo lo que sale de su dispositivo está cifrado de extremo a extremo.
+No se necesita ninguna cuenta y todo lo que sale de su dispositivo está cifrado de extremo a extremo.

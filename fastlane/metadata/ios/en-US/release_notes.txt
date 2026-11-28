@@ -1,9 +1,10 @@
 What's new in this release:
 
-- The app's auto-lock no longer locks autofill, which keeps its own timer and restarts it with every fill.
-- With Check passwords for breaches on, Bramble now checks every login in the background, not just the ones you open, and each login shows when it was last checked.
-- Duplicate an item or attach a file to it from its ⋮ menu in the list.
-- A vault you can't open can now be deleted from the list of vaults, without its password: choose Delete a vault.
-- Copies are now cleared after the time set in Settings → General → Clipboard auto-clear, instead of always after 30 seconds.
+- Bramble now keeps your vault out of screenshots, screen recordings and screen mirroring. To take a screenshot, choose Allow for 10 minutes under Block screenshots in Settings → General.
+- Sync through a mailbox when your devices are never online together: sign in with a Bramble Mailbox account number, or use your own server, in Settings → Sync → Mailbox.
+- SSH keys can list the hosts they're for, and the desktop app can now use them in the terminal.
+- Exporting to KeePass keeps a login's extra websites where KeePassXC and Keepass2Android read them.
+- Deleting one of two vaults from the list of vaults now opens the one that's left.
+- Devices that unlock just after the hour now find each other right away.
 
 No account needed, and anything that leaves your device is end-to-end encrypted.

@@ -1,9 +1,10 @@
 Novità di questa versione:
 
-- Il blocco automatico dell'app non blocca più il riempimento automatico, che dispone di un proprio timer e lo riavvia a ogni riempimento.
-- Con l'opzione Verifica password nelle violazioni attiva, Bramble ora controlla in background tutti gli accessi, non solo quelli aperti, e ogni accesso mostra quando è stato controllato l'ultima volta.
-- Duplica un elemento o allega un file dal relativo menu ⋮ nell'elenco.
-- Una cassaforte che non si può aprire può ora essere eliminata dall'elenco delle casseforti, senza la relativa password, scegliendo Eliminare una cassaforte.
-- Le copie ora vengono cancellate dopo il tempo impostato in Impostazioni → Generali → Cancellazione automatica degli appunti, anziché sempre dopo 30 secondi.
+- Bramble ora mantiene la cassaforte fuori da screenshot, registrazioni dello schermo e mirroring dello schermo. Per acquisire uno screenshot, scelga Consentire per 10 minuti alla voce Bloccare gli screenshot in Impostazioni → Generale.
+- È possibile sincronizzare tramite una casella di posta quando i dispositivi non sono mai online insieme: si accede con un numero account Bramble Mailbox oppure si utilizza il proprio server, in Impostazioni → Sincronizzazione → Casella.
+- Le chiavi SSH possono elencare gli host a cui sono destinate e l'app desktop può ora utilizzarle nel terminale.
+- L'esportazione in KeePass conserva i siti web aggiuntivi di un accesso nella posizione in cui KeePassXC e Keepass2Android li leggono.
+- Eliminando una di due casseforti dall'elenco delle casseforti, ora si apre quella rimasta.
+- I dispositivi che si sbloccano appena dopo l'ora adesso si trovano immediatamente.
 
 Non è necessario alcun account e tutto ciò che lascia il dispositivo è crittografato end-to-end.

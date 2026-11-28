@@ -1,9 +1,10 @@
-Quoi de neuf dans cette version :
+Nouveautés de cette version :
 
-- Le verrouillage automatique de l’application ne verrouille plus le remplissage automatique, qui conserve sa propre minuterie et la redémarre à chaque remplissage.
-- Lorsque Vérifier les mots de passe en cas de fuite est activé, Bramble vérifie désormais tous les identifiants en arrière-plan, pas seulement ceux que vous ouvrez, et chaque identifiant indique sa dernière vérification.
-- Dupliquer un élément ou y joindre un fichier depuis le menu ⋮ de l’élément dans la liste.
-- Un coffre-fort que vous ne pouvez pas ouvrir peut désormais être supprimé de la liste des coffres-forts, sans son mot de passe : choisissez Supprimer un coffre-fort.
-- Les copies sont désormais effacées après le délai défini dans Réglages → Général → Effacement automatique du presse-papiers, et non plus systématiquement après 30 secondes.
+- Bramble protège désormais votre coffre-fort des captures d’écran, des enregistrements d’écran et de la duplication d’écran. Pour prendre une capture d’écran, choisissez Autoriser pendant 10 minutes sous Bloquer les captures d’écran dans Paramètres → Général.
+- Synchronisez via une boîte aux lettres lorsque vos appareils ne sont jamais en ligne en même temps : connectez-vous avec un numéro de compte Bramble Mailbox ou utilisez votre propre serveur dans Paramètres → Synchronisation → Boîte aux lettres.
+- Les clés SSH peuvent indiquer les hôtes auxquels elles sont destinées, et l’application de bureau peut désormais les utiliser dans le terminal.
+- L’exportation vers KeePass conserve les sites web supplémentaires d’un identifiant pour que KeePassXC et Keepass2Android puissent les lire.
+- La suppression de l’un des deux coffres-forts dans la liste des coffres-forts ouvre désormais celui qui reste.
+- Les appareils qui se déverrouillent juste après l’heure se trouvent désormais immédiatement.
 
 Aucun compte n’est requis, et tout ce qui quitte votre appareil est chiffré de bout en bout.
