@@ -1,0 +1,10 @@
+What's new in this release:
+
+- Bramble now keeps your vault out of screenshots, screen recordings and assistants that read the screen, such as Gemini and Circle to Search. To take a screenshot, choose Allow for 10 minutes under Block screenshots in Settings → General.
+- Sync through a mailbox when your devices are never online together. Use Bramble's, for $2 a month, or run your own server, in Settings → Sync → Mailbox.
+- SSH keys can list the hosts they're for, and the desktop app can now use them in the terminal.
+- Exporting to KeePass keeps a login's extra websites where KeePassXC and Keepass2Android read them.
+- Deleting one of two vaults from the list of vaults now opens the one that's left.
+- Devices that unlock just after the hour now find each other right away.
+
+No account needed, and anything that leaves your device is end-to-end encrypted.
