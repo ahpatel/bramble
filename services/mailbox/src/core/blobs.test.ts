@@ -92,6 +92,19 @@ describe("blobs", () => {
 		expect((await inbox(a, id)).wanted).toEqual(expected);
 	});
 
+	it("delivers a held blob again only for a member that has it or sends its bytes", async () => {
+		const { a, b, c, id } = await trio();
+		const bytes = randomBytes(64);
+		const { hash } = await uploadBlob(a, id, bytes, { to: [b] });
+		// c has no delivery and isn't the uploader: naming a key without the bytes gets it nothing.
+		const bluff = await uploadBlob(c, id, bytes, { to: [a], sendBytes: randomBytes(64) });
+		expect(bluff.res.status).toBe(400);
+		expect(await blobHashes(a, id)).toEqual([]);
+		const real = await uploadBlob(c, id, bytes, { to: [a] });
+		expect(await real.res.json()).toEqual({ stored: true, recipients: 1 });
+		expect(await blobHashes(a, id)).toEqual([hash]);
+	});
+
 	it("refuses bytes that do not match the hash, and keeps nothing", async () => {
 		const { server, a, b, id } = await trio();
 		const { res, hash } = await uploadBlob(a, id, randomBytes(64), {

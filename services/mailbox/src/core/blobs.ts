@@ -91,12 +91,37 @@ export function blobRoutes(deps: AppDeps) {
 		const where = targets(mailboxId, caller, to);
 
 		const present = await db
-			.select({ hash: blobs.hash })
+			.select({ hash: blobs.hash, uploader: blobs.uploader })
 			.from(blobs)
 			.where(and(eq(blobs.mailboxId, mailboxId), eq(blobs.hash, hash)))
 			.get();
 		if (present) {
-			// Held already: make sure every target has a delivery, without reading the body.
+			// Held already: make sure every target has a delivery. The body is read and checked against
+			// the hash unless the caller uploaded the blob or was delivered it, so knowing a hash alone
+			// gets nobody a copy for a key of their choosing.
+			const holds =
+				present.uploader === caller ||
+				(await db
+					.select({ hash: blobDeliveries.hash })
+					.from(blobDeliveries)
+					.where(
+						and(
+							eq(blobDeliveries.mailboxId, mailboxId),
+							eq(blobDeliveries.hash, hash),
+							eq(blobDeliveries.member, caller),
+						),
+					)
+					.get()) !== undefined;
+			if (!holds) {
+				await storeUpload(
+					deps,
+					c,
+					blobKey(mailboxId, hash),
+					declared,
+					hash,
+					new HttpError(400, "hash_mismatch"),
+				);
+			}
 			return c.json({
 				stored: true,
 				recipients: await deliver(mailboxId, hash, where),
