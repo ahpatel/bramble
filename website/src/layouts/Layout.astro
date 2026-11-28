@@ -19,8 +19,14 @@ const {
 	flag,
 } = Astro.props;
 
-// The sandbox build (`deploy:sandbox`) shows flagged pages: the sandbox apps link straight to them.
-const gate = import.meta.env.MODE === "sandbox" ? undefined : flag;
+// The sandbox build (`deploy:sandbox`) shows flagged pages and parts: the sandbox apps link
+// straight to them.
+const sandbox = import.meta.env.MODE === "sandbox";
+const gate = sandbox ? undefined : flag;
+// A part of a page marked `data-ff="name"` shows only while the tab has that flag.
+const hideFlagged = sandbox
+	? ""
+	: WEBSITE_FLAGS.map((f) => `html:not([data-ff-on~="${f}"]) [data-ff="${f}"]{display:none!important}`).join("");
 const pageTitle = title ? `${title} · ${SITE.name}` : `${SITE.name} · ${SITE.tagline}`;
 const canonical = new URL(path, SITE.url).href;
 const ogImage = new URL("/icon-512.png", SITE.url).href;
@@ -75,11 +81,14 @@ const ogImage = new URL("/icon-512.png", SITE.url).href;
 					sessionStorage.setItem(key, JSON.stringify(on));
 				} catch (e) {}
 			}
+			document.documentElement.setAttribute("data-ff-on", on.join(" "));
 			if (required && on.indexOf(required) === -1) {
 				document.documentElement.style.display = "none";
 				location.replace("/");
 			}
 		</script>
+
+		{hideFlagged && <style is:inline set:html={hideFlagged} />}
 
 		{/* Set the theme before first paint so there is no light/dark flash. Mirrors
 		    the extension's behavior and reads the same `colorTheme` key the Starwind

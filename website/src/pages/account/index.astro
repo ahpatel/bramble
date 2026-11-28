@@ -12,7 +12,6 @@ import Layout from "@/layouts/Layout.astro";
 	title="Your Bramble Mailbox account"
 	description="Open a Bramble Mailbox account and add paid time."
 	path="/account"
-	flag="account"
 >
 	<Header />
 	<main class="mx-auto max-w-2xl px-4 py-16 sm:px-6 sm:py-20">
@@ -117,10 +116,22 @@ import Layout from "@/layouts/Layout.astro";
 					<Button data-pay="card" type="button" variant="outline" aria-describedby="add-time-total">
 						<CreditCard aria-hidden="true" />Credit/Debit card
 					</Button>
-					<Button data-pay="bitcoin" type="button" variant="outline" aria-describedby="add-time-total">
+					<Button
+						data-pay="bitcoin"
+						data-ff="crypto"
+						type="button"
+						variant="outline"
+						aria-describedby="add-time-total"
+					>
 						<CurrencyBitcoin aria-hidden="true" />Bitcoin
 					</Button>
-					<Button data-pay="monero" type="button" variant="outline" aria-describedby="add-time-total">
+					<Button
+						data-pay="monero"
+						data-ff="crypto"
+						type="button"
+						variant="outline"
+						aria-describedby="add-time-total"
+					>
 						<CurrencyMonero aria-hidden="true" />Monero
 					</Button>
 				</div>
@@ -153,7 +164,8 @@ import Layout from "@/layouts/Layout.astro";
 				</div>
 				<p class="text-sm text-muted-foreground">
 					$2 a month, in US dollars, plus tax where it applies. A card purchase can be refunded within 14
-					days, less the days since you bought it. A Bitcoin or Monero payment can't be refunded.
+					days, less the days since you bought it.
+					<span data-ff="crypto">A Bitcoin or Monero payment can't be refunded.</span>
 				</p>
 			</div>
 

@@ -1,70 +1,81 @@
-// Website feature flags (website/src/flags.ts): a flagged page stays out of sight on the live site
-// unless this tab asked for it with `?ff=`.
+// Website feature flags (website/src/flags.ts): a flagged part of a page stays out of sight on the
+// live site unless this tab asked for it with `?ff=`. The account page's Bitcoin and Monero
+// buttons are behind `crypto`.
 
 import { expect, type Page, test } from "@playwright/test";
+import { mockServices } from "./mocks";
 
-const accountHeading = (page: Page) =>
-	page.getByRole("heading", { name: "Your Bramble Mailbox account" });
+const card = (page: Page) => page.getByRole("button", { name: "Credit/Debit card" });
+const coins = (page: Page) => [
+	page.getByRole("button", { name: "Bitcoin", exact: true }),
+	page.getByRole("button", { name: "Monero", exact: true }),
+	page.getByText("A Bitcoin or Monero payment can't be refunded."),
+];
 
-const isHome = async (page: Page) => {
-	await expect(page).toHaveURL(/\/$/);
-	await expect(accountHeading(page)).toHaveCount(0);
-	await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
-};
+const NUMBER = "11111 22222 33333 44444 55555";
 
-test("a flagged page sends a visitor without the flag home", async ({ page }) => {
-	await page.goto("/account/");
-	await isHome(page);
-	await page.goto("/account/paid");
-	await isHome(page);
+test.beforeEach(async ({ context }) => {
+	const services = await mockServices(context, NUMBER);
+	services.status = () => ({
+		code: 200,
+		body: { paidThrough: Date.UTC(2027, 4, 2), frozen: false, usedBytes: 0, quotaBytes: 1e9 },
+	});
 });
 
-test("the flag shows the page, and the tab keeps it for the trip to Stripe and back", async ({
-	page,
-}) => {
-	await page.goto("/account/?ff=account");
-	await expect(accountHeading(page)).toBeVisible();
-	await page.goto("/account/paid");
-	await expect(accountHeading(page)).toBeVisible();
-	await page.goto("/account/");
-	await expect(accountHeading(page)).toBeVisible();
+/** The account page with an account open, so the payment buttons are on screen. */
+async function openAccount(page: Page, query = "") {
+	await page.goto(`/account/${query}#n=${NUMBER.replace(/ /g, "")}`);
+	// A tab that confirmed the number once remembers it, and doesn't ask again.
+	const mine = page.getByRole("button", { name: "Yes, it's mine" });
+	await expect(card(page).or(mine)).toBeVisible();
+	if (await mine.isVisible()) await mine.click();
+	await expect(card(page)).toBeVisible();
+}
+
+const cryptoHidden = async (page: Page) => {
+	for (const part of coins(page)) await expect(part).toBeHidden();
+};
+const cryptoShown = async (page: Page) => {
+	for (const part of coins(page)) await expect(part).toBeVisible();
+};
+
+test("the account page is public, and pays by card without the flag", async ({ page }) => {
+	await openAccount(page);
+	await cryptoHidden(page);
+});
+
+test("the flag shows the flagged parts, and the tab keeps it", async ({ page }) => {
+	await openAccount(page, "?ff=crypto");
+	await cryptoShown(page);
+	await openAccount(page);
+	await cryptoShown(page);
 });
 
 test("any page takes the flag", async ({ page }) => {
-	await page.goto("/?ff=account");
-	await page.goto("/account/");
-	await expect(accountHeading(page)).toBeVisible();
+	await page.goto("/?ff=crypto");
+	await openAccount(page);
+	await cryptoShown(page);
 });
 
 test("another tab doesn't have it", async ({ context, page }) => {
-	await page.goto("/account/?ff=account");
-	await expect(accountHeading(page)).toBeVisible();
+	await openAccount(page, "?ff=crypto");
+	await cryptoShown(page);
 	const other = await context.newPage();
-	await other.goto("/account/");
-	await isHome(other);
+	await openAccount(other);
+	await cryptoHidden(other);
 });
 
-test("an empty value turns it off", async ({ page }) => {
-	await page.goto("/account/?ff=account");
-	await expect(accountHeading(page)).toBeVisible();
+test("an empty value turns it off, and an unknown name does nothing", async ({ page }) => {
+	await openAccount(page, "?ff=crypto");
 	await page.goto("/?ff=");
+	await openAccount(page);
+	await cryptoHidden(page);
+	await openAccount(page, "?ff=nope");
+	await cryptoHidden(page);
+});
+
+test("a page with no flag is left alone, and asks to be indexed", async ({ page }) => {
 	await page.goto("/account/");
-	await isHome(page);
-});
-
-test("an unknown name does nothing", async ({ page }) => {
-	await page.goto("/account/?ff=nope");
-	await isHome(page);
-});
-
-test("a page with no flag is left alone", async ({ page }) => {
-	await page.goto("/support");
-	await expect(page).toHaveURL(/\/support$/);
-});
-
-test("a flagged page asks not to be indexed, and only a flagged one", async ({ page }) => {
-	await page.goto("/account/?ff=account");
-	await expect(page.locator('meta[name="robots"][content="noindex"]')).toHaveCount(1);
-	await page.goto("/support");
+	await expect(page).toHaveURL(/\/account\/$/);
 	await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
 });

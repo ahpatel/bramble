@@ -15,11 +15,12 @@ until it closes, which is what carries a tester through Stripe and back.
 
 The names are in `src/flags.ts`, separate from `packages/core/src/flags.ts`, which is baked into the
 apps. `flag="name"` on a page's `Layout` hides that page: without the flag a visitor lands on the home
-page, as they do for any unknown URL, and it asks not to be indexed. To launch, remove the prop and
-the name.
+page, as they do for any unknown URL, and it asks not to be indexed. `data-ff="name"` on an element
+hides just that part of a page (the account page's Bitcoin and Monero buttons, behind `crypto`). To
+launch, remove the prop or attribute, and the name.
 
 The sandbox build (`pnpm deploy:sandbox`, against the sandbox billing and mailbox Workers) shows
-flagged pages without the flag, since the sandbox apps link straight to them.
+flagged pages and parts without the flag, since the sandbox apps link straight to them.
 
 This keeps a page out of sight, not out of reach: the markup is public and the name can be guessed.
 Nothing secret goes behind a flag.

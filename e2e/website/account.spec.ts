@@ -17,7 +17,8 @@ let services: Services;
 test.beforeEach(async ({ context, page }) => {
 	services = await mockServices(context, NUMBER);
 	services.status = () => ({ code: 200, body: PAID });
-	await page.goto("/?ff=account");
+	// The Bitcoin and Monero buttons are behind a website flag until they launch.
+	await page.goto("/?ff=crypto");
 });
 test.afterEach(() => {
 	// The fragment never reaches a server, and nothing else may carry the number in a URL.

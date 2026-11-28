@@ -59,10 +59,11 @@ const INSTALLERS: Record<DownloadPlatform, RegExp> = {
 const TAGS: Record<ReleasePlatform, RegExp> = {
 	android: /^(.+)-android$/i,
 	desktop: /^(.+)-desktop$/i,
-	// Nothing matches this yet. It is here so the badge reports a version by itself the day a
-	// Windows build is tagged, rather than staying "coming soon" until someone notices.
-	windows: /^(.+)-windows$/i,
+	// Windows ships inside a desktop release: the newest one that carries its installer.
+	windows: /^(.+)-desktop$/i,
 };
+
+const WINDOWS_INSTALLER = /-setup\.exe$/i;
 
 // v2: a cached v1 snapshot has no installer, so it is not read back as one.
 export const snapshot = (env: Env): Promise<Snapshot | null> =>
@@ -90,12 +91,17 @@ async function readReleases(env: Env): Promise<Snapshot> {
 			for (const platform of Object.keys(TAGS) as ReleasePlatform[]) {
 				const version = release.tag_name?.match(TAGS[platform])?.[1];
 				if (version && !result.latest[platform]) {
-					const file =
-						platform in INSTALLERS
-							? release.assets?.find(
-									(a) => a.name && INSTALLERS[platform as DownloadPlatform].test(a.name),
-								)
-							: undefined;
+					const installer =
+						platform === "windows"
+							? WINDOWS_INSTALLER
+							: platform in INSTALLERS
+								? INSTALLERS[platform as DownloadPlatform]
+								: undefined;
+					const file = installer
+						? release.assets?.find((a) => a.name && installer.test(a.name))
+						: undefined;
+					// A desktop release cut with --skip=windows is not a Windows release.
+					if (platform === "windows" && !file) continue;
 					result.latest[platform] = {
 						tag: release.tag_name as string,
 						version,

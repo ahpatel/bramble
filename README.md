@@ -6,7 +6,7 @@
 [![Desktop version](https://img.shields.io/endpoint?url=https%3A%2F%2Fbramble.sh%2Fapi%2Fversion%2Fdesktop)](https://bramble.sh/latest/desktop)
 [![macOS downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fbramble.sh%2Fapi%2Fdownloads%2Fmacos)](https://bramble.sh/latest/desktop)
 [![Linux downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fbramble.sh%2Fapi%2Fdownloads%2Flinux)](https://bramble.sh/latest/desktop)
-[![Windows](https://img.shields.io/endpoint?url=https%3A%2F%2Fbramble.sh%2Fapi%2Fversion%2Fwindows)](#whats-coming-next)
+[![Windows](https://img.shields.io/endpoint?url=https%3A%2F%2Fbramble.sh%2Fapi%2Fversion%2Fwindows)](https://bramble.sh/latest/desktop)
 [![Support us on Ko-fi](https://img.shields.io/badge/Support%20us%20on%20Ko--fi-72A4F2?logo=kofi&logoColor=white)](https://ko-fi.com/bramble_sh)
 
 A password manager that syncs between your devices. Your passwords are not saved on any server, so there's no account to make and no company to get breached and leak everything. You hold the vault, you hold the password, and that's it.
@@ -14,7 +14,7 @@ A password manager that syncs between your devices. Your passwords are not saved
 Bramble runs where you do:
 
 - **Browser extension** for Firefox and Chromium browsers (Brave, Vivaldi, Chrome, Arc, and friends). Install it and you're up and running in a minute.
-- **Desktop app** for macOS and Linux, with a global quick-access panel, an always-on sync hub, and scheduled backups.
+- **Desktop app** for macOS, Windows and Linux, with a global quick-access panel, an always-on sync hub, and scheduled backups.
 - **iOS app** with system AutoFill, Face ID / Touch ID unlock, and passkeys.
 - **Android app** with a native autofill service, biometric unlock, and passkeys.
 
@@ -24,7 +24,7 @@ The same encrypted vault and the same Rust crypto core sit behind all four, and 
 
 - Chromium: [Chrome Web Store](https://chromewebstore.google.com/detail/bramble/kmokhdhoggbdcgoepifeckhgbfakaknm)
 - Firefox: [Firefox Add-ons Store](https://addons.mozilla.org/firefox/addon/bramble/)
-- Desktop (macOS, Linux): [bramble.sh](https://bramble.sh)
+- Desktop (macOS, Windows, Linux): [bramble.sh](https://bramble.sh)
 - Android: [Releases](https://github.com/bramble-sh/bramble/releases)
 - iOS: [App Store](https://apps.apple.com/us/app/bramble-password-manager/id6783071787)
 
@@ -67,7 +67,7 @@ The iOS and Android apps are versioned and released independently of the extensi
 
 ## On your desktop
 
-A native app for macOS and Linux, not a browser tab in a costume. It is built with Tauri, so the UI is the same React that runs everywhere else while the vault and every cryptographic operation live in a Rust process. The Vault Key never enters the webview at all.
+A native app for macOS, Windows and Linux, not a browser tab in a costume. It is built with Tauri, so the UI is the same React that runs everywhere else while the vault and every cryptographic operation live in a Rust process. The Vault Key never enters the webview at all.
 
 - **Quick access over everything else.** Press Cmd+Shift+Space (Ctrl+Shift+Space off macOS) and a search bar appears over whatever you were doing. Find a login, copy its password, fill it into the browser, or open it in the app, then it gets back out of your way.
 - **It fills your browser.** Pair the app with the Bramble extension once and the panel fills the page in front of you, over an encrypted channel that never leaves your machine. Pairing only adds to the extension: it stays a standalone thing that never needs the app installed.
@@ -159,7 +159,7 @@ Pair a device once, and from then on any two of your devices sync whenever both 
 Two things worth knowing:
 
 - **Edits to the same part of an entry need you to choose.** If two devices change the same part of one entry before they sync (both edit the notes, say), you get both versions to choose between: Bramble doesn't guess which one you meant. A login's username, password and 2FA code count as one part, as do a card's details and an SSH key, so they never end up half from one device and half from the other. Until every device is updated, an older version of Bramble in the mix can still make an edit win, or another one vanish, the way it always could.
-- **Both devices need to be online at once.** No server holds changes for a device that's offline, which also means your vault never sits on someone else's server waiting for it. So a phone mostly syncs while the app is open. Leave the [desktop app](#on-your-desktop) in your tray and your other devices always have something to sync with.
+- **Without a mailbox, both devices need to be online at once.** Sync is device to device, so a phone mostly syncs while the app is open; leave the [desktop app](#on-your-desktop) in your tray and your other devices always have something to sync with. A mailbox, Bramble's hosted one or [your own](services/mailbox/README.md), holds your encrypted changes until your other devices collect them, so they never need to be online together. It can't read them, and deletes them once every device has them.
 
 ## How it stacks up against KeePass
 
@@ -180,7 +180,6 @@ Parts of Bramble were written with AI assistance (Claude Opus), but every line w
 ## What's coming next
 
 - **Cloud backups on mobile.** The browser extension and the desktop app back up to cloud storage on a schedule today; bringing those scheduled uploads to the iOS and Android apps is next (mobile can already restore from a backup file).
-- **Windows.** The desktop app ships for macOS and Linux. A Windows build now exists and is in testing, waiting on code signing before release: an unsigned installer makes Windows warn every person who downloads it, which is not the first impression a password manager should make.
 - **Filling in more places from the desktop app.** Auto-type into native apps, so the quick-access panel reaches windows that are not a browser.
 
 ## Contributing
