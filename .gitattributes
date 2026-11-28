@@ -4,3 +4,6 @@ clients/extension/src/fixtures/sites/*.html linguist-vendored
 
 # SSH agent test keys: byte for byte on every platform, no CRLF conversion on Windows.
 clients/desktop/src-tauri/src/ssh_agent/fixtures/* -text
+
+# A logged artifact and its Sigsum proof: a CRLF checkout changes the hash the log holds.
+clients/desktop/src-tauri/fixtures/update-log/* -text
