@@ -39,6 +39,8 @@ describe("the hosted mailbox", () => {
 		expect(await env.BODIES.head(`b/${id}/${hash}`)).toBeNull();
 	});
 
+	// 150 signed posts one after another: under 2 s here, but past the 5 s default on a slow CI
+	// runner, which stopped the 2026-11-28 releases.
 	it("acknowledging 150 messages works on D1's 100-parameter cap", async () => {
 		const { a, b, id } = await pair();
 		const ids = Array.from({ length: 150 }, () => newMessageId());
@@ -46,7 +48,7 @@ describe("the hosted mailbox", () => {
 		expect((await inbox(b, id)).messages).toHaveLength(150);
 		await ack(b, id, { messages: ids });
 		expect((await inbox(b, id)).messages).toEqual([]);
-	});
+	}, 30_000);
 
 	it("an unknown route is a JSON not_found", async () => {
 		const res = await exports.default.fetch(new Request("https://mailbox.test/nope"));
