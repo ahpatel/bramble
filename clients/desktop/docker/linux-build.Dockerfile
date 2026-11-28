@@ -33,7 +33,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # to take Debian's updates, WebKit's security fixes above all: a release should not ship a WebKit
 # much older than the date it is cut. Plain http, as on the live mirrors: apt checks Debian's
 # signatures, and https would need ca-certificates before there is anything to install it from.
-ARG DEBIAN_SNAPSHOT=20261117T120000Z
+ARG DEBIAN_SNAPSHOT=20261128T031751Z
 RUN sed -i \
       -e "s|^URIs: http://deb.debian.org/debian-security\$|URIs: http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|" \
       -e "s|^URIs: http://deb.debian.org/debian\$|URIs: http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|" \

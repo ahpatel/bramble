@@ -16,7 +16,7 @@ FROM debian:13@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b2
 ENV DEBIAN_FRONTEND=noninteractive
 
 # A dated snapshot, as in linux-build.Dockerfile.
-ARG DEBIAN_SNAPSHOT=20261117T120000Z
+ARG DEBIAN_SNAPSHOT=20261128T031751Z
 RUN sed -i \
       -e "s|^URIs: http://deb.debian.org/debian-security\$|URIs: http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|" \
       -e "s|^URIs: http://deb.debian.org/debian\$|URIs: http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|" \
