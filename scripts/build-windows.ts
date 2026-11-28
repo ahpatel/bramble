@@ -126,7 +126,9 @@ function ciStartBuild(): void {
 	// that as a bare "could not find any workflows named ..." which reads like a typo rather than
 	// an unpushed file. Worth its own message: pushing .github/ needs a token scope the release
 	// does not otherwise use, so this is a genuine first-time stumble.
-	if (!capture("gh", ["workflow", "list", "--all"]).includes(WORKFLOW))
+	// The plain list names workflows by their `name:`, not their file, so ask for the paths.
+	const paths = capture("gh", ["workflow", "list", "--all", "--json", "path", "--jq", ".[].path"]);
+	if (!paths.split("\n").includes(`.github/workflows/${WORKFLOW}`))
 		fail(
 			`build-windows: GitHub does not know about ${WORKFLOW} yet.\n` +
 				"  Push .github/workflows/ to the default branch first; a workflow cannot be\n" +
